@@ -53,7 +53,9 @@ if (marketplace && manifest) {
           + `plugin.json is the single source for that field.`);
       }
     }
-    if (entry?.name && entry.name !== manifest.name) {
+    // The name-match rule only binds the entry shipped from THIS repo (source "./") —
+    // a marketplace may also list sibling plugins living in other repos (context-notion).
+    if (entry?.name && entry?.source === './' && entry.name !== manifest.name) {
       err(label, `name "${entry.name}" does not match plugin.json name "${manifest.name}"`);
     }
   }
