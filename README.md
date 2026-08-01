@@ -12,13 +12,14 @@ machinery for loading, refreshing and writing a project's **context repo**.
 │   context.json (config the layers below read)               │
 │   Created from the c-energie/context-template repo.         │
 ├─────────────────────────────────────────────────────────────┤
-│ Middle layer — structured-state backend (PLANNED)           │
-│   A Notion-layer plugin: generic add-action / log-decision /│
-│   query / mirror-sync skills, parameterised by each         │
-│   project's context.json (database IDs, property schemas,   │
-│   roster). One install serves every Notion-backed project — │
-│   grid-flex and a thesis alike. An Obsidian or other        │
-│   backend could implement the same contracts later.         │
+│ Middle layer — structured-state backend                     │
+│   c-energie/context-notion (this marketplace): generic      │
+│   add-action / log-decision / query / update / pending-queue│
+│   skills, parameterised by each project's context.json      │
+│   (database IDs, property schemas, roster). One install     │
+│   serves every Notion-backed project — grid-flex and a      │
+│   thesis alike. An Obsidian or other backend could          │
+│   implement the same contracts later.                       │
 ├─────────────────────────────────────────────────────────────┤
 │ Core layer — THIS PLUGIN                                    │
 │   SessionStart hook (memory.md + thread pointers),          │

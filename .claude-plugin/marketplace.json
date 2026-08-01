@@ -8,14 +8,18 @@
   "_comment": [
     "A field in a plugins[] entry OVERRIDES the same field in .claude-plugin/plugin.json.",
     "Declare name / description / version ONLY in plugin.json. Keep this file to the",
-    "marketplace-specific fields: source, category, tags, strict.",
-    "The planned Notion middle-layer plugin joins this plugins[] list when it exists."
+    "marketplace-specific fields: source, category, tags, strict."
   ],
 
   "plugins": [
     {
       "name": "context-kit",
       "source": "./",
+      "category": "productivity"
+    },
+    {
+      "name": "context-notion",
+      "source": { "source": "github", "repo": "c-energie/context-notion" },
       "category": "productivity"
     }
   ]
