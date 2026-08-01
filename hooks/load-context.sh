@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# context-kit — load shared context at session start, wherever the context-kit plugin is enabled.
+# Injects memory.md + pointers to glossary/threads so the session starts having read the shared
+# context. Never prompts, never hangs, never blocks (always exits 0).
+#
+# Checkout resolution lives in scripts/context-repo.sh — the same resolver save-thread and
+# curate-context use, so all three agree on which clone is "the" context repo.
+#
+# The refresh is capped (see the resolver). If it times out or fails, the session still gets
+# the local copy, but with a STALE banner above it saying so and how old it is — never silently.
+#
+# Also runs mid-session, by hand, as `load-context.sh --refresh` — that is the whole of the
+# refresh-context skill. Same pull, same STALE banner, different header (claiming "loaded at
+# session start" an hour into a session is exactly the kind of quiet lie this script exists to
+# avoid) plus a provenance line naming the checkout it actually read.
+set -u
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# In step with scripts/context-repo.sh: which context repo is a per-project env override,
+# defaulting to the FlexSense one.
+CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-net-flex/context}"
+RESOLVER="$HERE/../scripts/context-repo.sh"
+
+# Unknown arguments are ignored rather than rejected: this runs as a SessionStart hook, and a
+# hook that exits non-zero over an argument it didn't recognise breaks every session.
+MODE="session"
+[ "${1:-}" = "--refresh" ] && MODE="refresh"
+
+# Why the refresh failed, if it did. A silently stale memory.md is worse than a slow session:
+# the model reads it as current and nobody knows. Captured here, reported at the top of the
+# output. Empty means the refresh was clean.
+REFRESH_WARNING=""
+ERRFILE="${TMPDIR:-/tmp}/context-kit-ctx-$$.err"
+trap 'rm -f "$ERRFILE"' EXIT
+
+if [ -f "$RESOLVER" ]; then
+  # The resolver prints the path on stdout and any trouble on stderr, so they are captured
+  # separately — stdout must stay path-only for the callers that consume it.
+  ROOT="$(bash "$RESOLVER" 2>"$ERRFILE")" || ROOT=""
+  if [ -s "$ERRFILE" ]; then
+    REFRESH_WARNING="$(tr '\n' '; ' < "$ERRFILE" | sed -e 's/context-repo\.sh: //g' -e 's/[; ]*$//')"
+  fi
+else
+  # Fallback: resolve inline. The plugin installer is only documented to ship skills/,
+  # commands/, agents/ and hooks/ — a top-level scripts/ directory may not survive
+  # packaging. Without this branch the whole session context silently disappears when it
+  # doesn't. Keep in step with scripts/context-repo.sh; that file is the real one.
+  # Clone dir follows the remote, in step with context-repo.sh: FLEXSENSE_CONTEXT_DIR beats
+  # everything, the default remote keeps its historical ~/.flexsense/context, any other remote
+  # lands at ~/.context/<owner>-<repo>.
+  if [ -n "${FLEXSENSE_CONTEXT_DIR:-}" ]; then
+    CLONE_DIR="$FLEXSENSE_CONTEXT_DIR"
+  elif [ "$CONTEXT_REMOTE" = "net-flex/context" ]; then
+    CLONE_DIR="$HOME/.flexsense/context"
+  else
+    CLONE_DIR="$HOME/.context/${CONTEXT_REMOTE//\//-}"
+  fi
+  cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
+
+  # Capped like context-repo.sh's pull, so a half-open connection can't stall session start.
+  # `timeout` is GNU coreutils and absent on stock macOS; fall back to unbounded there.
+  TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
+  # Credentials, in step with context-repo.sh: the repo is private, so an environment with no
+  # git credential helper fails silently. Plain call first, token only on an auth failure.
+  # The token goes through a transient helper and the environment — never into the remote URL
+  # or .git/config, so nothing this prints can carry it.
+  TOKEN=""; TOKEN_TRIED=0
+  HELPER='!f() { echo username=x-access-token; echo "password=$FLEXSENSE_TOKEN"; }; f'
+  resolve_token() {
+    [ "$TOKEN_TRIED" -eq 1 ] && { [ -n "$TOKEN" ]; return; }
+    TOKEN_TRIED=1
+    TOKEN="${FLEXSENSE_GIT_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+    if [ -z "$TOKEN" ] && command -v gh >/dev/null 2>&1; then
+      TOKEN="$(gh auth token 2>/dev/null || true)"
+    fi
+    [ -n "$TOKEN" ]
+  }
+  run_git() {   # run_git <capped 0|1> <git args...>
+    local capped="$1"; shift
+    if [ "$capped" = 1 ] && [ -n "$TIMEOUT_BIN" ]; then
+      GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" \
+        "$TIMEOUT_BIN" "${FLEXSENSE_GIT_TIMEOUT:-30}" git "$@" >/dev/null 2>&1
+    else
+      GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" git "$@" >/dev/null 2>&1
+    fi
+  }
+  git_net() {   # same, retried once with a token
+    local capped="$1" rc; shift
+    run_git "$capped" "$@" && return 0
+    rc=$?
+    # 124 is `timeout` killing it. Never retry that: the retry would double the very budget the
+    # cap exists to enforce, and a timeout is not an authentication problem anyway. (The real
+    # resolver reaches the same conclusion by matching git's stderr, which it captures.)
+    [ "$rc" = 124 ] && return 1
+    resolve_token || return 1
+    run_git "$capped" -c credential.helper= -c "credential.helper=$HELPER" "$@"
+  }
+
+  origin_url="$(git -C "$cwd" remote get-url origin 2>/dev/null)" || origin_url=""
+  ROOT=""
+  case "$origin_url" in
+    *"$CONTEXT_REMOTE"*)
+      ROOT="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")" ;;
+    *)
+      if [ -d "$CLONE_DIR/.git" ]; then
+        ROOT="$CLONE_DIR"
+      else
+        mkdir -p "$(dirname "$CLONE_DIR")" 2>/dev/null || true
+        # A failed clone has to carry its reason forward too, or the "context unavailable"
+        # message below is the whole story the user gets — and "unavailable" reads as "the
+        # repo is empty" when it actually means "nobody here can authenticate".
+        if git_net 0 clone --depth 1 "https://github.com/$CONTEXT_REMOTE.git" "$CLONE_DIR"; then
+          ROOT="$CLONE_DIR"
+        elif resolve_token; then
+          REFRESH_WARNING="clone failed even with a token (expired, or no access to this repo?)"
+        else
+          REFRESH_WARNING="clone failed, and there is no git credential in this environment for a private repo — set FLEXSENSE_GIT_TOKEN or sign in with 'gh auth login'"
+        fi
+      fi ;;
+  esac
+
+  if [ -n "$ROOT" ] && ! git_net 1 -C "$ROOT" pull --ff-only --autostash; then
+    if resolve_token; then
+      REFRESH_WARNING="pull failed or timed out after ${FLEXSENSE_GIT_TIMEOUT:-30}s, including a retry with a token; working from the local state"
+    else
+      REFRESH_WARNING="pull failed after ${FLEXSENSE_GIT_TIMEOUT:-30}s, and there is no git credential in this environment for a private repo — set FLEXSENSE_GIT_TOKEN or sign in with 'gh auth login'; working from the local state"
+    fi
+  fi
+fi
+
+if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
+  echo "Context unavailable (no local clone of $CONTEXT_REMOTE and couldn't fetch it). Skills still load from the plugin."
+  [ -n "$REFRESH_WARNING" ] && echo "Reason: $REFRESH_WARNING"
+  exit 0
+fi
+
+if [ "$MODE" = "refresh" ]; then
+  echo "=== Shared context (re-pulled just now — supersedes the copy loaded at session start) ==="
+else
+  echo "=== Shared context (auto-loaded at session start) ==="
+fi
+echo
+
+# Loud, and above memory.md — a warning printed after 200 lines of context is a warning nobody
+# reads. `git log --date=relative` says how old the local copy actually is, which is the part
+# that decides whether stale matters.
+if [ -n "$REFRESH_WARNING" ]; then
+  LAST_UPDATED="$(git -C "$ROOT" log -1 --format='%cd' --date=relative 2>/dev/null)" || LAST_UPDATED=""
+  echo "!!! WARNING — THIS CONTEXT MAY BE STALE !!!"
+  echo "The refresh from $CONTEXT_REMOTE did not complete: $REFRESH_WARNING"
+  # Content age, not sync age: the newest commit we hold. Deliberately not "time since last
+  # fetch" — reading that portably means date(1), which differs GNU vs BSD.
+  echo "Showing the local copy${LAST_UPDATED:+ — its most recent commit is dated $LAST_UPDATED}."
+  echo "Anything below may be out of date. Say so before relying on it for a decision, and"
+  echo "re-check $CONTEXT_REMOTE (or just start a new session on a working connection)."
+  echo
+fi
+echo "----- memory.md (authoritative durable layer — treat as read) -----"
+cat "$ROOT/memory.md"
+echo
+echo "----- end memory.md -----"
+echo
+[ -f "$ROOT/glossary.md" ] && echo "Vocabulary: see glossary.md in $CONTEXT_REMOTE."
+if [ -d "$ROOT/threads" ]; then
+  echo "Working threads (one topic per file; newest last):"
+  find "$ROOT/threads" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null \
+    | sort | tail -n 6 \
+    | while IFS= read -r f; do
+        # Title comes from the front-matter `title:` if the file has a block, else the
+        # first markdown heading. Taking line 1 blindly prints "---" for every file
+        # written since the front-matter convention landed.
+        title="$(awk '
+          NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+          fm == 1 && /^---[[:space:]]*$/ { fm = 0; next }
+          fm == 1 && /^title:[[:space:]]/ { sub(/^title:[[:space:]]*/, ""); print; exit }
+          fm == 0 && /^#+[[:space:]]/ { sub(/^#+[[:space:]]*/, ""); print; exit }
+        ' "$f" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
+        [ -z "$title" ] && title="$(basename "$f" .md)"
+        echo "   - threads/$(basename "$f") — ${title}"
+      done
+  [ -f "$ROOT/threads/INDEX.md" ] && echo "   (full list: threads/INDEX.md)"
+fi
+echo
+# The mirror is the only structured state a Notion *guest* can see (guests get empty results from
+# the connector, not errors), so it has to be pointed at here — a session that doesn't know the
+# folder exists will confidently answer "we have no stakeholders on file".
+if [ -f "$ROOT/notion/_synced.json" ]; then
+  SYNCED="$(sed -n 's/.*"syncedOn"[[:space:]]*:[[:space:]]*"\([0-9-]*\)".*/\1/p' \
+    "$ROOT/notion/_synced.json" 2>/dev/null | head -n 1)"
+  echo "Read-only Notion mirror in notion/${SYNCED:+ (last synced $SYNCED)}. A snapshot, not a live feed: Notion wins."
+fi
+[ -d "$ROOT/pending" ] && echo "No workspace access? Queue structured items in pending/."
+echo
+echo "Full context repo: $CONTEXT_REMOTE."
+# Which checkout this actually came from, and how new it is. Only in --refresh mode: someone
+# asking for a re-pull is asking whether they now hold the latest, and on a surface that runs
+# the session somewhere other than the user's own machine (Cowork's cloud environments) the
+# answer depends entirely on which clone was reached.
+if [ "$MODE" = "refresh" ]; then
+  HEAD_LINE="$(git -C "$ROOT" log -1 --format='%h %cd — %s' --date=short 2>/dev/null)"
+  echo "Read from: $ROOT${HEAD_LINE:+ · newest commit $HEAD_LINE}"
+fi
+exit 0
