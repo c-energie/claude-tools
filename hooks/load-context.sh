@@ -16,9 +16,28 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# In step with scripts/context-repo.sh: which context repo is a per-project env override,
-# defaulting to the FlexSense one.
-CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-net-flex/context}"
+# In step with scripts/context-repo.sh: which context repo is the env var, else the project's
+# .claude settings files (laptop — the committed settings.json rides along in the checkout),
+# else a one-line marker file in the working dir or /mnt/project (Cowork — attached project
+# files are the only channel into its sandbox, and env vars cannot be set there), else the
+# default.
+proj="${CLAUDE_PROJECT_DIR:-$PWD}"
+settings_repo() {
+  sed -n 's/.*"FLEXSENSE_CONTEXT_REPO"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
+}
+marker_repo() {
+  head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
+}
+CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-}"
+[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$proj/.claude/settings.local.json")"
+[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$proj/.claude/settings.json")"
+for _m in "$proj/.context-repo" "$proj/context-repo.txt" /mnt/project/.context-repo /mnt/project/context-repo.txt; do
+  [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
+done
+CONTEXT_REMOTE="${CONTEXT_REMOTE:-net-flex/context}"
+# The real resolver re-derives this identically; exporting pins both to the same answer even
+# if only one copy is ever updated.
+export FLEXSENSE_CONTEXT_REPO="$CONTEXT_REMOTE"
 RESOLVER="$HERE/../scripts/context-repo.sh"
 
 # Unknown arguments are ignored rather than rejected: this runs as a SessionStart hook, and a

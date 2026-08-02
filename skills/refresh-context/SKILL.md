@@ -17,7 +17,10 @@ its STALE banner, or when the context wasn't available at all. This is the manua
 ## 0. In Cowork, or wherever git is unavailable
 
 Do not report "context unavailable". Read the context repo over the **GitHub MCP server**
-instead: `memory.md` in full; `threads/INDEX.md` (or list `threads/` and read the newest few);
+instead. Which repo: the project's `.claude/settings.json` env value if visible, else a
+one-line `.context-repo` / `context-repo.txt` marker in the working folder or `/mnt/project/`
+(Cowork surfaces attached project files there), else `net-flex/context`. Read `memory.md` in
+full; `threads/INDEX.md` (or list `threads/` and read the newest few);
 any mirror's `_synced.json` for its `syncedOn` date; recent commits on `main` for the "what
 changed". Then continue from step 3, and **say you used the connector rather than a checkout**
 — provenance differs between the routes. If neither a shell nor a GitHub connector is

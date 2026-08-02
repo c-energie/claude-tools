@@ -23,7 +23,29 @@
 # because those look identical from the outside and want completely different fixes.
 set -u
 
-CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-net-flex/context}"
+cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
+
+# Which context repo, in order: the env var; else the project's .claude settings files (the
+# laptop route — the committed settings.json rides along in the checkout; local beats project,
+# matching the client's own precedence); else a one-line marker file, checked in the working
+# dir and in /mnt/project — the latter is where Cowork surfaces files attached to a project,
+# the ONLY channel into its sandbox, which also cannot set env vars; else the default.
+# The sed is deliberately dumb: it finds the key anywhere in the file, which is fine for a
+# name this deliberate.
+settings_repo() {
+  sed -n 's/.*"FLEXSENSE_CONTEXT_REPO"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
+}
+marker_repo() {  # first line of a marker file, whitespace stripped ("owner/repo" has none)
+  head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
+}
+CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-}"
+[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$cwd/.claude/settings.local.json")"
+[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$cwd/.claude/settings.json")"
+for _m in "$cwd/.context-repo" "$cwd/context-repo.txt" /mnt/project/.context-repo /mnt/project/context-repo.txt; do
+  [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
+done
+CONTEXT_REMOTE="${CONTEXT_REMOTE:-net-flex/context}"
+
 # The managed clone follows the remote: FLEXSENSE_CONTEXT_DIR beats everything, the default
 # remote keeps its historical ~/.flexsense/context so existing clones survive, and any other
 # remote lands at ~/.context/<owner>-<repo> — owner included because context repos tend to all
@@ -35,7 +57,6 @@ elif [ "$CONTEXT_REMOTE" = "net-flex/context" ]; then
 else
   CLONE_DIR="$HOME/.context/${CONTEXT_REMOTE//\//-}"
 fi
-cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 PULL=1; WRITABLE=0
 for arg in "$@"; do

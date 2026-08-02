@@ -17,8 +17,11 @@ ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
 ```
 
 Read `$ROOT/context.json`. (No shell — Cowork? Read `context.json` from the context repo over
-the GitHub MCP connector instead; the env var `FLEXSENSE_CONTEXT_REPO` in the project's
-settings names the repo.)
+the GitHub MCP connector instead. Which repo: the `FLEXSENSE_CONTEXT_REPO` env value in the
+project's `.claude/settings.json` if that file is visible, else a one-line `.context-repo` /
+`context-repo.txt` marker in the working folder or `/mnt/project/` — that marker, attached to
+the Cowork project, is how a sandbox with no repo files and no env vars learns the name —
+else `net-flex/context`.)
 
 - `state.backend` must be `"notion"`. If it is missing, `null`, or something else: **say this
   project declares no Notion backend and stop.** Don't guess a database. Structured items can

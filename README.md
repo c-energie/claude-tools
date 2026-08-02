@@ -33,10 +33,23 @@ Which context repo a session loads is per-project:
 { "env": { "FLEXSENSE_CONTEXT_REPO": "c-energie/thesis-context" } }
 ```
 
-in the project's `.claude/settings.json`. Default `net-flex/context`; managed clones land at
-`~/.context/<owner>-<repo>` (the default remote keeps its historical `~/.flexsense/context`);
-`FLEXSENSE_CONTEXT_DIR` pins the location outright. Private repos authenticate via the OS git
-helper, else `FLEXSENSE_GIT_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`, else `gh auth token`.
+in the project's `.claude/settings.json`. The resolvers look for the name in order —
+**env var → the project's `.claude/settings(.local).json` env block → a one-line
+`.context-repo` or `context-repo.txt` marker file** (checked in the working folder and in
+`/mnt/project/`) → default `net-flex/context` — so the same committed settings file drives
+Claude Code whether or not the client applies the env var.
+
+**Cowork** is why the marker file exists: its sandbox sees neither your repo checkout nor any
+env var — the only channel in is files attached to the Cowork project, which surface under
+`/mnt/project/`. So attach a `context-repo.txt` containing exactly one line, e.g.
+`c-energie/thesis-context`, and every session in that Cowork project targets that repo (the
+skills use the same marker to aim their GitHub MCP calls). Also add the repo to the
+fine-grained PAT that the desktop app's GitHub MCP server holds.
+
+Managed clones land at `~/.context/<owner>-<repo>` (the default remote keeps its historical
+`~/.flexsense/context`); `FLEXSENSE_CONTEXT_DIR` pins the location outright. Private repos
+authenticate via the OS git helper, else `FLEXSENSE_GIT_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
+else `gh auth token`.
 
 > The `FLEXSENSE_*` env-var names are inherited from this machinery's origin in
 > `net-flex/flexsense-plugin` and kept so existing setups and the template keep working.
