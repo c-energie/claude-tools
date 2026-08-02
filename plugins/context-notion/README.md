@@ -3,7 +3,7 @@
 The **Notion middle layer** for [context-kit](https://github.com/c-energie/context-kit):
 generic Notion skills — actions, decisions, open questions, and the pending queue — driven
 entirely by the *project's* configuration, so one install serves every Notion-backed project
-(grid-flex and a thesis alike, each against its own workspace).
+(a product repo and a thesis alike, each against its own workspace).
 
 Install **alongside context-kit** (same marketplace). Nothing in this plugin names a specific
 database or person: all of that comes from the context repo's `context.json`.
@@ -97,19 +97,11 @@ node scripts/bump-version.mjs . patch
 "due soon" mean. `context-repo.sh` is a **copy of context-kit's** (plugins cannot reach into
 each other's install directories) — keep the two in step.
 
-## Port status (from net-flex/flexsense-plugin)
+## Roadmap
 
-Ported and generalised: the actions/decisions/open-questions CRUD, the pending queue
-(`pending-parse.mjs` intact — same entry format), `triage.mjs`, `bucket()`.
-
-Not (yet) here: **`sync-notion-mirror` + `mirror-render.mjs`** — the mirror render must keep
-its "unchanged Notion ⇒ no diff" property and needs a careful port, so FlexSense's version
-remains the only one; mirror *reading* (the fallback in `notion-config`) already works against
-any `notion/` directory regardless of what generated it. Also still in flexsense-plugin:
-stakeholder/project capture + tidies, meeting synthesis, watch-list, weekly runner, Slack
-digest — project-layer candidates, not generic.
-
-**FlexSense migration path:** net-flex/context gains a `context.json` with `state.notion`
-filled from flexsense-plugin's `scripts/flexsense.json`; the team then installs context-kit +
-context-notion and the flexsense plugin shrinks to what's listed above. Until then, FlexSense
-sessions keep using the flexsense plugin — don't run both against the same project.
+Planned here: **mirror sync** (a deterministic renderer of the Notion databases into the
+context repo's `notion/` folder, whose defining property is "unchanged Notion ⇒ no diff", so
+`git diff notion/` reads as a changelog — mirror *reading* already works in `notion-config`'s
+fallback against any `notion/` directory). Candidates beyond that: stakeholder/project
+capture and enrichment, meeting synthesis, watch-lists, recurring-review runners — kept out
+until they can be expressed purely through each project's `context.json`.

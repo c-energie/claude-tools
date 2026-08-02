@@ -80,7 +80,7 @@ git -C "$ROOT" add pending/ && git -C "$ROOT" commit -m "pending: [what it is]"
 ```
 
 Then **tell the user to push**, plainly: until they do, nobody can see the entry. If the
-context repo has a push-triggered notify Action (FlexSense's does), the push is also the
+context repo has a push-triggered notify Action, the push is also the
 notification — don't message anyone yourself on top of it.
 
 **Not this skill:** if Notion is reachable, `add-action` / `log-decision` /

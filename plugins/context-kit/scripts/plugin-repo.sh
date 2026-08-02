@@ -13,7 +13,7 @@
 # to CHANGE the plugin must go through the checkout this resolves.
 #
 # The repo is private. Credentials come from the environment's own git helper where there is
-# one, else FLEXSENSE_GIT_TOKEN / GH_TOKEN / GITHUB_TOKEN, else `gh auth token` — see the
+# one, else CONTEXT_GIT_TOKEN / GH_TOKEN / GITHUB_TOKEN, else `gh auth token` — see the
 # credentials section below. Never prompts, and never persists a token anywhere.
 #
 # Exit 1 (with a reason on stderr) if the repo can't be reached; the reason distinguishes
@@ -37,7 +37,7 @@ done
 # Cap the pull so a bad connection can't stall the caller. `timeout` is GNU coreutils —
 # present in Git Bash and on Linux, absent on stock macOS — so fall back to an unbounded
 # pull rather than failing where it isn't installed. Kept in step with context-repo.sh.
-PULL_TIMEOUT="${FLEXSENSE_GIT_TIMEOUT:-30}"
+PULL_TIMEOUT="${CONTEXT_GIT_TIMEOUT:-30}"
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
 
 # ---------------------------------------------------------------- credentials
@@ -54,7 +54,7 @@ TOKEN=""; TOKEN_TRIED=0; AUTH_HINT=""
 resolve_token() {
   [ "$TOKEN_TRIED" -eq 1 ] && { [ -n "$TOKEN" ]; return; }
   TOKEN_TRIED=1
-  TOKEN="${FLEXSENSE_GIT_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+  TOKEN="${CONTEXT_GIT_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
   if [ -z "$TOKEN" ] && command -v gh >/dev/null 2>&1; then
     TOKEN="$(gh auth token 2>/dev/null || true)"
   fi
@@ -67,9 +67,9 @@ resolve_token() {
 _git_run() {
   local capped="$1"; shift
   if [ "$capped" = 1 ] && [ -n "$TIMEOUT_BIN" ]; then
-    GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" "$TIMEOUT_BIN" "$PULL_TIMEOUT" git "$@" >/dev/null 2>"$ERR_TMP"
+    GIT_TERMINAL_PROMPT=0 CONTEXT_TOKEN="$TOKEN" "$TIMEOUT_BIN" "$PULL_TIMEOUT" git "$@" >/dev/null 2>"$ERR_TMP"
   else
-    GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" git "$@" >/dev/null 2>"$ERR_TMP"
+    GIT_TERMINAL_PROMPT=0 CONTEXT_TOKEN="$TOKEN" git "$@" >/dev/null 2>"$ERR_TMP"
   fi
 }
 
@@ -79,11 +79,11 @@ git_net() {
   grep -qE "$AUTH_RE" "$ERR_TMP" 2>/dev/null || return 1
   if resolve_token; then
     _git_run "$capped" -c credential.helper= \
-      -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$FLEXSENSE_TOKEN"; }; f' \
+      -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$CONTEXT_TOKEN"; }; f' \
       "$@" && return 0
     AUTH_HINT="authentication failed for $PLUGIN_REMOTE even with a token (expired, or no access to this repo?)"
   else
-    AUTH_HINT="authentication required for $PLUGIN_REMOTE (private repo, no git credential in this environment) — set FLEXSENSE_GIT_TOKEN or sign in with 'gh auth login'"
+    AUTH_HINT="authentication required for $PLUGIN_REMOTE (private repo, no git credential in this environment) — set CONTEXT_GIT_TOKEN or sign in with 'gh auth login'"
   fi
   return 1
 }

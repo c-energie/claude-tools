@@ -30,9 +30,9 @@ via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_REPO`).
 
 - **`scripts/context-repo.sh` is a copy of context-kit's** — plugins cannot reference each
   other's `${CLAUDE_PLUGIN_ROOT}`, so this copy exists on purpose. A resolver fix lands in
-  context-kit first, then here (and in flexsense-plugin until that team migrates).
-- **`pending-parse.mjs` owns the pending entry format** — identical to flexsense-plugin's so
-  queues stay interchangeable; only its user-facing message strings differ.
+  context-kit first, then here.
+- **`pending-parse.mjs` owns the pending entry format** — the single definition, so
+  queues stay interchangeable across plugin versions.
 - **Owners resolve from `state.notion.people`, never `notion-search`** — workspace guests are
   invisible to search and the failure is silent.
 - **An empty Notion result is never evidence of absence** (guests get zero rows, not errors).

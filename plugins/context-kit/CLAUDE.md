@@ -9,9 +9,7 @@ Anything project- or workspace-specific belongs in a higher layer: the planned N
 middle-layer plugin, or the project's own context repo (created from
 `c-energie/context-template`). See README.md for the three-layer picture and port status.
 
-This repo began as an extraction from `net-flex/flexsense-plugin`; that repo still carries its
-own copy of this machinery for the FlexSense team. Until that team migrates, a fix to the
-resolver or hook belongs in **both** repos.
+A fix to the resolver or hook belongs in both plugins' copies (see the marketplace CLAUDE.md).
 
 ## Commands
 
@@ -23,7 +21,7 @@ bash scripts/plugin-repo.sh --writable   # resolve THIS repo's checkout, push-re
 node scripts/dates.mjs today
 ```
 
-## Invariants (inherited from flexsense-plugin, all still load-bearing)
+## Invariants (all load-bearing)
 
 - **Version lives in `plugin.json` only** — a `version` in a `marketplace.json` `plugins[]`
   entry silently overrides it.

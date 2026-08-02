@@ -1,8 +1,7 @@
 // Shared helpers for the context-notion scripts. Nothing here needs the model.
 //
-// Unlike this file's ancestor in flexsense-plugin (which read a baked-in flexsense.json),
-// the config here is per-project: the `state.notion` block of the context repo's
-// context.json. Resolution order:
+// The config is per-project: the `state.notion` block of the context repo's context.json —
+// nothing is baked in. Resolution order:
 //   1. CONTEXT_CONFIG=/path/to/context.json  — explicit, no git, no bash needed
 //   2. resolve the context repo via context-repo.sh --no-pull and read its context.json
 // Either way the project must declare `"state": { "backend": "notion", "notion": {…} }` —
@@ -34,7 +33,7 @@ try {
   parsed = { path, json: JSON.parse(readFileSync(path, 'utf8')) };
 } catch (e) {
   console.error(`Cannot load the project's context.json: ${e.message.split('\n')[0]}`);
-  console.error('Set CONTEXT_CONFIG=/path/to/context.json, or check FLEXSENSE_CONTEXT_REPO points at a reachable context repo.');
+  console.error('Set CONTEXT_CONFIG=/path/to/context.json, or check PROJECT_CONTEXT_REPO points at a reachable context repo.');
   process.exit(2);
 }
 

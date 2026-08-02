@@ -17,7 +17,7 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # In step with scripts/context-repo.sh: which context repo is PROJECT_CONTEXT_REPO
-# (FLEXSENSE_CONTEXT_REPO honoured as a legacy alias) — env var, else the project's .claude
+# — env var, else the project's .claude
 # settings files (laptop — the committed settings.json rides along in the checkout), else a
 # one-line marker file (Cowork — attached project files are the only channel into its
 # sandbox, and env vars cannot be set there). Deliberately NO default: an unconfigured
@@ -29,10 +29,9 @@ settings_key() {  # $1 = file, $2 = json key
 marker_repo() {
   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
 }
-CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-${FLEXSENSE_CONTEXT_REPO:-}}"
+CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-}"
 for _f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json"; do
   [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
-  [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" FLEXSENSE_CONTEXT_REPO)"
 done
 for _m in "$proj/.context-repo" "$proj/context-repo.txt" \
           "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
@@ -54,7 +53,6 @@ fi
 # The real resolver re-derives this identically; exporting pins both to the same answer even
 # if only one copy is ever updated.
 export PROJECT_CONTEXT_REPO="$CONTEXT_REMOTE"
-export FLEXSENSE_CONTEXT_REPO="$CONTEXT_REMOTE"
 RESOLVER="$HERE/../scripts/context-repo.sh"
 
 # Unknown arguments are ignored rather than rejected: this runs as a SessionStart hook, and a
@@ -85,13 +83,10 @@ else
   # commands/, agents/ and hooks/ — a top-level scripts/ directory may not survive
   # packaging. Without this branch the whole session context silently disappears when it
   # doesn't. Keep in step with scripts/context-repo.sh; that file is the real one.
-  # Clone dir follows the remote, in step with context-repo.sh: FLEXSENSE_CONTEXT_DIR beats
-  # everything, the default remote keeps its historical ~/.flexsense/context, any other remote
-  # lands at ~/.context/<owner>-<repo>.
-  if [ -n "${FLEXSENSE_CONTEXT_DIR:-}" ]; then
-    CLONE_DIR="$FLEXSENSE_CONTEXT_DIR"
-  elif [ "$CONTEXT_REMOTE" = "net-flex/context" ]; then
-    CLONE_DIR="$HOME/.flexsense/context"
+  # Clone dir, in step with context-repo.sh: PROJECT_CONTEXT_DIR pins it outright, else
+  # ~/.context/<owner>-<repo>.
+  if [ -n "${PROJECT_CONTEXT_DIR:-}" ]; then
+    CLONE_DIR="$PROJECT_CONTEXT_DIR"
   else
     CLONE_DIR="$HOME/.context/${CONTEXT_REMOTE//\//-}"
   fi
@@ -105,11 +100,11 @@ else
   # The token goes through a transient helper and the environment — never into the remote URL
   # or .git/config, so nothing this prints can carry it.
   TOKEN=""; TOKEN_TRIED=0
-  HELPER='!f() { echo username=x-access-token; echo "password=$FLEXSENSE_TOKEN"; }; f'
+  HELPER='!f() { echo username=x-access-token; echo "password=$CONTEXT_TOKEN"; }; f'
   resolve_token() {
     [ "$TOKEN_TRIED" -eq 1 ] && { [ -n "$TOKEN" ]; return; }
     TOKEN_TRIED=1
-    TOKEN="${FLEXSENSE_GIT_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+    TOKEN="${CONTEXT_GIT_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
     if [ -z "$TOKEN" ] && command -v gh >/dev/null 2>&1; then
       TOKEN="$(gh auth token 2>/dev/null || true)"
     fi
@@ -118,10 +113,10 @@ else
   run_git() {   # run_git <capped 0|1> <git args...>
     local capped="$1"; shift
     if [ "$capped" = 1 ] && [ -n "$TIMEOUT_BIN" ]; then
-      GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" \
-        "$TIMEOUT_BIN" "${FLEXSENSE_GIT_TIMEOUT:-30}" git "$@" >/dev/null 2>&1
+      GIT_TERMINAL_PROMPT=0 CONTEXT_TOKEN="$TOKEN" \
+        "$TIMEOUT_BIN" "${CONTEXT_GIT_TIMEOUT:-30}" git "$@" >/dev/null 2>&1
     else
-      GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" git "$@" >/dev/null 2>&1
+      GIT_TERMINAL_PROMPT=0 CONTEXT_TOKEN="$TOKEN" git "$@" >/dev/null 2>&1
     fi
   }
   git_net() {   # same, retried once with a token
@@ -154,16 +149,16 @@ else
         elif resolve_token; then
           REFRESH_WARNING="clone failed even with a token (expired, or no access to this repo?)"
         else
-          REFRESH_WARNING="clone failed, and there is no git credential in this environment for a private repo — set FLEXSENSE_GIT_TOKEN or sign in with 'gh auth login'"
+          REFRESH_WARNING="clone failed, and there is no git credential in this environment for a private repo — set CONTEXT_GIT_TOKEN or sign in with 'gh auth login'"
         fi
       fi ;;
   esac
 
   if [ -n "$ROOT" ] && ! git_net 1 -C "$ROOT" pull --ff-only --autostash; then
     if resolve_token; then
-      REFRESH_WARNING="pull failed or timed out after ${FLEXSENSE_GIT_TIMEOUT:-30}s, including a retry with a token; working from the local state"
+      REFRESH_WARNING="pull failed or timed out after ${CONTEXT_GIT_TIMEOUT:-30}s, including a retry with a token; working from the local state"
     else
-      REFRESH_WARNING="pull failed after ${FLEXSENSE_GIT_TIMEOUT:-30}s, and there is no git credential in this environment for a private repo — set FLEXSENSE_GIT_TOKEN or sign in with 'gh auth login'; working from the local state"
+      REFRESH_WARNING="pull failed after ${CONTEXT_GIT_TIMEOUT:-30}s, and there is no git credential in this environment for a private repo — set CONTEXT_GIT_TOKEN or sign in with 'gh auth login'; working from the local state"
     fi
   fi
 fi

@@ -11,7 +11,7 @@ the context now, and fixes gaps with the user.
 
 ## 1. How is (or isn't) the repo named? Check every channel, report what you find
 
-- `PROJECT_CONTEXT_REPO` in the environment (`FLEXSENSE_CONTEXT_REPO` is a legacy alias).
+- `PROJECT_CONTEXT_REPO` in the environment.
 - The project's `.claude/settings.local.json` / `.claude/settings.json` env block.
 - A one-line marker file — `.context-repo` or `context-repo.txt` — in the working directory
   or the attached project files. Layouts differ by surface; look in `/mnt/project/`,

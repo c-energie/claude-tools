@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// FlexSense date maths. Deterministic replacement for "work out today + a week" in prose.
+// Date maths. Deterministic replacement for "work out today + a week" in prose.
 // Pure UTC calendar arithmetic — no timezone drift, no GNU-vs-BSD `date` portability trap.
 //
 //   node dates.mjs today

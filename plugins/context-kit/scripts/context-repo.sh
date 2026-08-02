@@ -3,19 +3,19 @@
 # stdout (nothing else) so callers can do:  ROOT="$(bash scripts/context-repo.sh)"
 #
 # Which repo (owner/repo on github.com) comes from PROJECT_CONTEXT_REPO — env var, the
-# project's .claude settings files, or a marker file, see below. FLEXSENSE_CONTEXT_REPO is
-# honoured as a legacy alias. There is deliberately no default repo.
+# project's .claude settings files, or a marker file, see below. There is deliberately no
+# default repo.
 #
 #   scripts/context-repo.sh              # resolve + pull --ff-only --autostash (30s cap)
 #   scripts/context-repo.sh --no-pull    # resolve only — no network against an existing clone
 #   scripts/context-repo.sh --writable   # also un-shallow the managed clone so pushes work
 #
-# The pull is capped at FLEXSENSE_GIT_TIMEOUT seconds (default 30) where `timeout` exists.
+# The pull is capped at CONTEXT_GIT_TIMEOUT seconds (default 30) where `timeout` exists.
 # Clone and --unshallow are deliberately NOT capped: they are one-off and legitimately slower
 # than a pull, and cutting them short leaves no usable checkout at all.
 #
 # The repo is private. Credentials come from the environment's own git helper where there is
-# one, else FLEXSENSE_GIT_TOKEN / GH_TOKEN / GITHUB_TOKEN, else `gh auth token` — see the
+# one, else CONTEXT_GIT_TOKEN / GH_TOKEN / GITHUB_TOKEN, else `gh auth token` — see the
 # credentials section below. Never prompts, and never persists a token anywhere.
 #
 # Exit 1 (with a reason on stderr) if the context repo can't be reached — callers decide
@@ -40,10 +40,9 @@ settings_key() {  # $1 = file, $2 = json key
 marker_repo() {  # first line of a marker file, whitespace stripped ("owner/repo" has none)
   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
 }
-CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-${FLEXSENSE_CONTEXT_REPO:-}}"
+CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-}"
 for _f in "$cwd/.claude/settings.local.json" "$cwd/.claude/settings.json"; do
   [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
-  [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" FLEXSENSE_CONTEXT_REPO)"
 done
 # Marker candidates cover every sandbox layout seen so far: the working dir; /mnt/project
 # (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads (the
@@ -70,14 +69,11 @@ if [ -z "$CONTEXT_REMOTE" ]; then
   exit 1
 fi
 
-# The managed clone follows the remote: FLEXSENSE_CONTEXT_DIR beats everything, net-flex/context
-# keeps its historical ~/.flexsense/context so existing FlexSense clones survive, and any other
-# remote lands at ~/.context/<owner>-<repo> — owner included because context repos tend to all
-# be *named* "context", and two projects' clones must not collide.
-if [ -n "${FLEXSENSE_CONTEXT_DIR:-}" ]; then
-  CLONE_DIR="$FLEXSENSE_CONTEXT_DIR"
-elif [ "$CONTEXT_REMOTE" = "net-flex/context" ]; then
-  CLONE_DIR="$HOME/.flexsense/context"
+# The managed clone lands at ~/.context/<owner>-<repo> — owner included because context repos
+# tend to all be *named* "context", and two projects' clones must not collide.
+# PROJECT_CONTEXT_DIR pins the location outright.
+if [ -n "${PROJECT_CONTEXT_DIR:-}" ]; then
+  CLONE_DIR="$PROJECT_CONTEXT_DIR"
 else
   CLONE_DIR="$HOME/.context/${CONTEXT_REMOTE//\//-}"
 fi
@@ -95,7 +91,7 @@ done
 # session on a slow or half-open connection. Cap it. `timeout` is GNU coreutils — present in
 # Git Bash and on Linux, absent on stock macOS — so fall back to an unbounded pull rather than
 # failing outright where it isn't installed.
-PULL_TIMEOUT="${FLEXSENSE_GIT_TIMEOUT:-30}"
+PULL_TIMEOUT="${CONTEXT_GIT_TIMEOUT:-30}"
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
 
 # ---------------------------------------------------------------- credentials
@@ -108,7 +104,7 @@ TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
 # retry with a token when the failure was specifically AUTHENTICATION. Auth failures return
 # immediately, so the retry cannot push a capped pull toward twice its budget.
 AUTH_RE='could not read Username|Authentication failed|Invalid username or password|terminal prompts disabled|403 Forbidden|Repository not found'
-ERR_TMP="${TMPDIR:-/tmp}/flexsense-ctx-git-$$.err"
+ERR_TMP="${TMPDIR:-/tmp}/context-git-$$.err"
 trap 'rm -f "$ERR_TMP"' EXIT
 
 TOKEN=""; TOKEN_TRIED=0; AUTH_HINT=""
@@ -118,7 +114,7 @@ TOKEN=""; TOKEN_TRIED=0; AUTH_HINT=""
 resolve_token() {
   [ "$TOKEN_TRIED" -eq 1 ] && { [ -n "$TOKEN" ]; return; }
   TOKEN_TRIED=1
-  TOKEN="${FLEXSENSE_GIT_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+  TOKEN="${CONTEXT_GIT_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
   # Borrowing the GitHub CLI's token is the no-secret path: if gh is already signed in, nobody
   # has to issue, store or paste a personal access token at all.
   if [ -z "$TOKEN" ] && command -v gh >/dev/null 2>&1; then
@@ -134,9 +130,9 @@ resolve_token() {
 _git_run() {
   local capped="$1"; shift
   if [ "$capped" = 1 ] && [ -n "$TIMEOUT_BIN" ]; then
-    GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" "$TIMEOUT_BIN" "$PULL_TIMEOUT" git "$@" >/dev/null 2>"$ERR_TMP"
+    GIT_TERMINAL_PROMPT=0 CONTEXT_TOKEN="$TOKEN" "$TIMEOUT_BIN" "$PULL_TIMEOUT" git "$@" >/dev/null 2>"$ERR_TMP"
   else
-    GIT_TERMINAL_PROMPT=0 FLEXSENSE_TOKEN="$TOKEN" git "$@" >/dev/null 2>"$ERR_TMP"
+    GIT_TERMINAL_PROMPT=0 CONTEXT_TOKEN="$TOKEN" git "$@" >/dev/null 2>"$ERR_TMP"
   fi
 }
 
@@ -146,11 +142,11 @@ git_net() {
   grep -qE "$AUTH_RE" "$ERR_TMP" 2>/dev/null || return 1
   if resolve_token; then
     _git_run "$capped" -c credential.helper= \
-      -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$FLEXSENSE_TOKEN"; }; f' \
+      -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$CONTEXT_TOKEN"; }; f' \
       "$@" && return 0
     AUTH_HINT="authentication failed for $CONTEXT_REMOTE even with a token (expired, or no access to this repo?)"
   else
-    AUTH_HINT="authentication required for $CONTEXT_REMOTE (private repo, no git credential in this environment) — set FLEXSENSE_GIT_TOKEN or sign in with 'gh auth login'"
+    AUTH_HINT="authentication required for $CONTEXT_REMOTE (private repo, no git credential in this environment) — set CONTEXT_GIT_TOKEN or sign in with 'gh auth login'"
   fi
   return 1
 }

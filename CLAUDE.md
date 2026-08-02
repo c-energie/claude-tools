@@ -21,7 +21,6 @@ its installer did not surface a root-sourced plugin).
   it to source / category / tags; hand-verify it after edits (no root-level linter).
 - **`scripts/context-repo.sh` exists in BOTH plugins** — plugins cannot reach into each
   other's install directories, so the copy is deliberate. A resolver fix lands in
-  context-kit's copy first, then context-notion's, then net-flex/flexsense-plugin (which
-  still carries the ancestral copy until the FlexSense team migrates).
+  context-kit's copy first, then context-notion's.
 - `*.sh` stay LF (root `.gitattributes`); no angle brackets in any front-matter value; hooks
   exit 0 on every path.

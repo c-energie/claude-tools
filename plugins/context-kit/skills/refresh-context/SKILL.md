@@ -55,7 +55,7 @@ context, superseding whatever loaded at session start.
 
 **If it prints the `WARNING — THIS CONTEXT MAY BE STALE` banner, relay that.** The pull failed
 and you are still on the old copy. Retry once if it looks like a transient timeout
-(`FLEXSENSE_GIT_TIMEOUT=60` raises the 30s cap), then report the failure.
+(`CONTEXT_GIT_TIMEOUT=60` raises the 30s cap), then report the failure.
 
 ## 3. Report what changed
 
