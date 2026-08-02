@@ -186,10 +186,20 @@ emit() {  # $1 = one-line user-facing status; the body is already in $OUT_TMP
 
 if [ -z "$CONTEXT_REMOTE" ]; then
   {
-    echo "No context repo is configured for this project. Configure one via the PROJECT_CONTEXT_REPO env var, an env block in .claude/settings.json, or a one-line .context-repo / context-repo.txt marker file (owner/repo) attached to the project."
-    echo "Do NOT guess or assume a context repo — an unconfigured project has no shared context. Skills still load from the plugin."
+    echo "No context repo was configured for this project at session start."
+    echo
+    echo "BEFORE concluding there is no shared context, look for a marker this hook may have missed:"
+    echo "search the project's attached files for a one-line 'context-repo.txt' or '.context-repo'"
+    echo "(likely spots: the imported project docs — try: ls ~/mnt/.projects/*/docs/ /mnt/project/ ~/mnt/uploads/ — or the working directory)."
+    echo "If found, treat its owner/repo line as this project's context repo: read its memory.md"
+    echo "and context.json (git if available, else the GitHub MCP connector) and treat them as the"
+    echo "session context. Offer the user the context-setup skill to diagnose why the hook missed it."
+    echo
+    echo "If no marker exists either: this project has no shared context — do NOT guess a repo."
+    echo "Configure one via PROJECT_CONTEXT_REPO, a .claude/settings.json env block, or by attaching"
+    echo "a context-repo.txt marker; the context-setup skill walks the user through it."
   } > "$OUT_TMP"
-  emit "⚠ No context repo configured for this project — set PROJECT_CONTEXT_REPO, a .claude/settings.json env block, or a context-repo.txt marker"
+  emit "⚠ No context repo configured — run context-setup, or add a context-repo.txt marker / PROJECT_CONTEXT_REPO setting"
 fi
 
 if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
