@@ -199,16 +199,18 @@ if [ -z "$CONTEXT_REMOTE" ]; then
   {
     echo "No context repo was configured for this project at session start."
     echo
-    echo "BEFORE concluding there is no shared context, look for a marker this hook may have missed:"
-    echo "search the project's attached files for a one-line 'context-repo.txt' or '.context-repo'"
-    echo "(likely spots: the imported project docs — try: ls ~/mnt/.projects/*/docs/ /mnt/project/ ~/mnt/uploads/ — or the working directory)."
-    echo "If found, treat its owner/repo line as this project's context repo: read its memory.md"
-    echo "and context.json (git if available, else the GitHub MCP connector) and treat them as the"
-    echo "session context. Offer the user the context-setup skill to diagnose why the hook missed it."
+    echo "MANDATORY FIRST ACTION of your first response — before answering the user's message,"
+    echo "whatever it is (even a bare greeting): look for a marker this hook may have missed."
+    echo "Run: find ~/mnt /mnt . -maxdepth 5 -name 'context-repo.txt' -o -name '.context-repo' 2>/dev/null"
+    echo "If a marker is found, its one owner/repo line names this project's context repo:"
+    echo "read that repo's memory.md and context.json (git if available, else the GitHub MCP"
+    echo "connector), treat them as the session context, and tell the user in one line which"
+    echo "repo loaded and by which route. Mention context-setup can diagnose why the hook missed it."
     echo
-    echo "If no marker exists either: this project has no shared context — do NOT guess a repo."
-    echo "Configure one via PROJECT_CONTEXT_REPO, a .claude/settings.json env block, or by attaching"
-    echo "a context-repo.txt marker; the context-setup skill walks the user through it."
+    echo "Only if no marker exists either: this project has no shared context — say so, do NOT"
+    echo "guess a repo, and continue with the user's message. Configure one via"
+    echo "PROJECT_CONTEXT_REPO, a .claude/settings.json env block, or an attached"
+    echo "context-repo.txt marker; the context-setup skill walks the user through it."
   } > "$OUT_TMP"
   emit "⚠ No context repo configured — run context-setup, or add a context-repo.txt marker / PROJECT_CONTEXT_REPO setting"
 fi
