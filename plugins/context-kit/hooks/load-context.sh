@@ -217,11 +217,21 @@ fi
 
 if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
   {
-    echo "Context unavailable (no local clone of $CONTEXT_REMOTE and couldn't fetch it). Skills still load from the plugin."
+    echo "This project's context repo is $CONTEXT_REMOTE, but git could not fetch it here."
     [ -n "$REFRESH_WARNING" ] && echo "Reason: $REFRESH_WARNING"
+    echo
+    echo "MANDATORY FIRST ACTION of your first response — before answering the user's message,"
+    echo "whatever it is (even a bare greeting): if a GitHub MCP connector is available, read"
+    echo "$CONTEXT_REMOTE's memory.md (and context.json, plus threads/INDEX.md if present) with"
+    echo "it, treat that as the session context, and tell the user in one line which repo loaded"
+    echo "and that the connector was the route. This is the NORMAL route in cloud sandboxes,"
+    echo "not an error path."
+    echo
+    echo "Only if there is no GitHub connector either: say the context is unavailable and why."
+    echo "Never answer from a guess or another project's context. Skills still load from the plugin."
     :
   } > "$OUT_TMP"
-  emit "⚠ Shared context UNAVAILABLE — $CONTEXT_REMOTE could not be reached${REFRESH_WARNING:+: $REFRESH_WARNING}"
+  emit "⚠ $CONTEXT_REMOTE unreachable via git — reading over the GitHub connector instead${REFRESH_WARNING:+ (git: $REFRESH_WARNING)}"
 fi
 
 {
