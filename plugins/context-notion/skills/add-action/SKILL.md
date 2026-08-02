@@ -1,0 +1,41 @@
+---
+name: add-action
+description: Add one or more action items to the project's Notion actions database (which database comes from the context repo's context.json). Use when a task/action with an owner (and optional due date) needs tracking — triggers like "add an action", "log these action items", "capture these to-dos".
+---
+
+# Add an action
+
+Records action items as rows in the project's **actions** database. Requires the Notion (MCP)
+connection. **Read `notion-config` first** — it defines how to resolve the project's config,
+the guest gap, and the fallback ladder.
+
+## Target
+
+`databases.actions` from the project's `context.json` `state.notion` block — create page(s)
+with `notion-create-pages`, parent `{type: "data_source_id", data_source_id: "…"}` (strip any
+`collection://` prefix). Multiple actions go in **one** call (array of pages). No `actions`
+key in the config → say so and stop; the fix is a line in `context.json`.
+
+## Properties
+
+`schemas.actions` names the title property and the rest — follow it exactly. Universally:
+
+- The **title is the action as an imperative** ("Draft the DNO one-pager") — never fold the
+  owner or date into it; those go in their properties.
+- **Owner-type properties**: user IDs from the roster (`state.notion.people`) — never
+  `notion-search`. Unknown or `null` ID → omit the property and say so.
+- **Date properties**: both `date:Name:start` and `date:Name:is_datetime` = `0`. Dates from
+  `dates.mjs`, not head-math.
+- **Status**: the schema's listed options only; use its stated default when the user didn't
+  say.
+
+## Steps
+
+1. Confirm task list, owners and due dates if ambiguous.
+2. Create the page(s) in one `notion-create-pages` call.
+3. Report the new page URL(s).
+
+**If Notion can't be reached or the write fails** — don't retry, don't drop it: `add-pending`.
+
+**Not this skill:** changing an existing row is `update-action`; an unresolved question is
+`add-open-question`.

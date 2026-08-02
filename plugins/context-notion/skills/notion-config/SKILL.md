@@ -1,0 +1,72 @@
+---
+name: notion-config
+description: How the context-notion skills find and use a project's Notion configuration — the context.json state.notion contract, the workspace-guest gap, the property traps, and the fallback ladder. Background knowledge for every skill in this plugin; not a task to run.
+user-invocable: false
+---
+
+# The project's Notion configuration
+
+Every skill in this plugin is generic: which databases, which properties, which people all
+come from the **project's context repo**, at runtime. This skill is the one place that
+procedure lives.
+
+## 1. Resolve the config
+
+```bash
+ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
+```
+
+Read `$ROOT/context.json`. (No shell — Cowork? Read `context.json` from the context repo over
+the GitHub MCP connector instead; the env var `FLEXSENSE_CONTEXT_REPO` in the project's
+settings names the repo.)
+
+- `state.backend` must be `"notion"`. If it is missing, `null`, or something else: **say this
+  project declares no Notion backend and stop.** Don't guess a database. Structured items can
+  still be queued with `add-pending` — the queue needs no backend.
+- `state.notion.databases` — key → data-source ID. Skills name the key they need
+  (`actions`, `decisionLog`, `openQuestions`); a project may define more.
+- `state.notion.schemas.<key>` — the title property's name, then each property as
+  `"Name": "type — options/notes"`. **Follow it exactly, including odd spellings and trailing
+  spaces in property names** — they exist in real workspaces and "fixing" them writes to a
+  property that isn't there, silently.
+- `state.notion.people` — the roster. **This is the only place to resolve a person.**
+- `state.notion.defaults` — e.g. `dueSoonDays`.
+
+If a skill needs a database key or schema the project doesn't define, say which key is missing
+from `context.json` — a one-line fix — rather than improvising against a database found by
+search.
+
+## 2. The workspace-guest gap
+
+The Notion connector only works fully for a workspace **member**. For a **guest**: reads
+return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
+
+- **An empty result is never evidence of absence.** Before answering "there are none", check
+  the fallback (below) or say the result may be the guest gap.
+- **Never resolve people via `notion-search`** — guests are invisible to it, and the person
+  property ends up silently empty. Use the roster; `notionUserId: null` → omit the property
+  and say so. A person field that is confidently wrong is worse than an empty one.
+
+## 3. Fallback ladder
+
+- **Reads:** if Notion returns empty or fails, fall back to the context repo's `notion/`
+  mirror if the repo has one — and **label the answer with its `syncedOn` date** (from
+  `notion/_synced.json`). The mirror is a snapshot: Notion wins over it. No mirror either →
+  say the read couldn't be done, not "there are none".
+- **Writes:** if Notion can't be written, **don't retry and don't drop it — `add-pending`**
+  queues it in the context repo for someone with access to transfer.
+- State which route produced an answer (live Notion, mirror + date, or queued) — provenance
+  differs and the user needs to know which they got.
+
+## 4. Property traps (all workspaces)
+
+- **The title is the title.** Owners, dates, statuses go in properties, never in the title
+  text — "Adam — chase UKPN — 5 Aug" arrives as an unfilterable row.
+- **Every date property needs both** `date:Name:start` (`YYYY-MM-DD`) **and**
+  `date:Name:is_datetime` = `0`. Compute dates with
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs"` (`today`, `add 3d`, `add weekly`) — never
+  work out "next Friday" by hand.
+- **Use existing select/status options only** (the schema lists them) unless the user
+  explicitly asks to add a new option.
+- **There is no delete tool** on this connection. A wrong row must be removed by hand in the
+  Notion UI — which is why write skills confirm before creating.

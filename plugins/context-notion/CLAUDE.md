@@ -1,0 +1,44 @@
+# CLAUDE.md
+
+## What this repo is
+
+The **Notion middle layer** plugin (`context-notion`) in the c-energie three-layer context
+architecture: core = context-kit (repo machinery), middle = this (generic Notion skills),
+project = each context repo's `context.json`. Nothing project-specific belongs here — no
+database IDs, no names, no property schemas. If a skill needs one, it reads the project's
+`state.notion` block; the README defines that contract and is the file to update when the
+contract grows.
+
+Shipped from the **context-kit marketplace** (`c-energie/context-kit`'s marketplace.json lists
+this repo) — there is no marketplace.json here, and versions live in `plugin.json` only.
+
+## Commands
+
+```bash
+node scripts/check-plugin.mjs .          # lint; run before any commit
+node scripts/bump-version.mjs . patch    # writes plugin.json only
+CONTEXT_CONFIG=path/to/context.json node scripts/triage.mjs rows.json --today 2026-08-01
+node scripts/pending-parse.mjs "$ROOT" --json
+```
+
+`CONTEXT_CONFIG` pins the config for testing; without it `lib.mjs` resolves the context repo
+via `scripts/context-repo.sh` (which obeys `FLEXSENSE_CONTEXT_REPO`).
+
+## Invariants
+
+- **`scripts/context-repo.sh` is a copy of context-kit's** — plugins cannot reference each
+  other's `${CLAUDE_PLUGIN_ROOT}`, so this copy exists on purpose. A resolver fix lands in
+  context-kit first, then here (and in flexsense-plugin until that team migrates).
+- **`pending-parse.mjs` owns the pending entry format** — identical to flexsense-plugin's so
+  queues stay interchangeable; only its user-facing message strings differ.
+- **Owners resolve from `state.notion.people`, never `notion-search`** — workspace guests are
+  invisible to search and the failure is silent.
+- **An empty Notion result is never evidence of absence** (guests get zero rows, not errors).
+  Read skills fall back to the context repo's `notion/` mirror labelled with its `syncedOn`;
+  write skills fall back to `add-pending`.
+- **Follow `schemas` exactly, including odd property names** (trailing spaces exist — never
+  trim). Every date property needs both `date:Name:start` and `date:Name:is_datetime` = 0.
+  Owners/dates/statuses go in properties, never in a title.
+- **Skills that write to the context repo ask before committing/pushing**; `process-pending`
+  is `disable-model-invocation: true`.
+- Version in `plugin.json` only; no angle brackets in front-matter values; `*.sh` stay LF.

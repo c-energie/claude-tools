@@ -13,7 +13,7 @@ machinery for loading, refreshing and writing a project's **context repo**.
 │   Created from the c-energie/context-template repo.         │
 ├─────────────────────────────────────────────────────────────┤
 │ Middle layer — structured-state backend                     │
-│   c-energie/context-notion (this marketplace): generic      │
+│   plugins/context-notion in THIS repo: generic              │
 │   add-action / log-decision / query / update / pending-queue│
 │   skills, parameterised by each project's context.json      │
 │   (database IDs, property schemas, roster). One install     │

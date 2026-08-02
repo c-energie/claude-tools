@@ -19,7 +19,7 @@
     },
     {
       "name": "context-notion",
-      "source": { "source": "github", "repo": "c-energie/context-notion" },
+      "source": "./plugins/context-notion",
       "category": "productivity"
     }
   ]

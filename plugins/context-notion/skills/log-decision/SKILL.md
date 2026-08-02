@@ -1,0 +1,40 @@
+---
+name: log-decision
+description: Log a key decision to the project's Notion decision-log database (which database comes from the context repo's context.json). Use whenever a decision is reached that should be recorded — triggers like "log that to the decision log", "record this decision", "add a decision".
+---
+
+# Log a decision
+
+Records a decision as a row in the project's **decision log**. Requires the Notion (MCP)
+connection. **Read `notion-config` first** — config resolution, guest gap, fallback ladder.
+
+## Target
+
+`databases.decisionLog` from the project's `context.json`; create with `notion-create-pages`.
+No such key → say so and stop.
+
+## Properties
+
+`schemas.decisionLog` is authoritative. Universally:
+
+- The **title is the decision itself**, stated as the outcome ("Register the company via ANNA
+  Money"), not the topic ("company registration").
+- **Capture the why**: rationale, alternatives considered, and anything superseded go in the
+  schema's notes/rich-text property — a decision without its reasoning re-litigates itself in
+  six months.
+- The decision **date** (start + `is_datetime` = `0`); owners from the roster.
+- If the schema has a revisit/review property, ask whether this decision is provisional and
+  set it — provisional decisions that look permanent are how stale rules survive.
+
+## Steps
+
+1. Confirm the decision wording and who made it, if ambiguous.
+2. Check the log for an earlier decision on the same topic (`query-decisions`) — if one
+   exists, say so and record this one as superseding it (per the schema's convention) rather
+   than leaving two contradictory rows unmarked.
+3. Create the page; report the URL.
+
+**Write fails or no Notion?** `add-pending`.
+
+**Not this skill:** reading the log is `query-decisions`; something still unresolved is
+`add-open-question`.
