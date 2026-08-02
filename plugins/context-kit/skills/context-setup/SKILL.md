@@ -48,6 +48,11 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
   editing rather than "repo not found".
 - Report the outcome the user cares about in one line: which repo, reachable or not and why,
   and the newest commit's age.
+- **Check the connector gate:** if `context.json` has a `connections` block, verify each
+  named MCP server's tools are actually present in this session, and flag any OTHER
+  connection of the same provider as off-limits for this project. If the project uses
+  connectors but declares no `connections` block, offer to add one — it is what stops a
+  multi-workspace machine writing through the wrong connection.
 
 ## 4. If the hook should have done this but didn't
 

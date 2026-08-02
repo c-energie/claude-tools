@@ -26,6 +26,12 @@ if none is found, say no context repo is configured — never guess one.)
 - `state.backend` must be `"notion"`. If it is missing, `null`, or something else: **say this
   project declares no Notion backend and stop.** Don't guess a database. Structured items can
   still be queued with `add-pending` — the queue needs no backend.
+- **`connections` (top level of context.json) gates which connectors serve this project** —
+  e.g. `{ "github": "github-thesis", "notion": "notion-thesis" }`, naming MCP server
+  namespaces (`mcp__notion-thesis__…` tools). A machine can hold several workspace-scoped
+  connections; **use ONLY the one this project declares** for each provider. If several
+  Notion connections are visible and the project declares none, **ask the user which — never
+  guess**: writing through another project's connection puts rows in the wrong workspace.
 - `state.notion.databases` — key → data-source ID. Skills name the key they need
   (`actions`, `decisionLog`, `openQuestions`); a project may define more.
 - `state.notion.schemas.<key>` — the title property's name, then each property as
