@@ -128,12 +128,43 @@ else
   fi
 fi
 
-if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
-  echo "Context unavailable (no local clone of $CONTEXT_REMOTE and couldn't fetch it). Skills still load from the plugin."
-  [ -n "$REFRESH_WARNING" ] && echo "Reason: $REFRESH_WARNING"
+# ---------------------------------------------------------------- emission
+# In session mode, wrap the payload in the hook JSON envelope when node is available:
+# additionalContext carries the context to the model exactly as plain stdout would, and
+# systemMessage puts a one-line status in front of the USER — who otherwise cannot see
+# whether the context loaded, went stale, or failed, because the payload itself is
+# injected invisibly. The STALE case is the whole point: a silently stale context is
+# the one failure mode that actively misleads. --refresh keeps plain text (the model
+# reads that stdout directly), and no-node degrades to plain text rather than failing.
+OUT_TMP="${TMPDIR:-/tmp}/context-kit-out-$$.txt"
+trap 'rm -f "$ERRFILE" "$OUT_TMP"' EXIT
+
+emit() {  # $1 = one-line user-facing status; the body is already in $OUT_TMP
+  if [ "$MODE" = "refresh" ] || ! command -v node >/dev/null 2>&1; then
+    cat "$OUT_TMP"
+  else
+    node -e '
+      const fs = require("fs");
+      const body = fs.readFileSync(process.argv[1], "utf8");
+      process.stdout.write(JSON.stringify({
+        systemMessage: process.argv[2],
+        hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: body },
+      }));
+    ' "$OUT_TMP" "$1" 2>/dev/null || cat "$OUT_TMP"
+  fi
   exit 0
+}
+
+if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
+  {
+    echo "Context unavailable (no local clone of $CONTEXT_REMOTE and couldn't fetch it). Skills still load from the plugin."
+    [ -n "$REFRESH_WARNING" ] && echo "Reason: $REFRESH_WARNING"
+    :
+  } > "$OUT_TMP"
+  emit "⚠ Shared context UNAVAILABLE — $CONTEXT_REMOTE could not be reached${REFRESH_WARNING:+: $REFRESH_WARNING}"
 fi
 
+{
 if [ "$MODE" = "refresh" ]; then
   echo "=== Shared context (re-pulled just now — supersedes the copy loaded at session start) ==="
 else
@@ -200,4 +231,11 @@ if [ "$MODE" = "refresh" ]; then
   HEAD_LINE="$(git -C "$ROOT" log -1 --format='%h %cd — %s' --date=short 2>/dev/null)"
   echo "Read from: $ROOT${HEAD_LINE:+ · newest commit $HEAD_LINE}"
 fi
-exit 0
+} > "$OUT_TMP"
+
+if [ -n "$REFRESH_WARNING" ]; then
+  emit "⚠ Shared context loaded but may be STALE — refresh from $CONTEXT_REMOTE failed${LAST_UPDATED:+; newest local commit is $LAST_UPDATED}"
+else
+  AGE="$(git -C "$ROOT" log -1 --format='%cd' --date=relative 2>/dev/null)" || AGE=""
+  emit "✓ Shared context loaded — $CONTEXT_REMOTE${AGE:+ · newest commit $AGE}"
+fi
