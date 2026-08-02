@@ -9,8 +9,10 @@ database IDs, no names, no property schemas. If a skill needs one, it reads the 
 `state.notion` block; the README defines that contract and is the file to update when the
 contract grows.
 
-Shipped from the **context-kit marketplace** (`c-energie/context-kit`'s marketplace.json lists
-this repo) — there is no marketplace.json here, and versions live in `plugin.json` only.
+Lives at `plugins/context-notion` **inside the context-kit repo** (`c-energie/context-kit`),
+whose marketplace.json lists it with a relative source — one repo fetch delivers both plugins,
+which is what lets Cowork install it. There is no marketplace.json here, and versions live in
+`plugin.json` only. The standalone `c-energie/context-notion` repo is archived history.
 
 ## Commands
 
