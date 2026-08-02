@@ -31,7 +31,10 @@ marker_repo() {
 CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-}"
 [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$proj/.claude/settings.local.json")"
 [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$proj/.claude/settings.json")"
-for _m in "$proj/.context-repo" "$proj/context-repo.txt" /mnt/project/.context-repo /mnt/project/context-repo.txt; do
+for _m in "$proj/.context-repo" "$proj/context-repo.txt" \
+          /mnt/project/.context-repo /mnt/project/context-repo.txt \
+          "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
+          "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
 CONTEXT_REMOTE="${CONTEXT_REMOTE:-net-flex/context}"

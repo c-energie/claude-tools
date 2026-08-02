@@ -18,7 +18,7 @@ its STALE banner, or when the context wasn't available at all. This is the manua
 
 Do not report "context unavailable". Read the context repo over the **GitHub MCP server**
 instead. Which repo: the project's `.claude/settings.json` env value if visible, else a
-one-line `.context-repo` / `context-repo.txt` marker in the working folder or `/mnt/project/`
+one-line `.context-repo` / `context-repo.txt` marker in the working folder, `/mnt/project/`, or `~/mnt/.projects/*/docs/`
 (Cowork surfaces attached project files there), else `net-flex/context`. Read `memory.md` in
 full; `threads/INDEX.md` (or list `threads/` and read the newest few);
 any mirror's `_synced.json` for its `syncedOn` date; recent commits on `main` for the "what

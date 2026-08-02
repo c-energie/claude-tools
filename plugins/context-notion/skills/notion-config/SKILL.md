@@ -19,7 +19,7 @@ ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
 Read `$ROOT/context.json`. (No shell — Cowork? Read `context.json` from the context repo over
 the GitHub MCP connector instead. Which repo: the `FLEXSENSE_CONTEXT_REPO` env value in the
 project's `.claude/settings.json` if that file is visible, else a one-line `.context-repo` /
-`context-repo.txt` marker in the working folder or `/mnt/project/` — that marker, attached to
+`context-repo.txt` marker in the working folder, `/mnt/project/`, or `~/mnt/.projects/*/docs/` — that marker, attached to
 the Cowork project, is how a sandbox with no repo files and no env vars learns the name —
 else `net-flex/context`.)
 

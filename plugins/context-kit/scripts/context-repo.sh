@@ -41,7 +41,13 @@ marker_repo() {  # first line of a marker file, whitespace stripped ("owner/repo
 CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-}"
 [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$cwd/.claude/settings.local.json")"
 [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$cwd/.claude/settings.json")"
-for _m in "$cwd/.context-repo" "$cwd/context-repo.txt" /mnt/project/.context-repo /mnt/project/context-repo.txt; do
+# Marker candidates cover every sandbox layout seen so far: the working dir; /mnt/project
+# (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads (the
+# /sessions/... layout, where attached project files land under the session's home).
+for _m in "$cwd/.context-repo" "$cwd/context-repo.txt" \
+          /mnt/project/.context-repo /mnt/project/context-repo.txt \
+          "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
+          "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
 CONTEXT_REMOTE="${CONTEXT_REMOTE:-net-flex/context}"
