@@ -5,7 +5,7 @@ description: Re-pull the project's shared context repo mid-session and re-read i
 
 # Refresh the shared context
 
-Pulls the project's context repo (`${FLEXSENSE_CONTEXT_REPO:-net-flex/context}`) again and
+Pulls the project's configured context repo again and
 re-reads it into the session. Nothing else — this skill is **read-only**: it never writes,
 commits or pushes.
 
@@ -19,7 +19,7 @@ its STALE banner, or when the context wasn't available at all. This is the manua
 Do not report "context unavailable". Read the context repo over the **GitHub MCP server**
 instead. Which repo: the project's `.claude/settings.json` env value if visible, else a
 one-line `.context-repo` / `context-repo.txt` marker in the working folder, `/mnt/project/`, or `~/mnt/.projects/*/docs/`
-(Cowork surfaces attached project files there), else `net-flex/context`. Read `memory.md` in
+(Cowork surfaces attached project files there). If none is found, say no context repo is configured — never guess one. Read `memory.md` in
 full; `threads/INDEX.md` (or list `threads/` and read the newest few);
 any mirror's `_synced.json` for its `syncedOn` date; recent commits on `main` for the "what
 changed". Then continue from step 3, and **say you used the connector rather than a checkout**

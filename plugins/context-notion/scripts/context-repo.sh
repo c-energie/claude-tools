@@ -2,9 +2,9 @@
 # Resolve the context repo checkout and bring it up to date. Prints the absolute path on
 # stdout (nothing else) so callers can do:  ROOT="$(bash scripts/context-repo.sh)"
 #
-# Which repo is FLEXSENSE_CONTEXT_REPO (owner/repo on github.com), defaulting to the FlexSense
-# one, net-flex/context — so a per-project override in that project's .claude/settings.json env
-# block points this same machinery at another project's context repo.
+# Which repo (owner/repo on github.com) comes from PROJECT_CONTEXT_REPO — env var, the
+# project's .claude settings files, or a marker file, see below. FLEXSENSE_CONTEXT_REPO is
+# honoured as a legacy alias. There is deliberately no default repo.
 #
 #   scripts/context-repo.sh              # resolve + pull --ff-only --autostash (30s cap)
 #   scripts/context-repo.sh --no-pull    # resolve only — no network against an existing clone
@@ -29,18 +29,22 @@ cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 # laptop route — the committed settings.json rides along in the checkout; local beats project,
 # matching the client's own precedence); else a one-line marker file, checked in the working
 # dir and in /mnt/project — the latter is where Cowork surfaces files attached to a project,
-# the ONLY channel into its sandbox, which also cannot set env vars; else the default.
-# The sed is deliberately dumb: it finds the key anywhere in the file, which is fine for a
-# name this deliberate.
-settings_repo() {
-  sed -n 's/.*"FLEXSENSE_CONTEXT_REPO"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
+# the ONLY channel into its sandbox, which also cannot set env vars. There is deliberately
+# NO default: an unconfigured project must say so, because falling back to some other
+# project's context repo silently loads the WRONG context — the one failure mode this whole
+# plugin exists to prevent. The sed is deliberately dumb: it finds the key anywhere in the
+# file, which is fine for a name this deliberate.
+settings_key() {  # $1 = file, $2 = json key
+  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
 }
 marker_repo() {  # first line of a marker file, whitespace stripped ("owner/repo" has none)
   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
 }
-CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-}"
-[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$cwd/.claude/settings.local.json")"
-[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$cwd/.claude/settings.json")"
+CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-${FLEXSENSE_CONTEXT_REPO:-}}"
+for _f in "$cwd/.claude/settings.local.json" "$cwd/.claude/settings.json"; do
+  [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
+  [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" FLEXSENSE_CONTEXT_REPO)"
+done
 # Marker candidates cover every sandbox layout seen so far: the working dir; /mnt/project
 # (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads (the
 # /sessions/... layout, where attached project files land under the session's home).
@@ -50,10 +54,13 @@ for _m in "$cwd/.context-repo" "$cwd/context-repo.txt" \
           "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
-CONTEXT_REMOTE="${CONTEXT_REMOTE:-net-flex/context}"
+if [ -z "$CONTEXT_REMOTE" ]; then
+  echo "context-repo.sh: no context repo configured for this project — set PROJECT_CONTEXT_REPO, add an env block to .claude/settings.json, or attach a one-line .context-repo / context-repo.txt marker (owner/repo)" >&2
+  exit 1
+fi
 
-# The managed clone follows the remote: FLEXSENSE_CONTEXT_DIR beats everything, the default
-# remote keeps its historical ~/.flexsense/context so existing clones survive, and any other
+# The managed clone follows the remote: FLEXSENSE_CONTEXT_DIR beats everything, net-flex/context
+# keeps its historical ~/.flexsense/context so existing FlexSense clones survive, and any other
 # remote lands at ~/.context/<owner>-<repo> — owner included because context repos tend to all
 # be *named* "context", and two projects' clones must not collide.
 if [ -n "${FLEXSENSE_CONTEXT_DIR:-}" ]; then
@@ -81,7 +88,7 @@ PULL_TIMEOUT="${FLEXSENSE_GIT_TIMEOUT:-30}"
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
 
 # ---------------------------------------------------------------- credentials
-# net-flex/context is private and every git call here runs GIT_TERMINAL_PROMPT=0, so an
+# Context repos are typically private, and every git call here runs GIT_TERMINAL_PROMPT=0, so an
 # environment with no credential helper fails *silently* — indistinguishable from an empty or
 # missing repo, which is the failure this whole file is written to avoid. A laptop has the OS
 # helper; a session running in a cloud environment (Cowork) has nothing.

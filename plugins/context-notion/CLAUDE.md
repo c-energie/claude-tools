@@ -24,7 +24,7 @@ node scripts/pending-parse.mjs "$ROOT" --json
 ```
 
 `CONTEXT_CONFIG` pins the config for testing; without it `lib.mjs` resolves the context repo
-via `scripts/context-repo.sh` (which obeys `FLEXSENSE_CONTEXT_REPO`).
+via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_REPO`).
 
 ## Invariants
 

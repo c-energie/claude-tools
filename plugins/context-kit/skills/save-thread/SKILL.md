@@ -7,7 +7,7 @@ disable-model-invocation: true
 # Save a context thread
 
 Captures the current work into the project's context repo
-(`${FLEXSENSE_CONTEXT_REPO:-net-flex/context}`) under `threads/` — the working layer —
+(the repo configured for this project) under `threads/` — the working layer —
 following **that repo's own house rules**: read its `threads/README.md` (and `templates/` /
 `taxonomy.yml` if present) before writing; the repo's conventions win over the defaults below.
 One topic per file, filename dated `YYYY-MM-DD-short-topic.md`, keep the same file as a topic

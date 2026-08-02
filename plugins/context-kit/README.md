@@ -30,13 +30,13 @@ machinery for loading, refreshing and writing a project's **context repo**.
 Which context repo a session loads is per-project:
 
 ```json
-{ "env": { "FLEXSENSE_CONTEXT_REPO": "c-energie/thesis-context" } }
+{ "env": { "PROJECT_CONTEXT_REPO": "c-energie/thesis-context" } }
 ```
 
 in the project's `.claude/settings.json`. The resolvers look for the name in order —
-**env var → the project's `.claude/settings(.local).json` env block → a one-line
+**env var (`PROJECT_CONTEXT_REPO`; the old `FLEXSENSE_CONTEXT_REPO` still works) → the project's `.claude/settings(.local).json` env block → a one-line
 `.context-repo` or `context-repo.txt` marker file** (checked in the working folder and in
-`/mnt/project/`) → default `net-flex/context` — so the same committed settings file drives
+`/mnt/project/`) — with **no default**: an unconfigured project reports itself as such instead of silently loading another project's context. The same committed settings file drives
 Claude Code whether or not the client applies the env var.
 
 **Cowork** is why the marker file exists: its sandbox sees neither your repo checkout nor any

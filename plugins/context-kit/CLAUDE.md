@@ -4,7 +4,7 @@
 
 The **core layer** context plugin (`context-kit`), shipped from its own marketplace in
 `c-energie/context-kit`. Generic machinery only: it loads/refreshes/writes *a* project's
-context repo, selected per project by `FLEXSENSE_CONTEXT_REPO` (default `net-flex/context`).
+context repo, selected per project by `PROJECT_CONTEXT_REPO`, settings files, or a marker — with no default: unconfigured projects say so.
 Anything project- or workspace-specific belongs in a higher layer: the planned Notion
 middle-layer plugin, or the project's own context repo (created from
 `c-energie/context-template`). See README.md for the three-layer picture and port status.

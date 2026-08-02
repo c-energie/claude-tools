@@ -16,30 +16,33 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# In step with scripts/context-repo.sh: which context repo is the env var, else the project's
-# .claude settings files (laptop — the committed settings.json rides along in the checkout),
-# else a one-line marker file in the working dir or /mnt/project (Cowork — attached project
-# files are the only channel into its sandbox, and env vars cannot be set there), else the
-# default.
+# In step with scripts/context-repo.sh: which context repo is PROJECT_CONTEXT_REPO
+# (FLEXSENSE_CONTEXT_REPO honoured as a legacy alias) — env var, else the project's .claude
+# settings files (laptop — the committed settings.json rides along in the checkout), else a
+# one-line marker file (Cowork — attached project files are the only channel into its
+# sandbox, and env vars cannot be set there). Deliberately NO default: an unconfigured
+# project must say so — falling back to some other project's repo loads the WRONG context.
 proj="${CLAUDE_PROJECT_DIR:-$PWD}"
-settings_repo() {
-  sed -n 's/.*"FLEXSENSE_CONTEXT_REPO"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
+settings_key() {  # $1 = file, $2 = json key
+  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
 }
 marker_repo() {
   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
 }
-CONTEXT_REMOTE="${FLEXSENSE_CONTEXT_REPO:-}"
-[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$proj/.claude/settings.local.json")"
-[ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_repo "$proj/.claude/settings.json")"
+CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-${FLEXSENSE_CONTEXT_REPO:-}}"
+for _f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json"; do
+  [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
+  [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" FLEXSENSE_CONTEXT_REPO)"
+done
 for _m in "$proj/.context-repo" "$proj/context-repo.txt" \
           /mnt/project/.context-repo /mnt/project/context-repo.txt \
           "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
           "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
-CONTEXT_REMOTE="${CONTEXT_REMOTE:-net-flex/context}"
 # The real resolver re-derives this identically; exporting pins both to the same answer even
 # if only one copy is ever updated.
+export PROJECT_CONTEXT_REPO="$CONTEXT_REMOTE"
 export FLEXSENSE_CONTEXT_REPO="$CONTEXT_REMOTE"
 RESOLVER="$HERE/../scripts/context-repo.sh"
 
@@ -55,7 +58,11 @@ REFRESH_WARNING=""
 ERRFILE="${TMPDIR:-/tmp}/context-kit-ctx-$$.err"
 trap 'rm -f "$ERRFILE"' EXIT
 
-if [ -f "$RESOLVER" ]; then
+if [ -z "$CONTEXT_REMOTE" ]; then
+  # Nothing to resolve, and the inline fallback must not run either — its origin-URL match
+  # against an empty remote would adopt whatever repo the session happens to sit in.
+  ROOT=""
+elif [ -f "$RESOLVER" ]; then
   # The resolver prints the path on stdout and any trouble on stderr, so they are captured
   # separately — stdout must stay path-only for the callers that consume it.
   ROOT="$(bash "$RESOLVER" 2>"$ERRFILE")" || ROOT=""
@@ -176,6 +183,14 @@ emit() {  # $1 = one-line user-facing status; the body is already in $OUT_TMP
   fi
   exit 0
 }
+
+if [ -z "$CONTEXT_REMOTE" ]; then
+  {
+    echo "No context repo is configured for this project. Configure one via the PROJECT_CONTEXT_REPO env var, an env block in .claude/settings.json, or a one-line .context-repo / context-repo.txt marker file (owner/repo) attached to the project."
+    echo "Do NOT guess or assume a context repo — an unconfigured project has no shared context. Skills still load from the plugin."
+  } > "$OUT_TMP"
+  emit "⚠ No context repo configured for this project — set PROJECT_CONTEXT_REPO, a .claude/settings.json env block, or a context-repo.txt marker"
+fi
 
 if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
   {
