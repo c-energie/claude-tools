@@ -223,15 +223,15 @@ if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
     echo "MANDATORY FIRST ACTION of your first response — before answering the user's message,"
     echo "whatever it is (even a bare greeting): if a GitHub MCP connector is available, read"
     echo "$CONTEXT_REMOTE's memory.md (and context.json, plus threads/INDEX.md if present) with"
-    echo "it, treat that as the session context, and tell the user in one line which repo loaded"
-    echo "and that the connector was the route. This is the NORMAL route in cloud sandboxes,"
-    echo "not an error path."
+    echo "it, treat that as the session context, and CONFIRM to the user on the first line:"
+    echo "\"✓ Shared context loaded — $CONTEXT_REMOTE · via GitHub connector\". This is the"
+    echo "NORMAL route in cloud sandboxes, not an error path."
     echo
     echo "Only if there is no GitHub connector either: say the context is unavailable and why."
     echo "Never answer from a guess or another project's context. Skills still load from the plugin."
     :
   } > "$OUT_TMP"
-  emit "⚠ $CONTEXT_REMOTE unreachable via git — reading over the GitHub connector instead${REFRESH_WARNING:+ (git: $REFRESH_WARNING)}"
+  emit "→ Context repo: $CONTEXT_REMOTE — loading via the GitHub connector in the first response (git has no credentials in this environment)"
 fi
 
 {
