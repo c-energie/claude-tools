@@ -35,11 +35,22 @@ for _f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json"; do
   [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" FLEXSENSE_CONTEXT_REPO)"
 done
 for _m in "$proj/.context-repo" "$proj/context-repo.txt" \
+          "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
           /mnt/project/.context-repo /mnt/project/context-repo.txt \
           "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
           "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
+# Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
+# working tree, which on a laptop can be a huge repo this must not crawl at session start.
+if [ -z "$CONTEXT_REMOTE" ]; then
+  for _d in "$HOME/mnt" /mnt; do
+    if [ -z "$CONTEXT_REMOTE" ] && [ -d "$_d" ]; then
+      _found="$(find "$_d" -maxdepth 5 \( -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
+      [ -n "$_found" ] && CONTEXT_REMOTE="$(marker_repo "$_found")"
+    fi
+  done
+fi
 # The real resolver re-derives this identically; exporting pins both to the same answer even
 # if only one copy is ever updated.
 export PROJECT_CONTEXT_REPO="$CONTEXT_REMOTE"

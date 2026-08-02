@@ -49,11 +49,22 @@ done
 # (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads (the
 # /sessions/... layout, where attached project files land under the session's home).
 for _m in "$cwd/.context-repo" "$cwd/context-repo.txt" \
+          "$cwd"/docs/.context-repo "$cwd"/docs/context-repo.txt \
           /mnt/project/.context-repo /mnt/project/context-repo.txt \
           "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
           "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
+# Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
+# working tree, which on a laptop can be a huge repo this must not crawl at session start.
+if [ -z "$CONTEXT_REMOTE" ]; then
+  for _d in "$HOME/mnt" /mnt; do
+    if [ -z "$CONTEXT_REMOTE" ] && [ -d "$_d" ]; then
+      _found="$(find "$_d" -maxdepth 5 \( -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
+      [ -n "$_found" ] && CONTEXT_REMOTE="$(marker_repo "$_found")"
+    fi
+  done
+fi
 if [ -z "$CONTEXT_REMOTE" ]; then
   echo "context-repo.sh: no context repo configured for this project — set PROJECT_CONTEXT_REPO, add an env block to .claude/settings.json, or attach a one-line .context-repo / context-repo.txt marker (owner/repo)" >&2
   exit 1
