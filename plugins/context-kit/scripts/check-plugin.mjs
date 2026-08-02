@@ -18,6 +18,7 @@ const warnings = [];
 const err = (where, msg) => errors.push(`**${where}** — ${msg}`);
 const warn = (where, msg) => warnings.push(`**${where}** — ${msg}`);
 
+const readJsonOptional = (rel) => (existsSync(join(root, rel)) ? readJson(rel) : null);
 const readJson = (rel) => {
   const p = join(root, rel);
   if (!existsSync(p)) { err(rel, 'missing'); return null; }
@@ -40,7 +41,7 @@ if (manifest) {
   }
 }
 
-const marketplace = readJson('.claude-plugin/marketplace.json');
+const marketplace = readJsonOptional('.claude-plugin/marketplace.json');
 if (marketplace && manifest) {
   const entries = marketplace.plugins ?? [];
   if (!entries.length) err('marketplace.json', 'no plugins[] entries');
@@ -62,7 +63,7 @@ if (marketplace && manifest) {
 }
 
 // ---------------------------------------------------------------- hooks
-const hooks = readJson('hooks/hooks.json');
+const hooks = readJsonOptional('hooks/hooks.json');
 if (hooks) {
   const commands = JSON.stringify(hooks).match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"'\s]+/g) ?? [];
   for (const ref of commands) {

@@ -14,7 +14,7 @@
   "plugins": [
     {
       "name": "context-kit",
-      "source": "./",
+      "source": "./plugins/context-kit",
       "category": "productivity"
     },
     {

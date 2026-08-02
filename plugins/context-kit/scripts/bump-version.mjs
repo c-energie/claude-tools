@@ -13,7 +13,7 @@
 // `version` there silently wins and strands installs on an old release (July 2026). This script
 // refuses to run while such an override exists rather than writing a bump that does nothing.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const die = (m) => { console.error(`bump-version.mjs: ${m}`); process.exit(2); };
@@ -53,7 +53,7 @@ if (!spec) {
 }
 
 // Refuse to bump into a silent override.
-const marketplace = parse(read(marketplacePath), marketplacePath);
+const marketplace = existsSync(marketplacePath) ? parse(read(marketplacePath), marketplacePath) : {};
 const override = (marketplace.plugins ?? []).find((p) => p && p.version !== undefined);
 if (override) {
   die(`marketplace.json plugins[] entry "${override.name ?? '?'}" declares version `

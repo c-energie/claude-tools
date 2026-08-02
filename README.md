@@ -1,94 +1,22 @@
-# context-kit
+# context-kit (marketplace)
 
-The **core layer** of a three-layer plugin architecture for project context in Claude Code /
-Cowork. This plugin knows nothing about any particular project or workspace — it is the
-machinery for loading, refreshing and writing a project's **context repo**.
+The c-energie plugin marketplace for the **context-repo system**: per-project memory that
+Claude sessions load at start, refresh mid-session, and write back — plus a Notion middle
+layer driven entirely by each project's configuration.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Project layer — one context repo per project                │
-│   e.g. net-flex/context, c-energie/thesis-context           │
-│   memory.md, glossary, threads/, meetings/, pending/,       │
-│   context.json (config the layers below read)               │
-│   Created from the c-energie/context-template repo.         │
-├─────────────────────────────────────────────────────────────┤
-│ Middle layer — structured-state backend                     │
-│   plugins/context-notion in THIS repo: generic              │
-│   add-action / log-decision / query / update / pending-queue│
-│   skills, parameterised by each project's context.json      │
-│   (database IDs, property schemas, roster). One install     │
-│   serves every Notion-backed project — grid-flex and a      │
-│   thesis alike. An Obsidian or other backend could          │
-│   implement the same contracts later.                       │
-├─────────────────────────────────────────────────────────────┤
-│ Core layer — THIS PLUGIN                                    │
-│   SessionStart hook (memory.md + thread pointers),          │
-│   context-repo resolver, refresh-context, save-thread       │
-└─────────────────────────────────────────────────────────────┘
-```
+Two plugins, both shipped from this one repo (single fetch — that is what makes installs
+work on every surface, including Cowork, which cannot fetch a second private repo):
 
-Which context repo a session loads is per-project:
-
-```json
-{ "env": { "FLEXSENSE_CONTEXT_REPO": "c-energie/thesis-context" } }
-```
-
-in the project's `.claude/settings.json`. The resolvers look for the name in order —
-**env var → the project's `.claude/settings(.local).json` env block → a one-line
-`.context-repo` or `context-repo.txt` marker file** (checked in the working folder and in
-`/mnt/project/`) → default `net-flex/context` — so the same committed settings file drives
-Claude Code whether or not the client applies the env var.
-
-**Cowork** is why the marker file exists: its sandbox sees neither your repo checkout nor any
-env var — the only channel in is files attached to the Cowork project, which surface under
-`/mnt/project/`. So attach a `context-repo.txt` containing exactly one line, e.g.
-`c-energie/thesis-context`, and every session in that Cowork project targets that repo (the
-skills use the same marker to aim their GitHub MCP calls). Also add the repo to the
-fine-grained PAT that the desktop app's GitHub MCP server holds.
-
-Managed clones land at `~/.context/<owner>-<repo>` (the default remote keeps its historical
-`~/.flexsense/context`); `FLEXSENSE_CONTEXT_DIR` pins the location outright. Private repos
-authenticate via the OS git helper, else `FLEXSENSE_GIT_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
-else `gh auth token`.
-
-> The `FLEXSENSE_*` env-var names are inherited from this machinery's origin in
-> `net-flex/flexsense-plugin` and kept so existing setups and the template keep working.
-> Renaming them (with back-compat) is an open TODO.
-
-## Skills
-
-| Skill | What it does |
+| Plugin | What it is |
 | --- | --- |
-| `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
-| `save-thread` | 🔒 Write up the current work as a `threads/` entry and push (never self-triggers) |
+| [`plugins/context-kit`](plugins/context-kit/) | Core layer: SessionStart context loading (with visible status line), the context-repo resolvers, `refresh-context`, `save-thread` |
+| [`plugins/context-notion`](plugins/context-notion/) | Notion middle layer: config-driven actions / decisions / open questions + the pending queue |
 
-The SessionStart hook loads `memory.md` + thread pointers automatically, with a STALE banner
-when the refresh fails — a silently stale context is the one failure mode that actively
-misleads.
+Install: add this repo as a marketplace (`/plugin marketplace add c-energie/context-kit`, or
+Cowork's plugin UI), then install `context-kit@context-kit` and — for Notion-backed
+projects — `context-notion@context-kit`.
 
-## Port status (from net-flex/flexsense-plugin)
-
-Ported: the hook, both resolvers (`context-repo.sh`, `plugin-repo.sh`), `dates.mjs`,
-`thread-index.mjs`, `check-plugin.mjs`, `bump-version.mjs`, `refresh-context`, `save-thread`.
-
-Still to port here: `curate-context`, `context-access` (the Cowork GitHub-API route),
-an `update-plugin` analogue for this repo.
-
-To the **Notion middle layer** (not here): `add-pending`/`process-pending` + `pending-parse.mjs`
-(roster-dependent), `mirror-render.mjs`, and generalised versions of the flexsense Notion skills
-(`add-action`, `log-decision`, `update-action`, `query-decisions`, mirror sync, tidies) reading
-each project's `context.json` instead of a baked-in `flexsense.json`.
-
-`net-flex/flexsense-plugin` remains the FlexSense project layer (roster, Slack digest,
-weekly-review, FlexSense's Notion specifics) and keeps its own copy of the core machinery
-until the FlexSense team migrates to installing context-kit alongside it — don't enable both
-hooks at once, or the context loads twice.
-
-## Working on this repo
-
-No build, no tests: `node scripts/check-plugin.mjs .` is CI, run it before any commit. Bump
-`.claude-plugin/plugin.json` via `node scripts/bump-version.mjs . patch|minor|major` — version
-lives there **only** (a version in `marketplace.json`'s `plugins[]` overrides it silently).
-`*.sh` stay LF. No angle brackets in any YAML front-matter value. The hook must exit 0 on
-every path. `hooks/load-context.sh` carries an inline duplicate of `context-repo.sh` for
-installs where packaging drops `scripts/` — change both or neither.
+Each plugin's README documents its own behaviour, including how a project selects its
+context repo (env var → `.claude` settings files → `.context-repo`/`context-repo.txt`
+marker → default) and the `context.json` contract. New context repos start from
+[c-energie/context-template](https://github.com/c-energie/context-template).
