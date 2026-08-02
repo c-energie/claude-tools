@@ -29,26 +29,55 @@ settings_key() {  # $1 = file, $2 = json key
 marker_repo() {
   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
 }
-CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-}"
-for _f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json"; do
-  [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
-done
-for _m in "$proj/.context-repo" "$proj/context-repo.txt" \
-          "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
-          /mnt/project/.context-repo /mnt/project/context-repo.txt \
-          "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
-          "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
-  [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
-done
-# Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
-# working tree, which on a laptop can be a huge repo this must not crawl at session start.
-if [ -z "$CONTEXT_REMOTE" ]; then
-  for _d in "$HOME/mnt" /mnt; do
-    if [ -z "$CONTEXT_REMOTE" ] && [ -d "$_d" ]; then
-      _found="$(find "$_d" -maxdepth 5 \( -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
-      [ -n "$_found" ] && CONTEXT_REMOTE="$(marker_repo "$_found")"
+lookup_repo() {  # echoes owner/repo, or nothing if no channel names one
+  local r=""
+  r="${PROJECT_CONTEXT_REPO:-}"
+  [ -n "$r" ] && { echo "$r"; return; }
+  for _f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json"; do
+    r="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
+    [ -n "$r" ] && { echo "$r"; return; }
+  done
+  for _m in "$proj/.context-repo" "$proj/context-repo.txt" \
+            "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
+            /mnt/project/.context-repo /mnt/project/context-repo.txt \
+            "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
+            "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
+    if [ -f "$_m" ]; then
+      r="$(marker_repo "$_m")"
+      [ -n "$r" ] && { echo "$r"; return; }
     fi
   done
+  # Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
+  # working tree, which on a laptop can be a huge repo this must not crawl at session start.
+  for _d in "$HOME/mnt" /mnt; do
+    if [ -d "$_d" ]; then
+      _found="$(find "$_d" -maxdepth 5 \( -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
+      if [ -n "$_found" ]; then
+        r="$(marker_repo "$_found")"
+        [ -n "$r" ] && { echo "$r"; return; }
+      fi
+    fi
+  done
+}
+CONTEXT_REMOTE="$(lookup_repo)"
+
+# Mount-timing race (observed 2026-08-02): in cloud sandboxes the project's attached files
+# can mount AFTER SessionStart fires — the identical lookup succeeds moments later. So if
+# nothing named a repo AND this looks like a sandbox, wait briefly and retry rather than
+# declaring the project unconfigured. Laptops never match the sandbox test, so a genuinely
+# unconfigured local project pays nothing; a sandbox one pays at most ~10s once per session.
+if [ -z "$CONTEXT_REMOTE" ]; then
+  case "$HOME" in
+    /sessions/*) _sandbox=1 ;;
+    *) _sandbox="${CLAUDE_CODE_HOST_HTTP_PROXY_PORT:+1}" ;;
+  esac
+  if [ -n "${_sandbox:-}" ]; then
+    for _try in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 1
+      CONTEXT_REMOTE="$(lookup_repo)"
+      [ -n "$CONTEXT_REMOTE" ] && break
+    done
+  fi
 fi
 # The real resolver re-derives this identically; exporting pins both to the same answer even
 # if only one copy is ever updated.
