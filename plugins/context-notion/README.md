@@ -80,6 +80,7 @@ items can still be queued in the context repo's `pending/`.
 | `log-decision` | Record a decision in the decision log |
 | `query-decisions` | Read the decision log: by topic, recent, due-to-revisit |
 | `update-action` | Close / re-date / reassign actions; triage what's open (via `triage.mjs`) |
+| `notion-discover` | Discover a workspace into `context.json`'s `state.notion` — the setup step that unlocks the rest |
 | `add-pending` | Queue a row in the context repo's `pending/` when Notion is unreachable |
 | `process-pending` | 🔒 Drain `pending/` into Notion (never self-triggers) |
 
