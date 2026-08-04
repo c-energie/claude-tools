@@ -23,7 +23,9 @@ The full checklist lives in the
 
 1. **Context repo** — stamp from the template, fill the placeholders.
 2. **Point the project at it** — `PROJECT_CONTEXT_REPO` in the project's `.claude/settings.json`
-   (laptop), a one-line `context-repo.txt` attached to the Cowork project (sandbox). There is
+   (laptop), a `context-project.json` marker attached to the Cowork project (sandbox) —
+   JSON carrying `contextRepo` plus a `connections` map naming the MCP connection per
+   provider, so the bootstrap read uses the right one of several scoped connectors. There is
    deliberately no default: unconfigured sessions say so rather than loading another
    project's context.
 3. **Connectors** — one scoped credential per provider per workspace (GitHub fine-grained PAT:
