@@ -13,8 +13,8 @@
 
   "plugins": [
     {
-      "name": "context-kit",
-      "source": "./plugins/context-kit",
+      "name": "context-kit-core",
+      "source": "./plugins/context-kit-core",
       "category": "productivity"
     },
     {
