@@ -16,7 +16,25 @@ Install: add this repo as a marketplace (`/plugin marketplace add c-energie/cont
 Cowork's plugin UI), then install `context-kit@context-kit` and — for Notion-backed
 projects — `context-notion@context-kit`.
 
-Each plugin's README documents its own behaviour, including how a project selects its
-context repo (env var → `.claude` settings files → `.context-repo`/`context-repo.txt`
-marker → default) and the `context.json` contract. New context repos start from
-[c-energie/context-template](https://github.com/c-energie/context-template).
+## Setting up a new project, end to end
+
+The full checklist lives in the
+[context-template README](https://github.com/c-energie/context-template); the short form:
+
+1. **Context repo** — stamp from the template, fill the placeholders.
+2. **Point the project at it** — `PROJECT_CONTEXT_REPO` in the project's `.claude/settings.json`
+   (laptop), a `context-project.json` marker attached to the Cowork project (sandbox) —
+   JSON carrying `contextRepo` plus a `connections` map naming the MCP connection per
+   provider, so the bootstrap read uses the right one of several scoped connectors. There is
+   deliberately no default: unconfigured sessions say so rather than loading another
+   project's context.
+3. **Connectors** — one scoped credential per provider per workspace (GitHub fine-grained PAT:
+   single resource owner per token; Notion internal integration: pages must be shared with
+   it), registered as MCP servers named `<provider>-<project>` in **both** `~/.claude.json`
+   (Claude Code + Cowork sandboxes read this) and the desktop app's
+   `claude_desktop_config.json` (chat reads this).
+4. **Gate** — declare `connections` in `context.json`; skills use only the declared
+   connection per provider. Optional hard `deny` rules in other projects' laptop settings.
+5. **Discover** — for Notion-backed projects, the `notion-discover` skill fills
+   `context.json`'s `state` block from the live workspace.
+6. **Verify** — the `context-setup` skill checks the whole chain in one pass.
