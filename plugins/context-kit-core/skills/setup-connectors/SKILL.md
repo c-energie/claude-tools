@@ -24,6 +24,11 @@ Reports each declared connection as configured or missing, and names any other c
 the same provider present on this machine — those belong to other projects and are off-limits
 here. Read the output back to the user before changing anything.
 
+The script finds `context.json` on its own: `PROJECT_CONTEXT_REPO` (the env var, or the
+project's `.claude/settings*.json`) names the repo, and its managed clone lives at
+`~/.context/owner-repo` — cloned there on first use. `--context path` is an override for
+odd layouts, not the normal route.
+
 If it can't find `context.json`, that's `context-setup`'s job, not this one — the context repo
 isn't configured. If it finds the file but there's no `connections` block, offer to add one;
 the block is what stops a multi-workspace machine writing to the wrong place.
