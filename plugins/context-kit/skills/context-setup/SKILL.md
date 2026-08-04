@@ -13,10 +13,12 @@ the context now, and fixes gaps with the user.
 
 - `PROJECT_CONTEXT_REPO` in the environment.
 - The project's `.claude/settings.local.json` / `.claude/settings.json` env block.
-- A one-line marker file — `.context-repo` or `context-repo.txt` — in the working directory
+- A marker file — `context-project.json` (JSON: `contextRepo`, plus an optional
+  `connections` map naming the MCP connection per provider), or one-line `.context-repo` /
+  `context-repo.txt` — in the working directory
   or the attached project files. Layouts differ by surface; look in `/mnt/project/`,
   `~/mnt/.projects/*/docs/` (imported project knowledge), `~/mnt/uploads/`, and if none of
-  those exist, search: `find ~ /mnt -maxdepth 5 -name "context-repo.txt" -o -name ".context-repo" 2>/dev/null`.
+  those exist, search: `find ~ /mnt -maxdepth 5 -name "context-project.json" -o -name "context-repo.txt" -o -name ".context-repo" 2>/dev/null`.
   **A marker found in a location the hook doesn't check is a plugin bug — report the exact
   path to the user so it can be added.**
 
@@ -31,8 +33,10 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
   `.claude/settings.local.json` (this machine only). Takes effect next session.
 - **Cowork / cloud sandbox:** the sandbox is ephemeral — nothing written here survives to the
   next session, so the ONLY durable store is a file attached to the project. Tell the user to
-  attach `context-repo.txt` containing exactly one line (`owner/repo`) to the project's
-  files, and say plainly that until they do, every new session starts unconfigured.
+  attach a `context-project.json` to the project's files:
+  `{ "contextRepo": "owner/repo", "connections": { "github": "github-myproject", "notion": "notion-myproject" } }`
+  (a one-line `context-repo.txt` also works but can't name connections). Until they do,
+  every new session starts unconfigured.
 - No context repo exists yet at all? Creating one is `init-context`'s job (from the
   `c-energie/context-template` repo) — if that skill isn't installed, point the user at the
   template repo's README.

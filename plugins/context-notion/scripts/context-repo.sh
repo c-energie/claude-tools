@@ -37,8 +37,14 @@ cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 settings_key() {  # $1 = file, $2 = json key
   sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
 }
-marker_repo() {  # first line of a marker file, whitespace stripped ("owner/repo" has none)
-  head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
+marker_repo() {
+  # A marker is either one plain "owner/repo" line, or a JSON object (context-project.json)
+  # whose "contextRepo" key names the repo — the JSON form can also carry a "connections"
+  # map for the skills. Sniff the first byte rather than trusting the filename.
+  case "$(head -c 1 "$1" 2>/dev/null)" in
+    "{") settings_key "$1" contextRepo ;;
+    *)   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n' ;;
+  esac
 }
 CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-}"
 for _f in "$cwd/.claude/settings.local.json" "$cwd/.claude/settings.json"; do
@@ -47,11 +53,11 @@ done
 # Marker candidates cover every sandbox layout seen so far: the working dir; /mnt/project
 # (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads (the
 # /sessions/... layout, where attached project files land under the session's home).
-for _m in "$cwd/.context-repo" "$cwd/context-repo.txt" \
-          "$cwd"/docs/.context-repo "$cwd"/docs/context-repo.txt \
-          /mnt/project/.context-repo /mnt/project/context-repo.txt \
-          "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
-          "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
+for _m in "$cwd/context-project.json" "$cwd/.context-repo" "$cwd/context-repo.txt" \
+          "$cwd"/docs/context-project.json "$cwd"/docs/.context-repo "$cwd"/docs/context-repo.txt \
+          /mnt/project/context-project.json /mnt/project/.context-repo /mnt/project/context-repo.txt \
+          "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
+          "$HOME"/mnt/uploads/context-project.json "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
 # Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
@@ -59,7 +65,7 @@ done
 if [ -z "$CONTEXT_REMOTE" ]; then
   for _d in "$HOME/mnt" /mnt; do
     if [ -z "$CONTEXT_REMOTE" ] && [ -d "$_d" ]; then
-      _found="$(find "$_d" -maxdepth 5 \( -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
+      _found="$(find "$_d" -maxdepth 5 \( -name context-project.json -o -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
       [ -n "$_found" ] && CONTEXT_REMOTE="$(marker_repo "$_found")"
     fi
   done

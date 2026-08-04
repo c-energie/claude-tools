@@ -35,16 +35,28 @@ Which context repo a session loads is per-project:
 
 in the project's `.claude/settings.json`. The resolvers look for the name in order —
 **env var (`PROJECT_CONTEXT_REPO`) → the project's `.claude/settings(.local).json` env block → a one-line
-`.context-repo` or `context-repo.txt` marker file** (checked in the working folder and in
+`context-project.json` / `.context-repo` / `context-repo.txt` marker file** (checked in the working folder and in
 `/mnt/project/`) — with **no default**: an unconfigured project reports itself as such instead of silently loading another project's context. The same committed settings file drives
 Claude Code whether or not the client applies the env var.
 
 **Cowork** is why the marker file exists: its sandbox sees neither your repo checkout nor any
-env var — the only channel in is files attached to the Cowork project, which surface under
-`/mnt/project/`. So attach a `context-repo.txt` containing exactly one line, e.g.
-`c-energie/thesis-context`, and every session in that Cowork project targets that repo (the
-skills use the same marker to aim their GitHub MCP calls). Also add the repo to the
-fine-grained PAT that the desktop app's GitHub MCP server holds.
+env var — the only channel in is files attached to the Cowork project. Attach a
+`context-project.json`:
+
+```json
+{
+  "contextRepo": "c-energie/thesis-context",
+  "connections": { "github": "github-thesis", "notion": "notion-thesis" }
+}
+```
+
+Every session in that Cowork project then targets that repo, and — because a machine can hold
+several same-provider MCP connections scoped to different workspaces — the `connections` map
+tells the session exactly which connection to read/write with, from the very first bootstrap
+read (the hook's hand-off names it). `contextRepo`'s value must be on that GitHub
+connection's PAT. A plain one-line `context-repo.txt` still works but cannot name
+connections. `context.json` in the context repo remains authoritative once loaded — keep the
+marker's `connections` in step with it (`context-setup` flags drift).
 
 Managed clones land at `~/.context/<owner>-<repo>`; `PROJECT_CONTEXT_DIR` pins the location
 outright. Private repos authenticate via the OS git helper, else `CONTEXT_GIT_TOKEN` /

@@ -27,39 +27,47 @@ settings_key() {  # $1 = file, $2 = json key
   sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
 }
 marker_repo() {
-  head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n'
+  # A marker is either one plain "owner/repo" line, or a JSON object (context-project.json)
+  # whose "contextRepo" key names the repo and whose optional "connections" map names the
+  # MCP connection per provider. Sniff the first byte rather than trusting the filename.
+  case "$(head -c 1 "$1" 2>/dev/null)" in
+    "{") settings_key "$1" contextRepo ;;
+    *)   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n' ;;
+  esac
 }
-lookup_repo() {  # echoes owner/repo, or nothing if no channel names one
+lookup_repo() {  # line 1: owner/repo (or empty); line 2: the marker file it came from (or empty)
   local r=""
   r="${PROJECT_CONTEXT_REPO:-}"
-  [ -n "$r" ] && { echo "$r"; return; }
+  [ -n "$r" ] && { printf '%s\n\n' "$r"; return; }
   for _f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json"; do
     r="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
-    [ -n "$r" ] && { echo "$r"; return; }
+    [ -n "$r" ] && { printf '%s\n\n' "$r"; return; }
   done
-  for _m in "$proj/.context-repo" "$proj/context-repo.txt" \
-            "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
-            /mnt/project/.context-repo /mnt/project/context-repo.txt \
-            "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
-            "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
+  for _m in "$proj/context-project.json" "$proj/.context-repo" "$proj/context-repo.txt" \
+            "$proj"/docs/context-project.json "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
+            /mnt/project/context-project.json /mnt/project/.context-repo /mnt/project/context-repo.txt \
+            "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
+            "$HOME"/mnt/uploads/context-project.json "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
     if [ -f "$_m" ]; then
       r="$(marker_repo "$_m")"
-      [ -n "$r" ] && { echo "$r"; return; }
+      [ -n "$r" ] && { printf '%s\n%s\n' "$r" "$_m"; return; }
     fi
   done
   # Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
   # working tree, which on a laptop can be a huge repo this must not crawl at session start.
   for _d in "$HOME/mnt" /mnt; do
     if [ -d "$_d" ]; then
-      _found="$(find "$_d" -maxdepth 5 \( -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
+      _found="$(find "$_d" -maxdepth 5 \( -name context-project.json -o -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
       if [ -n "$_found" ]; then
         r="$(marker_repo "$_found")"
-        [ -n "$r" ] && { echo "$r"; return; }
+        [ -n "$r" ] && { printf '%s\n%s\n' "$r" "$_found"; return; }
       fi
     fi
   done
 }
-CONTEXT_REMOTE="$(lookup_repo)"
+_res="$(lookup_repo)"
+CONTEXT_REMOTE="$(printf '%s' "$_res" | sed -n 1p)"
+MARKER_SRC="$(printf '%s' "$_res" | sed -n 2p)"
 
 # Mount-timing race (observed 2026-08-02): in cloud sandboxes the project's attached files
 # can mount AFTER SessionStart fires — the identical lookup succeeds moments later. So if
@@ -74,11 +82,17 @@ if [ -z "$CONTEXT_REMOTE" ]; then
   if [ -n "${_sandbox:-}" ]; then
     for _try in 1 2 3 4 5 6 7 8 9 10; do
       sleep 1
-      CONTEXT_REMOTE="$(lookup_repo)"
+      _res="$(lookup_repo)"
+      CONTEXT_REMOTE="$(printf '%s' "$_res" | sed -n 1p)"
+      MARKER_SRC="$(printf '%s' "$_res" | sed -n 2p)"
       [ -n "$CONTEXT_REMOTE" ] && break
     done
   fi
 fi
+# A JSON marker can also name which MCP connection serves each provider — pull the GitHub
+# one so the hand-off payload can say exactly which connector to read the repo with.
+GITHUB_CONN=""
+[ -n "${MARKER_SRC:-}" ] && GITHUB_CONN="$(settings_key "$MARKER_SRC" github)"
 # The real resolver re-derives this identically; exporting pins both to the same answer even
 # if only one copy is ever updated.
 export PROJECT_CONTEXT_REPO="$CONTEXT_REMOTE"
@@ -244,18 +258,24 @@ if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
     echo "This project's context repo is $CONTEXT_REMOTE, but git could not fetch it here."
     [ -n "$REFRESH_WARNING" ] && echo "Reason: $REFRESH_WARNING"
     echo
+    if [ -n "$GITHUB_CONN" ]; then
+      echo "This project's marker declares its GitHub connection: use the MCP server named \"$GITHUB_CONN\" — no other."
+    fi
+    CONN_PHRASE="${GITHUB_CONN:+the \"$GITHUB_CONN\" connection}"
+    CONN_PHRASE="${CONN_PHRASE:-the GitHub MCP connector}"
     echo "MANDATORY FIRST ACTION of your first response — before answering the user's message,"
-    echo "whatever it is (even a bare greeting): if a GitHub MCP connector is available, read"
-    echo "$CONTEXT_REMOTE's memory.md (and context.json, plus threads/INDEX.md if present) with"
-    echo "it, treat that as the session context, and CONFIRM to the user on the first line:"
-    echo "\"✓ Shared context loaded — $CONTEXT_REMOTE · via GitHub connector\". This is the"
-    echo "NORMAL route in cloud sandboxes, not an error path."
+    echo "whatever it is (even a bare greeting): read $CONTEXT_REMOTE's memory.md (and"
+    echo "context.json, plus threads/INDEX.md if present) with $CONN_PHRASE,"
+    echo "treat that as the session context, and CONFIRM to the user on the first line:"
+    echo "\"✓ Shared context loaded — $CONTEXT_REMOTE · via ${GITHUB_CONN:-GitHub connector}\". This is the"
+    echo "NORMAL route in cloud sandboxes, not an error path. Once context.json is loaded, its"
+    echo "connections block governs every provider (Notion included) — use only what it declares."
     echo
     echo "Only if there is no GitHub connector either: say the context is unavailable and why."
     echo "Never answer from a guess or another project's context. Skills still load from the plugin."
     :
   } > "$OUT_TMP"
-  emit "→ Context repo: $CONTEXT_REMOTE — loading via the GitHub connector in the first response (git has no credentials in this environment)"
+  emit "→ Context repo: $CONTEXT_REMOTE — loading via ${GITHUB_CONN:-the GitHub connector} in the first response (git has no credentials in this environment)"
 fi
 
 {
