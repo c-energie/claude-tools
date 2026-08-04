@@ -239,18 +239,20 @@ if [ -z "$CONTEXT_REMOTE" ]; then
     echo
     echo "MANDATORY FIRST ACTION of your first response — before answering the user's message,"
     echo "whatever it is (even a bare greeting): look for a marker this hook may have missed."
-    echo "Run: find ~/mnt /mnt . -maxdepth 5 -name 'context-repo.txt' -o -name '.context-repo' 2>/dev/null"
-    echo "If a marker is found, its one owner/repo line names this project's context repo:"
-    echo "read that repo's memory.md and context.json (git if available, else the GitHub MCP"
+    echo "Run: find ~/mnt /mnt . -maxdepth 5 -name 'context-project.json' -o -name '.context-repo' 2>/dev/null"
+    echo "If a marker is found: a context-project.json's \"contextRepo\" key names this project's"
+    echo "context repo, and its optional \"connections\" map names the MCP connection per provider"
+    echo "— use only those; a plain .context-repo marker is one owner/repo line. Read that"
+    echo "repo's memory.md and context.json (git if available, else the GitHub MCP"
     echo "connector), treat them as the session context, and tell the user in one line which"
     echo "repo loaded and by which route. Mention context-setup can diagnose why the hook missed it."
     echo
     echo "Only if no marker exists either: this project has no shared context — say so, do NOT"
     echo "guess a repo, and continue with the user's message. Configure one via"
     echo "PROJECT_CONTEXT_REPO, a .claude/settings.json env block, or an attached"
-    echo "context-repo.txt marker; the context-setup skill walks the user through it."
+    echo "context-project.json marker; the context-setup skill walks the user through it."
   } > "$OUT_TMP"
-  emit "⚠ No context repo configured — run context-setup, or add a context-repo.txt marker / PROJECT_CONTEXT_REPO setting"
+  emit "⚠ No context repo configured — run context-setup, or add a context-project.json marker / PROJECT_CONTEXT_REPO setting"
 fi
 
 if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
