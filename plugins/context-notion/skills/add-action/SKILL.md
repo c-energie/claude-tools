@@ -11,9 +11,17 @@ the guest gap, and the fallback ladder.
 
 ## Target
 
-`databases.actions` from the project's `context.json` `state.notion` block — create page(s)
-with `notion-create-pages`, parent `{type: "data_source_id", data_source_id: "…"}` (strip any
-`collection://` prefix). Multiple actions go in **one** call (array of pages). No `actions`
+The **actions** database from the project's `context.json` `state.notion` block. Which id
+parents the create depends on the tool (see `notion-config` on the two ids):
+
+- `API-post-page` → parent `{type: "database_id", database_id: pageParents.actions}` —
+  never `databases.actions`, whose data source id draws the misleading "not shared" 404.
+  No `pageParents` in the config → resolve per `notion-config`, write, then offer to add it.
+- A `notion-create-pages`-style tool → parent
+  `{type: "data_source_id", data_source_id: databases.actions}` (strip any `collection://`
+  prefix).
+
+Multiple actions go in **one** call where the tool takes an array of pages. No `actions`
 key in the config → say so and stop; the fix is a line in `context.json`.
 
 ## Properties
@@ -32,7 +40,7 @@ key in the config → say so and stop; the fix is a line in `context.json`.
 ## Steps
 
 1. Confirm task list, owners and due dates if ambiguous.
-2. Create the page(s) in one `notion-create-pages` call.
+2. Create the page(s) in one call/batch, parent per Target above.
 3. Report the new page URL(s).
 
 **If Notion can't be reached or the write fails** — don't retry, don't drop it: `add-pending`.
