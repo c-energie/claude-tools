@@ -11,8 +11,13 @@ fallback ladder.
 
 ## Target
 
-`databases.openQuestions` from the project's `context.json`; create with
-`notion-create-pages` (one call for several questions). No such key → say so and stop.
+The **open-questions** database from the project's `context.json`: create via
+`API-post-page` with parent `{type: "database_id", database_id: pageParents.openQuestions}`
+— never `databases.openQuestions`, the read-side data source id (the misleading "not
+shared" 404; see `notion-config` on the two ids). A `notion-create-pages`-style tool
+instead takes `databases.openQuestions` as its `data_source_id` parent (one call for
+several questions). `pageParents` missing → resolve per `notion-config`, write, then offer
+to add it. No `openQuestions` key → say so and stop.
 
 ## Properties
 

@@ -22,6 +22,11 @@ A project opts in by declaring, in its context repo's `context.json`:
         "decisionLog":   "collection://00000000-0000-0000-0000-000000000001",
         "openQuestions": "collection://00000000-0000-0000-0000-000000000002"
       },
+      "pageParents": {
+        "actions":       "00000000-0000-0000-0000-000000000100",
+        "decisionLog":   "00000000-0000-0000-0000-000000000101",
+        "openQuestions": "00000000-0000-0000-0000-000000000102"
+      },
       "schemas": {
         "actions": {
           "title": "Task",
@@ -53,9 +58,18 @@ A project opts in by declaring, in its context repo's `context.json`:
 }
 ```
 
-- **`databases`** — key → data-source ID. The keys `actions`, `decisionLog`, `openQuestions`
-  are what the skills look for; extra databases (stakeholders, projects, …) are allowed and
-  reachable by the pending queue if a schema names them.
+- **`databases`** — key → **data source ID**, the *read-side* id: retrieving a schema
+  (`API-retrieve-a-data-source`) and querying rows (`API-query-data-source`) take these. The
+  keys `actions`, `decisionLog`, `openQuestions` are what the skills look for; extra
+  databases (stakeholders, projects, …) are allowed and reachable by the pending queue if a
+  schema names them.
+- **`pageParents`** — key → **database ID**, keyed identically: creating a page
+  (`API-post-page`) needs one as `parent.database_id`. Notion exposes two ids per database
+  and they are NOT interchangeable — a create given a data source id fails with a 404
+  claiming the database isn't shared with the integration, which names the wrong cause
+  (sharing is fine; the id is the wrong kind). A config written before this map existed
+  still works: the write skills resolve the database id at runtime and offer to add the map
+  (see `notion-config`).
 - **`schemas`** — per-database: the **title property's name**, then each property as
   `"Name": "type — notes/options"`. Free-form strings the skills read and follow **exactly,
   including any odd spelling or trailing space in a property name** (they exist; never trim).

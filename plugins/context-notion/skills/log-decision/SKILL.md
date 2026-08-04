@@ -10,8 +10,12 @@ connection. **Read `notion-config` first** — config resolution, guest gap, fal
 
 ## Target
 
-`databases.decisionLog` from the project's `context.json`; create with `notion-create-pages`.
-No such key → say so and stop.
+The **decision log** from the project's `context.json`: create via `API-post-page` with
+parent `{type: "database_id", database_id: pageParents.decisionLog}` — never
+`databases.decisionLog`, the read-side data source id (it draws the misleading "not shared"
+404; see `notion-config` on the two ids). A `notion-create-pages`-style tool instead takes
+`databases.decisionLog` as its `data_source_id` parent. `pageParents` missing → resolve per
+`notion-config`, write, then offer to add it. No `decisionLog` key → say so and stop.
 
 ## Properties
 

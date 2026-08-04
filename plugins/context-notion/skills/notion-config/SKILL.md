@@ -32,8 +32,11 @@ if none is found, say no context repo is configured — never guess one.)
   connections; **use ONLY the one this project declares** for each provider. If several
   Notion connections are visible and the project declares none, **ask the user which — never
   guess**: writing through another project's connection puts rows in the wrong workspace.
-- `state.notion.databases` — key → data-source ID. Skills name the key they need
-  (`actions`, `decisionLog`, `openQuestions`); a project may define more.
+- `state.notion.databases` — key → **data source ID**, the read-side id (schemas, queries).
+  Skills name the key they need (`actions`, `decisionLog`, `openQuestions`); a project may
+  define more.
+- `state.notion.pageParents` — key → **database ID**, keyed like `databases`: the id a page
+  create needs as `parent.database_id`. May be absent from older configs — see §2.
 - `state.notion.schemas.<key>` — the title property's name, then each property as
   `"Name": "type — options/notes"`. **Follow it exactly, including odd spellings and trailing
   spaces in property names** — they exist in real workspaces and "fixing" them writes to a
@@ -45,7 +48,29 @@ If a skill needs a database key or schema the project doesn't define, say which 
 from `context.json` — a one-line fix — rather than improvising against a database found by
 search.
 
-## 2. The workspace-guest gap
+## 2. The two Notion ids
+
+Notion exposes **two ids per database**, and the API takes a different one per direction:
+
+- **Reads** — retrieving a schema (`API-retrieve-a-data-source`) and querying rows
+  (`API-query-data-source`) take the **data source id**: `databases.<key>`.
+- **Page creates** — `API-post-page` takes the **database id** as `parent.database_id`:
+  `pageParents.<key>`. (A `notion-create-pages`-style tool that takes a `data_source_id`
+  parent instead wants `databases.<key>`, minus any `collection://` prefix.)
+
+They are not interchangeable. A create given a data source id fails with
+`404 object_not_found — Could not find database with ID: … Make sure the relevant pages and
+databases are shared with your integration`. **That message names the wrong cause**: sharing
+is fine, the id is the wrong kind. Never respond by re-sharing databases — check which map
+the id came from.
+
+**`pageParents` missing** (a `state.notion` written before the map existed): resolve at
+runtime — retrieve the data source with `databases.<key>` and read `parent.database_id`
+from the response — and proceed with the write. Then tell the user their `context.json`
+predates `pageParents` and offer to add it (the ids just resolved, keyed like `databases`);
+never rewrite `context.json` unasked.
+
+## 3. The workspace-guest gap
 
 The Notion connector only works fully for a workspace **member**. For a **guest**: reads
 return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
@@ -56,7 +81,7 @@ return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
   property ends up silently empty. Use the roster; `notionUserId: null` → omit the property
   and say so. A person field that is confidently wrong is worse than an empty one.
 
-## 3. Fallback ladder
+## 4. Fallback ladder
 
 - **Reads:** if Notion returns empty or fails, fall back to the context repo's `notion/`
   mirror if the repo has one — and **label the answer with its `syncedOn` date** (from
@@ -67,7 +92,7 @@ return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
 - State which route produced an answer (live Notion, mirror + date, or queued) — provenance
   differs and the user needs to know which they got.
 
-## 4. Property traps (all workspaces)
+## 5. Property traps (all workspaces)
 
 - **The title is the title.** Owners, dates, statuses go in properties, never in the title
   text — "Adam — chase UKPN — 5 Aug" arrives as an unfilterable row.

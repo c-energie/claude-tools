@@ -26,8 +26,10 @@ then re-run. Don't diagnose it as an empty workspace.
 
 ## 3. Capture each database faithfully
 
-For each database: its ID, its title property's name, and every property as
-`"Name": "type — options/notes"`:
+For each database: **both its ids** — the data source id (→ `databases`) and, from
+`parent.database_id` in the same data source response, the database id (→ `pageParents`;
+page creates need it — see `notion-config` on the two ids) — its title property's name, and
+every property as `"Name": "type — options/notes"`:
 
 - **Reproduce property names EXACTLY** — odd spellings, capitalisation, trailing spaces.
   "Fixing" a name here writes the trap into config and every skill inherits it silently.
@@ -39,7 +41,8 @@ For each database: its ID, its title property's name, and every property as
 Map databases to the keys the skills look for — `actions`, `decisionLog`, `openQuestions` —
 by purpose, not name (a database called "Tasks" is probably `actions`). Extra databases get
 their own descriptive keys. **Show the user the complete proposed `state.notion` block**
-(databases, schemas, `people` — from the connection's user listing where available, else
+(`databases`, `pageParents` — keyed identically, one data source id and one database id per
+database — schemas, `people` — from the connection's user listing where available, else
 just the user with their Notion user ID — and `defaults` with `dueSoonDays: 7`), including
 which databases you could NOT map, **and get an explicit yes before writing anything.**
 
