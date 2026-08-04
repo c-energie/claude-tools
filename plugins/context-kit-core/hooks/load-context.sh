@@ -206,6 +206,42 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------- Cowork marker
+# Keep a context-project.json at the project root whenever env or settings named the repo.
+# Cowork sandboxes can only be configured by attaching that file to the project, so the
+# laptop session that already knows the answer writes it, ready to attach — contextRepo from
+# the resolved config, connections mirrored from the context repo's context.json. Never when
+# a marker IS the source (that would overwrite the user's own file), never outside a git
+# checkout (stray directories must not collect one), and never inside the context repo
+# itself (a context repo pointing at itself is noise). Silent on every failure path.
+MARKER_NOTE=""
+if [ -z "${MARKER_SRC:-}" ] && [ -n "$CONTEXT_REMOTE" ] && [ -n "$ROOT" ] \
+   && [ -f "$ROOT/context.json" ] && command -v node >/dev/null 2>&1; then
+  # Both toplevels come from git so they compare in one path style — on Git Bash the
+  # resolver hands back /c/... while rev-parse prints C:/..., and a raw string comparison
+  # against $ROOT would wave the context repo itself straight through the guard.
+  _proj_top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null || true)"
+  _ctx_top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$_proj_top" ] && [ "$_proj_top" != "${_ctx_top:-$ROOT}" ]; then
+    MARKER_NOTE="$(node -e '
+      const fs = require("fs");
+      const [ctxPath, repo, out] = process.argv.slice(1);
+      try {
+        const ctx = JSON.parse(fs.readFileSync(ctxPath, "utf8").replace(/^\uFEFF/, ""));
+        const marker = { contextRepo: repo };
+        if (ctx.connections && Object.keys(ctx.connections).length) marker.connections = ctx.connections;
+        const next = JSON.stringify(marker, null, 2) + "\n";
+        let prev = null;
+        try { prev = fs.readFileSync(out, "utf8"); } catch {}
+        if (prev !== next) {
+          fs.writeFileSync(out, next);
+          process.stdout.write(prev === null ? "created" : "refreshed");
+        }
+      } catch { /* a marker we cannot write is not worth failing a session over */ }
+    ' "$ROOT/context.json" "$CONTEXT_REMOTE" "$proj/context-project.json" 2>/dev/null || true)"
+  fi
+fi
+
 # ---------------------------------------------------------------- emission
 # In session mode, wrap the payload in the hook JSON envelope when node is available:
 # additionalContext carries the context to the model exactly as plain stdout would, and
@@ -337,6 +373,9 @@ if [ -f "$ROOT/notion/_synced.json" ]; then
   echo "Read-only Notion mirror in notion/${SYNCED:+ (last synced $SYNCED)}. A snapshot, not a live feed: Notion wins."
 fi
 [ -d "$ROOT/pending" ] && echo "No workspace access? Queue structured items in pending/."
+# Only when the file actually changed this session — a line repeated every start is noise
+# nobody reads, but a fresh marker is something the user may want to attach to Cowork now.
+[ -n "$MARKER_NOTE" ] && echo "Cowork marker $MARKER_NOTE: context-project.json at the project root now mirrors this configuration — attach it to the Cowork project's files so sandbox sessions load the same context and connections."
 echo
 echo "Full context repo: $CONTEXT_REMOTE."
 # Which checkout this actually came from, and how new it is. Only in --refresh mode: someone

@@ -36,7 +36,9 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
   attach a `context-project.json` to the project's files:
   `{ "contextRepo": "owner/repo", "connections": { "github": "github-myproject", "notion": "notion-myproject" } }`
   (a one-line `context-repo.txt` also works but can't name connections). Until they do,
-  every new session starts unconfigured.
+  every new session starts unconfigured. No need to write it by hand if a laptop already
+  has the project configured: the session-start hook generates exactly this file at the
+  project root there — tell the user to attach that one.
 - No context repo exists yet at all? Creating one is `init-context`'s job (from the
   `c-energie/context-template` repo) — if that skill isn't installed, point the user at the
   template repo's README.
