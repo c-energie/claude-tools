@@ -39,6 +39,20 @@ in the project's `.claude/settings.json`. The resolvers look for the name in ord
 `/mnt/project/`) — with **no default**: an unconfigured project reports itself as such instead of silently loading another project's context. The same committed settings file drives
 Claude Code whether or not the client applies the env var.
 
+Writing that settings file by hand is optional — from the project's own directory:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/link-context.mjs" c-energie/thesis-context --load
+```
+
+It verifies the repo resolves *before* writing anything, merges `PROJECT_CONTEXT_REPO` into
+`.claude/settings.json` without disturbing the rest of the file (`--local` targets
+`settings.local.json`, `--force` re-points an already-linked project), warns when a
+`/.claude/*` ignore rule would stop the link reaching anyone who clones the project, and with
+`--load` reads the context into the *running* session rather than the next one. The repo is an
+argument, never inferred from the project's git remote: guessing it is the wrong-context
+failure this plugin exists to prevent.
+
 **Cowork** is why the marker file exists: its sandbox sees neither your repo checkout nor any
 env var — the only channel in is files attached to the Cowork project. Attach a
 `context-project.json`:

@@ -3,9 +3,16 @@
 # and bring it up to date. Prints the absolute path on stdout (nothing else) so callers can do:
 #   ROOT="$(bash scripts/plugin-repo.sh --writable)"
 #
-#   scripts/plugin-repo.sh              # resolve + pull --ff-only --autostash (30s cap)
-#   scripts/plugin-repo.sh --no-pull    # resolve only — no network against an existing clone
-#   scripts/plugin-repo.sh --writable   # also un-shallow the managed clone so pushes work
+#   scripts/plugin-repo.sh                       # resolve + pull --ff-only --autostash (30s cap)
+#   scripts/plugin-repo.sh --no-pull             # resolve only — no network against an existing clone
+#   scripts/plugin-repo.sh --writable            # also un-shallow the managed clone so pushes work
+#   scripts/plugin-repo.sh --plugin context-kit-core   # print that plugin's directory, not the repo root
+#
+# The repo is a MARKETPLACE holding plugins/<name>/ subdirectories (both plugins moved here on
+# 2026-08-02). The default answer is therefore the repo root — where you commit and push —
+# while --plugin narrows it to the one directory holding a plugin.json, which is what
+# check-plugin.mjs and bump-version.mjs take and what packaging installs as
+# ${CLAUDE_PLUGIN_ROOT}. A pre-move single-plugin layout (plugin.json at the root) still works.
 #
 # Why this exists: when the plugin is installed from the marketplace, ${CLAUDE_PLUGIN_ROOT}
 # points at the installed copy under ~/.claude/plugins/. Editing there is a dead end — it has
@@ -25,13 +32,18 @@ PLUGIN_REMOTE="c-energie/context-kit"
 CLONE_DIR="${CONTEXT_KIT_PLUGIN_DIR:-$HOME/.context/context-kit}"
 cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 
-PULL=1; WRITABLE=0
-for arg in "$@"; do
-  case "$arg" in
+PULL=1; WRITABLE=0; PLUGIN=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --no-pull)  PULL=0 ;;
     --writable) WRITABLE=1 ;;
-    *) echo "plugin-repo.sh: unknown option $arg" >&2; exit 2 ;;
+    --plugin)
+      PLUGIN="${2:-}"
+      [ -z "$PLUGIN" ] && { echo "plugin-repo.sh: --plugin needs a plugin name" >&2; exit 2; }
+      shift ;;
+    *) echo "plugin-repo.sh: unknown option $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 # Cap the pull so a bad connection can't stall the caller. `timeout` is GNU coreutils —
@@ -112,9 +124,12 @@ if [ -z "$ROOT" ] || [ ! -d "$ROOT/.git" ]; then
 fi
 
 # Sanity check: the thing we resolved must actually look like the plugin source, not some
-# other clone that happens to sit at the same path.
-if [ ! -f "$ROOT/.claude-plugin/plugin.json" ]; then
-  echo "plugin-repo.sh: $ROOT has no .claude-plugin/plugin.json — refusing to treat it as the plugin repo" >&2
+# other clone that happens to sit at the same path. Accept BOTH layouts — a marketplace repo
+# (marketplace.json at the root, plugin.json inside each plugins/<name>/) and the pre-move
+# single-plugin repo (plugin.json at the root). Checking only the latter is what broke this
+# script when both plugins moved into plugins/.
+if [ ! -f "$ROOT/.claude-plugin/marketplace.json" ] && [ ! -f "$ROOT/.claude-plugin/plugin.json" ]; then
+  echo "plugin-repo.sh: $ROOT has neither .claude-plugin/marketplace.json nor .claude-plugin/plugin.json — refusing to treat it as the plugin repo" >&2
   exit 1
 fi
 
@@ -129,6 +144,22 @@ if [ "$PULL" -eq 1 ] && ! git_net 1 -C "$ROOT" pull --ff-only --autostash; then
   else
     echo "plugin-repo.sh: pull failed or timed out after ${PULL_TIMEOUT}s; working from the local state" >&2
   fi
+fi
+
+# --plugin narrows the answer to one plugin's own directory. The root fallback covers the
+# pre-move layout, and only when that root plugin.json actually carries the name asked for —
+# otherwise "give me plugin X" would happily hand back a repo holding plugin Y.
+if [ -n "$PLUGIN" ]; then
+  if [ -f "$ROOT/plugins/$PLUGIN/.claude-plugin/plugin.json" ]; then
+    echo "$ROOT/plugins/$PLUGIN"
+  elif [ -f "$ROOT/.claude-plugin/plugin.json" ] \
+       && grep -q "\"name\"[[:space:]]*:[[:space:]]*\"$PLUGIN\"" "$ROOT/.claude-plugin/plugin.json"; then
+    echo "$ROOT"
+  else
+    echo "plugin-repo.sh: no plugin named $PLUGIN in $ROOT (looked for plugins/$PLUGIN/.claude-plugin/plugin.json)" >&2
+    exit 1
+  fi
+  exit 0
 fi
 
 echo "$ROOT"

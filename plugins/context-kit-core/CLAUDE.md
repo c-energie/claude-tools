@@ -17,8 +17,10 @@ A fix to the resolver or hook belongs in both plugins' copies (see the marketpla
 node scripts/check-plugin.mjs .          # lint manifests/skills/hooks; exit 1 on error — run before any commit
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
-bash scripts/plugin-repo.sh --writable   # resolve THIS repo's checkout, push-ready
+bash scripts/plugin-repo.sh --writable   # resolve THIS repo's checkout (root), push-ready
+bash scripts/plugin-repo.sh --plugin context-kit-core   # ...or one plugin's own directory
 node scripts/dates.mjs today
+node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
 ```
 
 ## Invariants (all load-bearing)

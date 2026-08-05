@@ -28,9 +28,14 @@ Multiple channels disagreeing is worth surfacing: the precedence is env → sett
 
 Ask which repo (owner/repo on github.com) holds this project's context — never guess. Then:
 
-- **Laptop (Claude Code):** offer to write `{ "env": { "PROJECT_CONTEXT_REPO": "owner/repo" } }`
-  into the project's `.claude/settings.json` (committed — the whole team gets it) or
-  `.claude/settings.local.json` (this machine only). Takes effect next session.
+- **Laptop (Claude Code):** run it, from the project directory —
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/link-context.mjs" owner/repo --load`. That checks the
+  repo resolves BEFORE writing (so a typo fails clean), merges `PROJECT_CONTEXT_REPO` into the
+  project's `.claude/settings.json` without disturbing the rest of the file, warns if a
+  `/.claude/*` ignore rule means nobody else will get it, and with `--load` puts the context in
+  THIS session instead of the next one. Add `--local` for `.claude/settings.local.json` (this
+  machine only), `--force` to re-point a project that is already linked elsewhere. The repo
+  name is an argument, never a guess — it comes from the user's answer above.
 - **Cowork / cloud sandbox:** the sandbox is ephemeral — nothing written here survives to the
   next session, so the ONLY durable store is a file attached to the project. Tell the user to
   attach a `context-project.json` to the project's files:
@@ -39,9 +44,9 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
   every new session starts unconfigured. No need to write it by hand if a laptop already
   has the project configured: the session-start hook generates exactly this file at the
   project root there — tell the user to attach that one.
-- No context repo exists yet at all? Creating one is `init-context`'s job (from the
-  `c-energie/context-template` repo) — if that skill isn't installed, point the user at the
-  template repo's README.
+- No context repo exists yet at all? Creating one is a separate job with no skill behind it
+  yet: point the user at `c-energie/context-template`, whose README covers stamping a new
+  context repo. Once it exists, link it with the command above.
 
 ## 3. Verify the repo is reachable, then load it NOW
 
@@ -68,5 +73,5 @@ version — `grep '"version"' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"
 marketplace, and tell the user whether the fix is "update the plugin" (stale version), "new
 location" (report the path), or "restart" (config read at session start only).
 
-**Not this skill:** creating a brand-new context repo is `init-context`; re-pulling an
-already-configured one mid-session is `refresh-context`.
+**Not this skill:** re-pulling an already-configured context repo mid-session is
+`refresh-context`.
