@@ -22,6 +22,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # one-line marker file (Cowork — attached project files are the only channel into its
 # sandbox, and env vars cannot be set there). Deliberately NO default: an unconfigured
 # project must say so — falling back to some other project's repo loads the WRONG context.
+# A project that will never have one sets the value to `none` and this hook goes silent.
 proj="${CLAUDE_PROJECT_DIR:-$PWD}"
 settings_key() {  # $1 = file, $2 = json key
   sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
@@ -33,6 +34,12 @@ marker_repo() {
   case "$(head -c 1 "$1" 2>/dev/null)" in
     "{") settings_key "$1" contextRepo ;;
     *)   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n' ;;
+  esac
+}
+is_optout() {  # $1 = the configured value; true when it means "deliberately no context repo"
+  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+    none|off|false|no|-|disabled) return 0 ;;
+    *) return 1 ;;
   esac
 }
 lookup_repo() {  # line 1: owner/repo (or empty); line 2: the marker file it came from (or empty)
@@ -68,6 +75,20 @@ lookup_repo() {  # line 1: owner/repo (or empty); line 2: the marker file it cam
 _res="$(lookup_repo)"
 CONTEXT_REMOTE="$(printf '%s' "$_res" | sed -n 1p)"
 MARKER_SRC="$(printf '%s' "$_res" | sed -n 2p)"
+
+# Opt-out. Some projects have no shared context and never will, and for those the
+# "no context repo configured" payload — which orders the model to go hunting for a marker
+# before it answers anything — is pure noise on every single session. Naming the sentinel
+# `none` wherever a repo name would go (PROJECT_CONTEXT_REPO, a .claude settings env block,
+# or a marker file) says so deliberately, and this exits silently: no payload, no banner, no
+# marker search, no sandbox retry. Distinct from *unconfigured*, which still speaks up —
+# the whole point is that only a human can tell those two apart.
+if is_optout "$CONTEXT_REMOTE"; then
+  # --refresh is somebody asking out loud, so it answers rather than going quiet on them.
+  [ "${1:-}" = "--refresh" ] && \
+    echo "This project has opted out of a shared context repo (configured as \"$CONTEXT_REMOTE\"). Nothing to refresh — remove that setting to re-enable."
+  exit 0
+fi
 
 # Mount-timing race (observed 2026-08-02): in cloud sandboxes the project's attached files
 # can mount AFTER SessionStart fires — the identical lookup succeeds moments later. So if

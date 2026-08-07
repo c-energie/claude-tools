@@ -8,6 +8,8 @@
 //   node link-context.mjs <owner/repo> --force                # re-point a project already linked
 //   node link-context.mjs <owner/repo> --no-verify            # skip the reachability check (offline)
 //   node link-context.mjs <owner/repo> --load                 # print the context to stdout now
+//   node link-context.mjs none                                # opt OUT: this project has no
+//                                                             # context repo, hook goes silent
 //
 // The repo is an ARGUMENT, never a prompt: the same call then works from a terminal, from a
 // `!` line in a session, and from a tool call — where stdin is closed and a prompt would hang
@@ -25,6 +27,10 @@ import { fileURLToPath } from 'node:url';
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OPTIONS = ['local', 'force', 'no-verify', 'load'];
+// The opt-out sentinel, in step with hooks/load-context.sh and scripts/context-repo.sh: a
+// project that deliberately has no context repo, so the session-start hook stays silent
+// instead of reporting it unconfigured every time. `none` is the spelling to document.
+const OPTOUT = ['none', 'off', 'false', 'no', '-', 'disabled'];
 
 const die = (m, code = 2) => { console.error(`link-context.mjs: ${m}`); process.exit(code); };
 const say = (m) => console.error(m);           // stderr, so --load owns stdout
@@ -56,13 +62,14 @@ for (let i = 0; i < argv.length; i++) {
 }
 for (const f of flags) if (!OPTIONS.includes(f)) die(`unknown option --${f} (use ${OPTIONS.map((o) => `--${o}`).join(', ')})`);
 
-if (!positional[0]) die('needs the context repo as owner/repo, e.g. corson94/thesis-context');
+if (!positional[0]) die('needs the context repo as owner/repo (or "none" to opt out), e.g. corson94/thesis-context');
+const optOut = OPTOUT.includes(positional[0].trim().toLowerCase());
 // Tolerate a pasted browser URL or a clone URL — the same repo, just wearing more clothes.
-const repo = positional[0]
+const repo = optOut ? 'none' : positional[0]
   .replace(/^(https:\/\/|git@)github\.com[/:]/, '')
   .replace(/\.git$/, '')
   .replace(/\/+$/, '');
-if (!/^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(repo)) die(`not an owner/repo name: ${positional[0]}`);
+if (!optOut && !/^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(repo)) die(`not an owner/repo name: ${positional[0]}`);
 
 const project = resolve(untilde(projectArg ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd()));
 if (!existsSync(project)) die(`no such directory: ${project}`);
@@ -90,9 +97,13 @@ if (existsSync(file)) {
   }
 }
 
-const current = settings.env?.PROJECT_CONTEXT_REPO;
+// An existing opt-out counts as already-set-to-none however it was spelled, so re-running
+// with `none` is a no-op rather than a --force prompt.
+const rawCurrent = settings.env?.PROJECT_CONTEXT_REPO;
+const current = rawCurrent && OPTOUT.includes(rawCurrent.trim().toLowerCase()) ? 'none' : rawCurrent;
 if (current && current !== repo && !flags.has('force')) {
-  die(`${rel} already points this project at ${current} — pass --force to re-point it to ${repo}`);
+  const target = optOut ? 'opt it out' : `re-point it to ${repo}`;
+  die(`${rel} already points this project at ${current} — pass --force to ${target}`);
 }
 
 // ---------------------------------------------------------------- verify, then write
@@ -100,7 +111,7 @@ if (current && current !== repo && !flags.has('force')) {
 // Runs the real resolver with the candidate name in the environment, which is exactly what the
 // SessionStart hook will do next session — so a pass here means the next session passes too.
 // Side effect worth knowing about: it clones the repo to ~/.context/<owner>-<repo> if absent.
-if (!flags.has('no-verify')) {
+if (!optOut && !flags.has('no-verify')) {
   const probe = spawnSync('bash', [bash('scripts/context-repo.sh')], {
     encoding: 'utf8',
     env: { ...process.env, PROJECT_CONTEXT_REPO: repo, CLAUDE_PROJECT_DIR: project },
@@ -118,12 +129,15 @@ if (!flags.has('no-verify')) {
 }
 
 if (current === repo) {
-  say(`  ok    ${rel} already links this project to ${repo} — left as is`);
+  say(optOut
+    ? `  ok    ${rel} already opts this project out of a context repo — left as is`
+    : `  ok    ${rel} already links this project to ${repo} — left as is`);
 } else {
   settings.env = { ...(settings.env ?? {}), PROJECT_CONTEXT_REPO: repo };
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   say(`  ok    ${current ? 're-pointed' : 'wrote'} ${rel} → ${repo}`);
+  if (optOut) say('        This project has no context repo: the session-start hook will load nothing and say nothing.');
 }
 
 // A committed settings.json under the common `/.claude/*` ignore rule reaches nobody else —
@@ -138,7 +152,9 @@ if (!local) {
 
 // ---------------------------------------------------------------- load it now, optionally
 
-if (flags.has('load')) {
+if (optOut) {
+  say('        Restart Claude Code here for the hook to go quiet; re-run with an owner/repo to undo.');
+} else if (flags.has('load')) {
   const load = spawnSync('bash', [bash('hooks/load-context.sh'), '--refresh'], {
     encoding: 'utf8',
     env: { ...process.env, PROJECT_CONTEXT_REPO: repo, CLAUDE_PROJECT_DIR: project },

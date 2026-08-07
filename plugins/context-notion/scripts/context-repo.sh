@@ -74,6 +74,14 @@ if [ -z "$CONTEXT_REMOTE" ]; then
   echo "context-repo.sh: no context repo configured for this project — set PROJECT_CONTEXT_REPO, add an env block to .claude/settings.json, or attach a one-line .context-repo / context-repo.txt marker (owner/repo)" >&2
   exit 1
 fi
+# The opt-out sentinel: a project that deliberately has no context repo, spelled `none`
+# wherever the repo name goes. Same exit code as unconfigured — callers already treat that as
+# "no context here" — but a different reason, because the fix is the opposite one.
+case "$(printf '%s' "$CONTEXT_REMOTE" | tr 'A-Z' 'a-z')" in
+  none|off|false|no|-|disabled)
+    echo "context-repo.sh: this project has opted out of a context repo (configured as \"$CONTEXT_REMOTE\") — nothing to resolve. Remove that setting from .claude/settings*.json, the env, or the marker to re-enable." >&2
+    exit 1 ;;
+esac
 
 # The managed clone lands at ~/.context/<owner>-<repo> — owner included because context repos
 # tend to all be *named* "context", and two projects' clones must not collide.

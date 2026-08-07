@@ -23,6 +23,8 @@ the context now, and fixes gaps with the user.
   path to the user so it can be added.**
 
 Multiple channels disagreeing is worth surfacing: the precedence is env → settings → marker.
+A channel holding `none` (or `off` / `false` / `no` / `-`) is not a misconfiguration: it is
+this project saying it deliberately has no context repo, and the hook stays silent for it.
 
 ## 2. Nothing found? Configure it with the user
 
@@ -47,6 +49,13 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
 - No context repo exists yet at all? Creating one is a separate job with no skill behind it
   yet: point the user at `c-energie/context-template`, whose README covers stamping a new
   context repo. Once it exists, link it with the command above.
+- **This project should never have one?** Opt it out instead of leaving it unconfigured:
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/link-context.mjs" none` (writes
+  `PROJECT_CONTEXT_REPO: "none"`; a marker file or env var holding `none` does the same).
+  From the next session the hook loads nothing, prints nothing, and skips the marker search
+  entirely. Offer this whenever someone says a project has no shared context, or is tired of
+  the ⚠ line — but only on their say-so: never opt a project out to silence a lookup that
+  merely failed. Undo with the same command and a real `owner/repo` plus `--force`.
 
 ## 3. Verify the repo is reachable, then load it NOW
 
