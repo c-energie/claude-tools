@@ -97,12 +97,27 @@ items can still be queued in the context repo's `pending/`.
 | `notion-discover` | Discover a workspace into `context.json`'s `state.notion` — the setup step that unlocks the rest |
 | `add-pending` | Queue a row in the context repo's `pending/` when Notion is unreachable |
 | `process-pending` | 🔒 Drain `pending/` into Notion (never self-triggers) |
+| `check-watchlist` | The watch-until-it-opens items in the actions database: review, roll on, or convert |
+| `list-people` | Read the individuals out of the project's stakeholders database |
+| `tidy-stakeholders` | Enrich sparse stakeholder rows from public sources; flag duplicates and misfilings |
+| `tidy-projects` | The same for the register of external projects the project tracks |
+| `capture-project` | Create a tracked-project row from a URL or a name: duplicate check, research, link the organisations |
+| `synthesise-meeting` | Write a meeting up into the context repo's `meetings/`, then log its core items |
+| `sync-notion-mirror` | 🔒 Regenerate the read-only `notion/` mirror (via `mirror-render.mjs`) |
+| `weekly-review` | The recurring runner: which of the above to run each week, in order |
+
+Only `actions`, `openQuestions` and `decisionLog` are contract keys. The rest of the table
+works off whatever *other* database keys a project declares (`stakeholders`, `relatedProjects`,
+`meetings`, …) — a project without one simply doesn't get that skill's job, and the skill says
+which key is missing rather than hunting for a database by search.
 
 ## Scripts
 
 ```bash
 node scripts/triage.mjs rows.json --today 2026-08-01     # due-date bucketing (--watching, --by-owner)
 node scripts/pending-parse.mjs "$ROOT" --json            # parse/validate pending/; --drain results.json
+node scripts/mirror-render.mjs "$ROOT" export.json       # render the notion/ mirror (--dry-run, --today)
+node scripts/vtt-to-text.mjs meeting.vtt --out out.txt   # transcript → compact speaker-labelled text
 node scripts/dates.mjs today                             # add weekly | add 3d | window 7 | age
 node scripts/check-plugin.mjs .                          # repo lint — run before any commit
 node scripts/bump-version.mjs . patch
@@ -112,11 +127,15 @@ node scripts/bump-version.mjs . patch
 "due soon" mean. `context-repo.sh` is a **copy of context-kit's** (plugins cannot reach into
 each other's install directories) — keep the two in step.
 
+`mirror-render.mjs` owns the `notion/` folder. Its defining property is **unchanged Notion ⇒
+no diff**, so `git diff notion/` reads as a changelog — which is why the mirror is never
+hand-edited. It renders `actions`, `openQuestions` and `decisionLog` with purpose-built
+layouts and **any other database key as a generic table**, so a project can mirror databases
+this plugin has never heard of.
+
 ## Roadmap
 
-Planned here: **mirror sync** (a deterministic renderer of the Notion databases into the
-context repo's `notion/` folder, whose defining property is "unchanged Notion ⇒ no diff", so
-`git diff notion/` reads as a changelog — mirror *reading* already works in `notion-config`'s
-fallback against any `notion/` directory). Candidates beyond that: stakeholder/project
-capture and enrichment, meeting synthesis, watch-lists, recurring-review runners — kept out
-until they can be expressed purely through each project's `context.json`.
+Slack delivery — the per-person digest and the pending-queue nudge — lives in its sibling
+[`context-slack`](../context-slack/), which reads the same roster (`slackMemberId`) and the same
+`defaults.slackChannel`. `weekly-review` offers the digest when that plugin is installed and
+skips the line when it isn't.

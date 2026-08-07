@@ -39,6 +39,18 @@ in the project's `.claude/settings.json`. The resolvers look for the name in ord
 `/mnt/project/`) — with **no default**: an unconfigured project reports itself as such instead of silently loading another project's context. The same committed settings file drives
 Claude Code whether or not the client applies the env var.
 
+**Opting a project out.** A project that will never have a context repo sets the value to
+`none` (`off` / `false` / `no` / `-` also work) in any of those same channels:
+
+```json
+{ "env": { "PROJECT_CONTEXT_REPO": "none" } }
+```
+
+— or `node "${CLAUDE_PLUGIN_ROOT}/scripts/link-context.mjs" none`. The session-start hook then
+loads nothing, says nothing, and — the point of it — never goes marker-hunting. That is
+deliberately different from *unconfigured*, which still announces itself on every session:
+only a human can tell "not set up yet" from "not applicable here".
+
 Writing that settings file by hand is optional — from the project's own directory:
 
 ```bash
@@ -93,19 +105,22 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 
 | Skill | What it does |
 | --- | --- |
+| `context-setup` | First-run wiring and diagnosis: how this project names its repo, is it reachable, load it now |
 | `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
 | `save-thread` | 🔒 Write up the current work as a `threads/` entry and push (never self-triggers) |
+| `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |
+| `setup-connectors` | Provision the MCP connections a project's `context.json` declares |
+| `context-access` | _(hidden)_ The GitHub-API route sandboxes use, and the rules that stop an API write truncating a file |
+| `update-plugin` | Change these plugins themselves — check, bump, and (after asking) push |
 
 The SessionStart hook loads `memory.md` + thread pointers automatically, with a STALE banner
 when the refresh fails — a silently stale context is the one failure mode that actively
-misleads.
+misleads. A project that will never have a context repo opts out with `none`; see above.
 
 ## Roadmap
 
-Planned here: `curate-context` (condense/restructure a context repo as threads accumulate),
-`context-access` (the full GitHub-API route documentation for cloud sandboxes), an
-`update-plugin` analogue for maintaining this marketplace, and `init-context` (stamp a new
-context repo from `c-energie/context-template` and wire it up end to end).
+Planned here: `init-context` (stamp a new context repo from `c-energie/context-template` and
+wire it up end to end — the one remaining hand-run checklist).
 
 A project must never enable two plugins whose hooks both load context — the context loads
 twice.

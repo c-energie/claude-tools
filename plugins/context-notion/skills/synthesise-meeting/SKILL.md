@@ -1,0 +1,212 @@
+---
+name: synthesise-meeting
+description: Synthesise a meeting into the context repo's meetings/ folder from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session".
+---
+
+# Synthesise a meeting
+
+Turns a meeting into a `meetings/` writeup in the project's context repo and logs its decisions /
+actions / open questions to Notion. **Read `notion-config` first** — the meetings database, the
+roster and every property name come from the project's `context.json`.
+
+Needs the project's Notion connection, and its file-storage connector (Google Drive or
+equivalent) whenever the meeting was recorded.
+
+## There are two sources, and the Notion page is usually the weaker one
+
+A meeting leaves traces in two places, and **neither is reliably the complete one**:
+
+- the **Notion meeting page** — often just an agenda, because the notes field only gets filled in
+  when someone remembers during the meeting;
+- a **transcript** (`.vtt`) in the project's file storage — the full record, when it was recorded.
+
+**A blank Notion page is not evidence that there is nothing to write up.** This is the failure
+this skill exists to prevent, and it has happened: a meeting page was completely empty and was
+nearly reported as "nothing to synthesise" while a 99 KB transcript of that very conversation sat
+in Drive. **Always check both before concluding a meeting cannot be written up.**
+
+**This skill cannot fall back to the `notion/` mirror.** Meeting pages exist only in Notion. If
+the connection fails or returns nothing (a workspace guest gets empty results, not an error),
+**stop and say the connection is needed.** Don't write up a meeting from memory or from a
+`threads/` file and present it as the synthesis. Decisions and actions that came out of the
+meeting can still be captured with `add-pending`.
+
+## 1. Identify the meeting
+
+The user names it however they like — a type ("the weekly sync"), a date ("Monday's"), a name, an
+attendee. Find the matching page in `databases.meetings`. If the project declares no meetings
+database, say which key is missing rather than searching for one.
+
+- Search by type / name / topic, then fetch the chosen page.
+- Default to the **most recent** match; if ambiguous, confirm the date with the user.
+- Note the page's **name**, **date** and **URL** (the URL is needed for the relations below).
+
+**Check the date property, not just the ordering.** A meetings database holds *future* meetings —
+recurring syncs are created with their agenda days ahead. A meeting dated later than today has not
+happened: say so rather than writing up an agenda as though it were an outcome. Skip the
+database's **page templates**, which list as pages but are not meetings, and watch for **duplicate
+pages for one slot** — a real state worth reporting.
+
+## 2. Find the transcript
+
+Do this **for every meeting**, including — especially — ones whose Notion page looks empty.
+
+Where they live: the folder the project declares (`state.notion.defaults.transcriptFolderId`, if
+it has one), through the file connector named in `connections`. Search by **date-prefixed title**
+as well as by folder, so a transcript filed elsewhere is still found.
+
+Matching rules, each of which exists because the obvious approach fails:
+
+- **Search a window of ±3 days around the meeting date, never the exact date.** The transcript is
+  named for when it was *recorded or uploaded*, which is often not the meeting's date. Real
+  example: a meeting dated the 28th whose transcript is `2026-07-29-Bid-change.vtt`. An exact-date
+  match finds nothing.
+- **Do not rely on the title naming the meeting.** When the title is unhelpful, read the opening
+  of the transcript and match on **who is speaking and what they discuss**.
+- **The `.vtt` extension may or may not be in the title.** Filter on the MIME type (`text/vtt`),
+  not on the title's ending.
+- **A near-date match is a candidate, not a fact.** If a transcript is plausible but not certain,
+  say which file you matched and why, and let the user confirm before writing anything up from it.
+
+**Always convert the `.vtt` to plain text before reading it — never read the raw VTT.** Raw VTT is
+~3x the words spoken (cue IDs, timestamps, markup), so an hour-long meeting overflows the
+tool-result limit; the Drive read tool also backslash-escapes the markup, which defeats naive
+parsing. Run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/vtt-to-text.mjs" [saved tool-result or .vtt] --out [txt path]
+```
+
+It handles both raw `.vtt` and a saved tool-result JSON (`{fileContent}`), strips the cue
+machinery, merges consecutive same-speaker turns and writes `Speaker: words` at roughly a third of
+the size — then read *that*, in chunks if long. The one-line summary names the speaker labels it
+saw: **compare them against the expected attendees before trusting any attribution.** Fewer labels
+than attendees means shared mics or collapsed diarisation (both have happened — four voices
+collapsed into two labels; two people sharing a mic, folding their speech into other turns). Say
+so in the writeup and attribute only where context makes the speaker clear.
+
+If the file connector is unavailable, say so and continue from the Notion notes alone — but
+**label the writeup as notes-only**, because a later reader otherwise cannot tell a thin meeting
+from a thin record of a full one.
+
+## 3. Synthesise
+
+Concise markdown for a reader with **no prior context** (spell out acronyms once). Use whichever
+sections apply — omit any with nothing in them: `## Summary`, `## Decisions`, `## Actions` (as
+`Owner — task — due date`), `## Open questions`, `## Risks & blockers`, `## Notable discussion`.
+
+**Do NOT invent content.** If the notes are thin, keep it thin. Not every meeting has decisions or
+actions — a stakeholder meeting may be mostly summary and notable discussion.
+
+**Working from a transcript changes what care is needed.** A `.vtt` is raw speech: people think
+aloud, contradict themselves, and abandon half the ideas they raise. Treat a thing as decided only
+where the conversation actually converged — an idea floated once and dropped is notable discussion
+at most, and usually nothing. Attribute an action to someone only if they accepted it, not merely
+because their name was said near it. Automatic transcription also mangles names and technical
+terms, so check anything you are about to write down as a fact against the roster or the Notion
+databases, and never quote at length: these are recordings of real people, and the writeup is a
+synthesis, not a record of who said what.
+
+**Classify carefully — this governs what gets logged in step 6:**
+
+- **Decision** = a settled choice of *direction or approach*. Log only the **core, load-bearing**
+  ones: something a colleague needs to know in order to act correctly, independent of the
+  reasoning. Rationale and "why we chose X" belong in the writeup or a thread, not the log.
+- **Action** = something someone will *do*, with an owner. **"Do X by next week" is an action, not
+  a decision** — even if agreeing to it felt like one. Method details are usually part of an
+  action, not a standalone decision.
+- **Open question** = a genuine **core** unknown worth tracking and sharing. **Most meetings
+  produce none — do not manufacture them.** An empty list is the normal result.
+
+The writeup can hold the finer detail; Notion should hold only the core items.
+
+## 4. Write to the context repo's meetings/ folder
+
+```bash
+ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --writable)"
+```
+
+Write `meetings/YYYY-MM-DD-[slug].md` (date = the meeting's date; slug = a short kebab of the type
+or name). **Follow the repo's own house rules** — read its `templates/` and `taxonomy.yml` where
+they exist; they win over the defaults here. Typical front-matter:
+
+```
+---
+id: 2026-07-27-weekly-sync
+title: Weekly sync — 27 July 2026
+type: meeting
+status: settled
+date: 2026-07-27
+attendees: [handle]
+topics: [funding]
+notion_ids: ["paste the meeting page URL"]
+transcript: "link to the transcript, or omit"
+---
+
+# [date] — [meeting name] synthesis
+
+_Synthesised on [today] from the "[meeting name]" Notion note and its transcript. Edit freely._
+```
+
+Name the sources honestly in that line — "Notion note and its transcript", "transcript only, the
+Notion page was empty", or "Notion notes only, no transcript found". It is the one place a later
+reader can tell how complete the record behind the writeup was.
+
+Front-matter rules:
+
+- `id` = the filename without `.md`. Stable; never change it, even if the file is renamed.
+- `status` = `settled` — a meeting writeup is finished when written.
+- `topics` **must** already exist in the repo's `taxonomy.yml` where it has one. Use the closest
+  existing tag and tell the user which one they might want to add — **never invent a tag inline.**
+- `attendees` uses the same short handles as elsewhere in the repo. Omit external people; they
+  belong in the stakeholders database.
+- `notion_ids` links the repo → Notion in **one direction only**. Never hand-write the reverse
+  link back into Notion.
+- `transcript`: the view URL of the file found in step 2. Omit the key entirely rather than
+  writing a placeholder. Raw transcripts stay in the file store — **never commit a `.vtt` to the
+  context repo** (they hold third-party personal data that must stay deletable, and they crowd out
+  synthesised notes in retrieval).
+- Do **not** add `last_updated` or `author` — git already knows.
+- **No angle brackets in any front-matter value**; use `[…]` or `{…}`.
+
+Ask before committing and pushing, then report the path.
+
+## 5. Write the summary back to the meeting page
+
+The meeting note itself is usually just the agenda. Append the **summary** to the meeting page so
+it lives with the note, not only in the repo, plus a one-line pointer to the `meetings/` file for
+the full writeup. The decisions / actions / questions go to their own databases in step 6, not
+duplicated here.
+
+This step matters most for a meeting whose page was blank: it is what stops the next person
+concluding the meeting was never recorded.
+
+## 6. Log to the Notion databases
+
+Show the extracted **decisions / actions / open questions** and confirm the list (and owners)
+before creating anything. Log **only the core items**, and skip anything already recorded. Set the
+meeting relation on each, so items link back to this meeting.
+
+**Fill the structured properties — never stuff owner, date or status into the title text.** The
+title is the decision / task / question itself.
+
+- **Decisions** → follow `log-decision` (`databases.decisionLog`), each with a short body
+  (what was decided, and why).
+- **Actions** → follow `add-action` (`databases.actions`), owner from the roster, due date as
+  `start` + `is_datetime` = `0`.
+- **Open questions** → follow `add-open-question` (`databases.openQuestions`).
+
+Owners resolve from `state.notion.people` only — never from a workspace search, which is blind to
+guests. Omit a person property rather than guessing.
+
+## 7. Report
+
+List the summary added to the meeting page, what was written to `meetings/` (including the topics
+used and whether a transcript was linked), and the rows created, with URLs.
+
+State **which sources the synthesis came from**, and name the transcript file if one was used. If
+none was found, say so explicitly rather than silently omitting it: "no transcript for this date"
+and "I didn't look" read identically in a writeup, and only one of them means the record is
+complete.
+
+**Not this skill:** a session write-up that isn't a meeting is context-kit-core's `save-thread`.

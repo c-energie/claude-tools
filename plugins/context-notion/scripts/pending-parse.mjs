@@ -125,7 +125,7 @@ const TYPES = {
     file: 'projects.md',
     title: 'Project name',
     target: 'Notion Related projects',
-    skill: 'capture-project',
+    skill: 'tidy-projects',
     wanted: ['link'],
     fields: {
       link: {},

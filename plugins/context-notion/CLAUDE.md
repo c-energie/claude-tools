@@ -21,6 +21,7 @@ node scripts/check-plugin.mjs .          # lint; run before any commit
 node scripts/bump-version.mjs . patch    # writes plugin.json only
 CONTEXT_CONFIG=path/to/context.json node scripts/triage.mjs rows.json --today 2026-08-01
 node scripts/pending-parse.mjs "$ROOT" --json
+CONTEXT_CONFIG=path/to/context.json node scripts/mirror-render.mjs "$ROOT" export.json --dry-run
 ```
 
 `CONTEXT_CONFIG` pins the config for testing; without it `lib.mjs` resolves the context repo
@@ -33,6 +34,10 @@ via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_REPO`).
   context-kit first, then here.
 - **`pending-parse.mjs` owns the pending entry format** — the single definition, so
   queues stay interchangeable across plugin versions.
+- **`mirror-render.mjs` owns the `notion/` folder, and its property is "unchanged Notion ⇒ no
+  diff"** — all sorting, clipping and column order live in the script, the mirror is never
+  hand-edited, and a database absent from an export is left on disk (and carried forward in
+  `_synced.json` with its own date) rather than blanked.
 - **Owners resolve from `state.notion.people`, never `notion-search`** — workspace guests are
   invisible to search and the failure is silent.
 - **An empty Notion result is never evidence of absence** (guests get zero rows, not errors).

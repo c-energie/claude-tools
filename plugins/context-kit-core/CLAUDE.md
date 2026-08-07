@@ -4,7 +4,7 @@
 
 The **core layer** context plugin (`context-kit`), shipped from its own marketplace in
 `c-energie/context-kit`. Generic machinery only: it loads/refreshes/writes *a* project's
-context repo, selected per project by `PROJECT_CONTEXT_REPO`, settings files, or a marker — with no default: unconfigured projects say so.
+context repo, selected per project by `PROJECT_CONTEXT_REPO`, settings files, or a marker — with no default: unconfigured projects say so, and `none` opts a project out silently.
 Anything project- or workspace-specific belongs in a higher layer: the planned Notion
 middle-layer plugin, or the project's own context repo (created from
 `c-energie/context-template`). See README.md for the three-layer picture and port status.
@@ -28,6 +28,10 @@ node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link
 - **Version lives in `plugin.json` only** — a `version` in a `marketplace.json` `plugins[]`
   entry silently overrides it.
 - **No angle brackets in any YAML front-matter value** — the skill ingester drops the field.
+- **`none` (also `off`/`false`/`no`/`-`) wherever the repo name is configured is the opt-out**
+  — the hook exits 0 with no output and no marker search, and the resolvers exit 1 saying so.
+  Keep the sentinel list in step across `hooks/load-context.sh`, both `context-repo.sh`
+  copies and `link-context.mjs`. Never conflate it with *unconfigured*, which must stay loud.
 - **The hook never prompts, never hangs, never exits non-zero.** Unknown args are ignored.
   Failed refreshes serve the local copy under a STALE banner naming the reason — a silent
   stale load is the one failure mode that actively misleads.
@@ -38,6 +42,8 @@ node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link
   on timeouts.
 - **Skills that write outside the session must not self-trigger**: `disable-model-invocation:
   true` or an explicit ask-before-push gate.
+- **`update-plugin` is the route for changing these plugins** — it resolves the writable
+  checkout, checks and bumps **per plugin directory**, and asks before every push.
 - **Edit the source checkout, not the installed copy** — `${CLAUDE_PLUGIN_ROOT}` points at
   `~/.claude/plugins/…`, which has no push remote and is overwritten on update. Resolve with
   `scripts/plugin-repo.sh --writable` (managed clone: `~/.context/context-kit`).
