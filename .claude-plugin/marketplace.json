@@ -21,6 +21,11 @@
       "name": "context-notion",
       "source": "./plugins/context-notion",
       "category": "productivity"
+    },
+    {
+      "name": "context-slack",
+      "source": "./plugins/context-slack",
+      "category": "productivity"
     }
   ]
 }
