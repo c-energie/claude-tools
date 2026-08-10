@@ -10,15 +10,22 @@ actions / open questions to Notion. **Read `notion-config` first** — the meeti
 roster and every property name come from the project's `context.json`.
 
 Needs the project's Notion connection, and its file-storage connector (Google Drive or
-equivalent) whenever the meeting was recorded.
+equivalent) for meetings that were recorded. **Not every meeting is recorded, and that's normal**
+— see step 2.
 
-## There are two sources, and the Notion page is usually the weaker one
+## There are two sources, and neither is guaranteed to be present
 
-A meeting leaves traces in two places, and **neither is reliably the complete one**:
+A meeting leaves traces in up to two places:
 
 - the **Notion meeting page** — often just an agenda, because the notes field only gets filled in
   when someone remembers during the meeting;
-- a **transcript** (`.vtt`) in the project's file storage — the full record, when it was recorded.
+- a **transcript** (`.vtt`) in the project's file storage — the full record, when the meeting was
+  recorded and a transcript was actually produced.
+
+**Either one alone is enough to write up.** There doesn't need to be both — a transcript with a
+blank Notion page, or solid Notion notes with no transcript, are both normal, complete inputs.
+Only the combination of an empty page *and* no transcript found means there is nothing yet to
+synthesise.
 
 **A blank Notion page is not evidence that there is nothing to write up.** This is the failure
 this skill exists to prevent, and it has happened: a meeting page was completely empty and was
@@ -31,7 +38,7 @@ the connection fails or returns nothing (a workspace guest gets empty results, n
 `threads/` file and present it as the synthesis. Decisions and actions that came out of the
 meeting can still be captured with `add-pending`.
 
-## 1. Identify the meeting
+## 1. Identify the meeting, and check it isn't already done
 
 The user names it however they like — a type ("the weekly sync"), a date ("Monday's"), a name, an
 attendee. Find the matching page in `databases.meetings`. If the project declares no meetings
@@ -46,6 +53,18 @@ recurring syncs are created with their agenda days ahead. A meeting dated later 
 happened: say so rather than writing up an agenda as though it were an outcome. Skip the
 database's **page templates**, which list as pages but are not meetings, and watch for **duplicate
 pages for one slot** — a real state worth reporting.
+
+**Cross-reference before doing any work: has this meeting already been synthesised?** Fetch the
+page's content, not just its properties, and look for an existing `## Summary` section (written
+back in step 5). If one is already there — or the decisions / actions / open questions this
+meeting would produce are already present in their Notion databases with this meeting's relation
+set — this meeting is already done. Report that plainly and **stop**: don't re-run steps 2–6,
+and don't re-log the same items a second time. This guard matters most on an unattended or
+scheduled run, where there's no one to notice a duplicate before it lands in Notion.
+
+If the user explicitly asks to redo a meeting that already has a summary (a transcript arrived
+late, the first pass was thin), that's a deliberate exception: say the existing Summary is being
+treated as stale and will be overwritten, and proceed.
 
 ## 2. Find the transcript
 
@@ -68,6 +87,12 @@ Matching rules, each of which exists because the obvious approach fails:
 - **A near-date match is a candidate, not a fact.** If a transcript is plausible but not certain,
   say which file you matched and why, and let the user confirm before writing anything up from it.
 
+**No transcript found is a normal, common outcome, not a blocker.** Plenty of meetings are never
+recorded, or the recording never gets a transcript. If the connector is reachable but nothing
+falls inside the ±3 day window, don't stop and don't wait for one to appear later — continue to
+step 3 on the Notion notes alone, exactly as when the connector itself is unavailable (below).
+The only time this is a real problem is when the Notion page is *also* empty; see step 1.
+
 **Always convert the `.vtt` to plain text before reading it — never read the raw VTT.** Raw VTT is
 ~3x the words spoken (cue IDs, timestamps, markup), so an hour-long meeting overflows the
 tool-result limit; the Drive read tool also backslash-escapes the markup, which defeats naive
@@ -87,7 +112,8 @@ so in the writeup and attribute only where context makes the speaker clear.
 
 If the file connector is unavailable, say so and continue from the Notion notes alone — but
 **label the writeup as notes-only**, because a later reader otherwise cannot tell a thin meeting
-from a thin record of a full one.
+from a thin record of a full one. Treat "connector unavailable" and "connector fine, nothing
+found" the same way from here on: both mean notes-only, just say which one it was.
 
 ## 3. Synthesise
 
@@ -179,7 +205,9 @@ the full writeup. The decisions / actions / questions go to their own databases 
 duplicated here.
 
 This step matters most for a meeting whose page was blank: it is what stops the next person
-concluding the meeting was never recorded.
+concluding the meeting was never recorded. It is also what step 1's duplicate check looks for on
+the next run — an untitled or missing `## Summary` heading is read as "not yet synthesised", so
+use that heading exactly.
 
 ## 6. Log to the Notion databases
 
@@ -208,5 +236,8 @@ State **which sources the synthesis came from**, and name the transcript file if
 none was found, say so explicitly rather than silently omitting it: "no transcript for this date"
 and "I didn't look" read identically in a writeup, and only one of them means the record is
 complete.
+
+If step 1's duplicate check stopped the run early, report that instead: which meeting, that it
+already had a Summary (or already-logged items), and that nothing was re-written.
 
 **Not this skill:** a session write-up that isn't a meeting is context-kit-core's `save-thread`.
