@@ -13,17 +13,24 @@ surface a root-sourced plugin).
 
 ## Working on this repo
 
-- **Check and bump per plugin, from the plugin's own directory:**
-  `node plugins/<name>/scripts/check-plugin.mjs plugins/<name>` before any commit, and
-  `node plugins/<name>/scripts/bump-version.mjs plugins/<name> patch|minor|major` once per
-  release. Versions live in each plugin's `plugin.json` only — never in a `marketplace.json`
+- **Check and bump per plugin.** Both tools live in **context-kit-core only** — they are
+  dev-time, no skill invokes them, and they take the target plugin's directory as an argument,
+  so a copy per plugin bought nothing and drifted:
+  `node plugins/context-kit-core/scripts/check-plugin.mjs plugins/<name>` before any commit, and
+  `node plugins/context-kit-core/scripts/bump-version.mjs plugins/<name> patch|minor|major` once
+  per release. Versions live in each plugin's `plugin.json` only — never in a `marketplace.json`
   `plugins[]` entry, where they silently override.
 - **`marketplace.json` names every plugin with a relative source** (`./plugins/<name>`). Keep
   it to source / category / tags; hand-verify it after edits (no root-level linter).
-- **Some scripts exist as deliberate copies** — plugins cannot reach into each other's install
-  directories. `context-repo.sh` is in all three; `lib.mjs`, `dates.mjs` and `pending-parse.mjs`
-  are also in context-slack. **Fix the original first, then copy:** `context-repo.sh` originates
-  in context-kit-core, the rest in context-notion (which owns the pending entry format).
+- **Some scripts exist as deliberate copies** — a skill can only reference
+  `${CLAUDE_PLUGIN_ROOT}/scripts/...` inside its **own** plugin, so anything a skill calls at
+  runtime must sit there. `context-repo.sh` and `dates.mjs` are in all three; `lib.mjs` and
+  `pending-parse.mjs` are in context-notion and context-slack. **Fix the original first, then
+  copy:** `context-repo.sh` originates in context-kit-core, the rest in context-notion (which
+  owns the pending entry format). `check-plugin.mjs` verifies this and errors on drift, comparing
+  below each copy's header banner — the one part meant to differ. A tool that is *not* called by
+  a skill does not need copying: `check-plugin.mjs` and `bump-version.mjs` live in
+  context-kit-core alone, and had drifted while they were duplicated.
 - **`update-plugin` (context-kit-core) is the route for changing any of this** — it resolves the
   writable checkout, picks the right plugin, checks and bumps per plugin, and asks before pushing.
 - `*.sh` stay LF (root `.gitattributes`); no angle brackets in any front-matter value; hooks

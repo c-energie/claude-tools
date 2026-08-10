@@ -131,6 +131,65 @@ if (!existsSync(skillsDir)) {
 // on-demand, so that check is all false positives — "is this one recurring?" is a judgement
 // the update-plugin checklist asks for, not something to lint.
 
+// ---------------------------------------------------------------- copied scripts
+// Some scripts exist in more than one plugin ON PURPOSE: a skill can only reference
+// ${CLAUDE_PLUGIN_ROOT}/scripts/... inside its OWN plugin's install directory, so anything a
+// skill calls at runtime has to sit in that plugin. The rule is that the copies stay in step,
+// each group with a named origin so a fix has exactly one direction to travel.
+//
+// Nothing enforced that until now — the rule lived in four CLAUDE.md files and in whoever
+// remembered to run diff. It had already failed twice: check-plugin.mjs and bump-version.mjs
+// (both since consolidated into context-kit-core, being dev-time tools no skill invokes) had
+// drifted apart, check-plugin's copies losing a guard the original has. A drifted copy means
+// the same job behaves differently depending on which plugin ran it, silently.
+//
+// Compared BELOW the leading comment header: a copy carries a banner saying it is one, naming
+// its origin, and that banner is the single part meant to differ.
+const COPIES = [
+  { file: 'scripts/context-repo.sh',   origin: 'context-kit-core', copies: ['context-notion', 'context-slack'] },
+  { file: 'scripts/dates.mjs',         origin: 'context-notion',   copies: ['context-kit-core', 'context-slack'] },
+  { file: 'scripts/lib.mjs',           origin: 'context-notion',   copies: ['context-slack'] },
+  { file: 'scripts/pending-parse.mjs', origin: 'context-notion',   copies: ['context-slack'] },
+];
+
+// Drop the shebang and the contiguous comment block at the top, then compare what is left.
+// Stops at the first line that is neither blank nor a comment, so comments further down are
+// part of the body and a change to one IS drift.
+const bodyOf = (text) => {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  let i = lines[0]?.startsWith('#!') ? 1 : 0;
+  while (i < lines.length) {
+    const t = lines[i].trimStart();
+    if (t !== '' && !t.startsWith('//') && !t.startsWith('#')) break;
+    i += 1;
+  }
+  return lines.slice(i).join('\n').trimEnd();
+};
+
+// Only possible from a marketplace checkout, where the siblings are on disk. An installed
+// plugin has no siblings to compare against, so this silently does nothing there.
+const marketRoot = [join(root, '..', '..'), root]
+  .find((d) => existsSync(join(d, '.claude-plugin', 'marketplace.json'))) ?? null;
+
+if (marketRoot) {
+  for (const { file, origin, copies } of COPIES) {
+    const originPath = join(marketRoot, 'plugins', origin, file);
+    if (!existsSync(originPath)) continue;
+    const originBody = bodyOf(readFileSync(originPath, 'utf8'));
+    for (const copy of copies) {
+      const copyPath = join(marketRoot, 'plugins', copy, file);
+      // A legitimately absent copy is not drift — only plugins that ship the file are bound.
+      if (!existsSync(copyPath)) continue;
+      if (bodyOf(readFileSync(copyPath, 'utf8')) !== originBody) {
+        err(`plugins/${copy}/${file}`, `has DRIFTED from its original in \`${origin}\`. These are `
+          + `deliberate copies and must stay identical below the header banner. Fix `
+          + `\`plugins/${origin}/${file}\` first, then copy it over this one, restoring only this `
+          + `file's banner. (diff plugins/${origin}/${file} plugins/${copy}/${file})`);
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------- line endings
 // .gitattributes forces LF on *.sh; a CRLF copy in the tree still breaks bash.
 const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) => {

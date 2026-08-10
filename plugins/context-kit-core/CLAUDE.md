@@ -9,7 +9,8 @@ Anything project- or workspace-specific belongs in a higher layer: the planned N
 middle-layer plugin, or the project's own context repo (created from
 `c-energie/context-template`). See README.md for the three-layer picture and port status.
 
-A fix to the resolver or hook belongs in all three plugins' copies (see the marketplace CLAUDE.md).
+A fix to the resolver or hook belongs in all three plugins' copies (see the marketplace CLAUDE.md);
+`check-plugin.mjs` now errors if a copy drifts from its original.
 
 ## Commands
 

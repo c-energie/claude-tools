@@ -119,8 +119,8 @@ node scripts/pending-parse.mjs "$ROOT" --json            # parse/validate pendin
 node scripts/mirror-render.mjs "$ROOT" export.json       # render the notion/ mirror (--dry-run, --today)
 node scripts/vtt-to-text.mjs meeting.vtt --out out.txt   # transcript → compact speaker-labelled text
 node scripts/dates.mjs today                             # add weekly | add 3d | window 7 | age
-node scripts/check-plugin.mjs .                          # repo lint — run before any commit
-node scripts/bump-version.mjs . patch
+node ../context-kit-core/scripts/check-plugin.mjs .       # repo lint — run before any commit
+node ../context-kit-core/scripts/bump-version.mjs . patch
 ```
 
 `lib.mjs` holds the config load and the single definition of `bucket()` — what "overdue" /

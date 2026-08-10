@@ -56,8 +56,8 @@ and the user accepts.
 ```bash
 node scripts/person-digest.mjs digest.json --title "Project"   # --json, --today YYYY-MM-DD
 node scripts/pending-parse.mjs "$ROOT" --slack --added-by ada  # the queue message
-node scripts/check-plugin.mjs .                                # lint — run before any commit
-node scripts/bump-version.mjs . patch
+node ../context-kit-core/scripts/check-plugin.mjs .            # lint — run before any commit
+node ../context-kit-core/scripts/bump-version.mjs . patch
 ```
 
 `person-digest.mjs` owns the digest's fixed rules — grouping by owner, the overdue / due-this-week

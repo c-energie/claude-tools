@@ -16,8 +16,10 @@ version lives in `plugin.json` only.
 ## Commands
 
 ```bash
-node scripts/check-plugin.mjs .          # lint; run before any commit
-node scripts/bump-version.mjs . patch    # writes plugin.json only
+# Lint and bump live in context-kit-core only — dev-time tools no skill invokes, so they need
+# no copy here. Run them from the marketplace root, naming this plugin's directory:
+node ../context-kit-core/scripts/check-plugin.mjs .          # lint; run before any commit
+node ../context-kit-core/scripts/bump-version.mjs . patch    # writes plugin.json only
 CONTEXT_CONFIG=path/to/context.json node scripts/person-digest.mjs digest.json --today 2026-08-07
 CONTEXT_CONFIG=path/to/context.json node scripts/pending-parse.mjs "$ROOT" --slack
 ```
@@ -38,7 +40,8 @@ CONTEXT_CONFIG=path/to/context.json node scripts/pending-parse.mjs "$ROOT" --sla
 - **`context-repo.sh`, `lib.mjs`, `dates.mjs` and `pending-parse.mjs` are COPIES** — plugins cannot
   reference each other's `${CLAUDE_PLUGIN_ROOT}`. Fix the original in context-notion (or, for
   `context-repo.sh`, context-kit-core) first, then copy here. `pending-parse.mjs` owns the pending
-  entry format; a drifted copy breaks the single-definition rule.
+  entry format; a drifted copy breaks the single-definition rule — and `check-plugin.mjs` now
+  errors on drift, comparing below each copy's header banner.
 - **`person-digest.mjs` owns the digest's fixed rules** — grouping, the due-date cut-off, mention
   rendering, the 5000-char split — so it reads identically every week. The project's name reaches
   it via `--title`; the script never reads `context.json` itself.

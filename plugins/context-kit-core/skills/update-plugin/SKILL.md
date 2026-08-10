@@ -117,9 +117,18 @@ not suggestions. Each plugin has its own `CLAUDE.md` stating its invariants; rea
 - **Reference scripts by their full path under `${CLAUDE_PLUGIN_ROOT}`** — never a relative path.
   `check-plugin.mjs` verifies every such path exists, and a skill can only reference scripts in
   **its own** plugin: plugins cannot reach into each other's install directories.
-- **`scripts/context-repo.sh` exists in ALL THREE plugins deliberately.** A resolver fix lands in
-  context-kit-core's copy first, then is copied to context-notion's and context-slack's; the three
-  must stay identical.
+- **Some scripts are deliberate copies, and `check-plugin.mjs` enforces it.** A skill can only
+  reference `${CLAUDE_PLUGIN_ROOT}/scripts/...` in its *own* plugin, so anything a skill calls at
+  runtime is duplicated: `context-repo.sh` and `dates.mjs` in all three, `lib.mjs` and
+  `pending-parse.mjs` in context-notion and context-slack. Fix the **origin** first — 
+  `context-repo.sh` in context-kit-core, the rest in context-notion — then copy it over the
+  others, keeping only each copy's header banner. The linter compares below that banner and
+  errors on any other difference, naming the direction to copy.
+- **A script no skill calls does not need a copy.** `check-plugin.mjs` and `bump-version.mjs`
+  take the target plugin's directory as an argument and run from the checkout, so they live in
+  context-kit-core alone — run them as
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/check-plugin.mjs" "$PLUGIN"` whichever plugin `$PLUGIN` is.
+  They were duplicated once and drifted; don't re-add copies.
 - New `.sh` files must be **LF**, per the root `.gitattributes`.
 - If the new skill is **recurring**, add a line to context-notion's `weekly-review` — that file is
   the source of truth for what runs each week, and a recurring skill missing from it simply never
