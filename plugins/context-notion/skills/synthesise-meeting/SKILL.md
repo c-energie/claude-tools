@@ -1,6 +1,6 @@
 ---
 name: synthesise-meeting
-description: Synthesise a meeting into the context repo's meetings/ folder from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session".
+description: Synthesise a meeting into the context repo's meetings/ folder from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases; can also run as a sweep to catch up every past meeting missing a summary. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session", "catch up any meetings missing a summary".
 ---
 
 # Synthesise a meeting
@@ -38,15 +38,38 @@ the connection fails or returns nothing (a workspace guest gets empty results, n
 `threads/` file and present it as the synthesis. Decisions and actions that came out of the
 meeting can still be captured with `add-pending`.
 
-## 1. Identify the meeting, and check it isn't already done
+## 1. Identify the meeting(s), and check each isn't already done
 
 The user names it however they like — a type ("the weekly sync"), a date ("Monday's"), a name, an
-attendee. Find the matching page in `databases.meetings`. If the project declares no meetings
-database, say which key is missing rather than searching for one.
+attendee — when they mean a **single** meeting. Find the matching page in `databases.meetings`. If
+the project declares no meetings database, say which key is missing rather than searching for one.
 
 - Search by type / name / topic, then fetch the chosen page.
 - Default to the **most recent** match; if ambiguous, confirm the date with the user.
 - Note the page's **name**, **date** and **URL** (the URL is needed for the relations below).
+
+**Or there's no single meeting to point at — the ask is general.** "Catch up the meetings",
+"synthesise anything missing a summary", "which meetings haven't been written up" all mean run
+this as a **sweep** instead of a single lookup:
+
+1. Query `databases.meetings` for pages dated **on or before today** — excluding future
+   placeholders (see the date check below) and page templates.
+2. **Bound the sweep** unless told otherwise: default to roughly the **last two months** of past
+   meetings rather than the whole database's history, and say what window you used. Widen it if
+   the user asks for further back.
+3. Apply the **duplicate check** below to every candidate; drop anything that already has a
+   `## Summary`.
+4. For each survivor, work out whether there's anything to synthesise from: non-trivial content
+   on the Notion page (more than a bare agenda/template scaffold), and/or — per step 2 — a
+   transcript found in its ±3 day window. A meeting with **neither** goes on a separate skip list
+   with a reason; don't drop it silently, and don't invent content to fill it.
+5. **Show both lists — what will be synthesised, and what's being skipped and why — and get a yes
+   before writing anything.** A sweep touches several Notion pages and databases in one pass; the
+   user should see the scope before any of it happens.
+6. Once confirmed, work through the synthesise list **one meeting at a time**, running steps 2–7
+   in full for each, in date order. Keep every meeting's writeup and logged items separate — never
+   merge two meetings into one entry, even if they're thin.
+7. Finish with the roll-up described in step 7.
 
 **Check the date property, not just the ordering.** A meetings database holds *future* meetings —
 recurring syncs are created with their agenda days ahead. A meeting dated later than today has not
@@ -58,9 +81,10 @@ pages for one slot** — a real state worth reporting.
 page's content, not just its properties, and look for an existing `## Summary` section (written
 back in step 5). If one is already there — or the decisions / actions / open questions this
 meeting would produce are already present in their Notion databases with this meeting's relation
-set — this meeting is already done. Report that plainly and **stop**: don't re-run steps 2–6,
-and don't re-log the same items a second time. This guard matters most on an unattended or
-scheduled run, where there's no one to notice a duplicate before it lands in Notion.
+set — this meeting is already done. Report that plainly and **stop** (or, in a sweep, drop it from
+the list and move on): don't re-run steps 2–6, and don't re-log the same items a second time. This
+guard matters most on an unattended or scheduled run, where there's no one to notice a duplicate
+before it lands in Notion.
 
 If the user explicitly asks to redo a meeting that already has a summary (a transcript arrived
 late, the first pass was thin), that's a deliberate exception: say the existing Summary is being
@@ -195,7 +219,8 @@ Front-matter rules:
 - Do **not** add `last_updated` or `author` — git already knows.
 - **No angle brackets in any front-matter value**; use `[…]` or `{…}`.
 
-Ask before committing and pushing, then report the path.
+Ask before committing and pushing, then report the path. In a sweep, this can be one ask covering
+the whole batch (step 1.5) rather than one per file.
 
 ## 5. Write the summary back to the meeting page
 
@@ -237,7 +262,12 @@ none was found, say so explicitly rather than silently omitting it: "no transcri
 and "I didn't look" read identically in a writeup, and only one of them means the record is
 complete.
 
-If step 1's duplicate check stopped the run early, report that instead: which meeting, that it
-already had a Summary (or already-logged items), and that nothing was re-written.
+If step 1's duplicate check stopped a single-meeting run early, report that instead: which
+meeting, that it already had a Summary (or already-logged items), and that nothing was re-written.
+
+**For a sweep**, report each synthesised meeting exactly as above, then close with a one-line
+roll-up: how many were synthesised, how many already had a summary, and how many were skipped for
+lack of source material (name them, so the user can go find or record what's missing rather than
+wondering whether the sweep just missed them).
 
 **Not this skill:** a session write-up that isn't a meeting is context-kit-core's `save-thread`.
