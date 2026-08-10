@@ -146,8 +146,14 @@ if (!existsSync(skillsDir)) {
 // Compared BELOW the leading comment header: a copy carries a banner saying it is one, naming
 // its origin, and that banner is the single part meant to differ.
 const COPIES = [
+  // Generic machinery originates in the CORE plugin — context-notion owns only what is
+  // Notion-specific. dates.mjs is pure UTC calendar arithmetic with nothing Notion in it, and
+  // core's own skills (save-thread, curate-context, update-plugin) call it, so core is its home;
+  // it was mis-declared as context-notion's until 2026-08-10.
   { file: 'scripts/context-repo.sh',   origin: 'context-kit-core', copies: ['context-notion', 'context-slack'] },
-  { file: 'scripts/dates.mjs',         origin: 'context-notion',   copies: ['context-kit-core', 'context-slack'] },
+  { file: 'scripts/dates.mjs',         origin: 'context-kit-core', copies: ['context-notion', 'context-slack'] },
+  // Notion-coupled, so context-notion is the origin: lib.mjs reads state.notion and resolves
+  // people by notionUserId; pending-parse.mjs defines the queue format those rows land in.
   { file: 'scripts/lib.mjs',           origin: 'context-notion',   copies: ['context-slack'] },
   { file: 'scripts/pending-parse.mjs', origin: 'context-notion',   copies: ['context-slack'] },
 ];

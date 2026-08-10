@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Parse the context repo's `pending/` inbox — the queue where anyone without a working Notion
-// connection (Adam and Meg are Notion *guests*, so the connector finds nothing for them) writes
-// actions, decisions, questions, stakeholders and projects for later transfer into Notion.
+// connection writes actions, decisions, questions, stakeholders and projects for later transfer
+// into Notion. Workspace *guests* are the usual case: the connector returns them nothing rather
+// than erroring, so an empty result is never evidence of absence and they need somewhere to
+// write. Which people that covers is a fact about the project, not about this plugin — the
+// roster lives in the context repo's `state.notion.people`.
 //
 //   node pending-parse.mjs <context-root> [--type action] [--json]
 //
@@ -392,7 +395,7 @@ if (asJson) {
 // than composed per-run so that two notifications about the same queue read the same, and so the
 // 5000-character limit on a Slack text element can't be walked into with a long queue.
 //
-//   node pending-parse.mjs <root> --slack [--added-by adam]
+//   node pending-parse.mjs <root> --slack [--added-by <name>]
 //
 // Prints the message and nothing else, ready to hand to slack_send_message. Standard Markdown,
 // which is what that tool expects — not Slack mrkdwn.

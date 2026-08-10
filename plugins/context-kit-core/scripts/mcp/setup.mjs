@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// First-run setup for the FlexSense MCP connectors. Checks this machine can support the
+// First-run setup for a project's MCP connectors. Checks this machine can support the
 // scripts, then walks through adding each connection interactively.
+//
+// Nothing here names a project: connections are called <provider>-<project> and the project
+// half is supplied by whoever runs it, so one core plugin serves every project.
 //
 //   node setup.mjs
 //
@@ -91,8 +94,16 @@ async function addConnector(rl, env) {
     return true;
   }
 
-  const suggestion = provider === 'github' ? 'github-flexsense' : 'notion-flexsense';
-  let name = (await rl.question(`  Name [${suggestion}]: `)).trim() || suggestion;
+  // No default. The convention is <provider>-<project>, and the project half is the whole point
+  // of the name — it is what lets a machine hold several same-provider connections scoped to
+  // different workspaces, and what context.json's `connections` block matches against. This
+  // used to default to one specific project's connector, which is a project fact in the core
+  // plugin: accepting it by pressing enter silently wired every project to that one's name.
+  let name = '';
+  while (!name) {
+    name = (await rl.question(`  Name, as ${provider}-[project] (e.g. ${provider}-acme): `)).trim();
+    if (!name) console.log('  A name is required — it is how skills select this connection.');
+  }
 
   const args = [ADDER, `--${provider}`, name];
 
@@ -124,7 +135,7 @@ async function addConnector(rl, env) {
 // ---------------------------------------------------------------- main
 
 async function main() {
-  console.log('FlexSense MCP connector setup');
+  console.log('MCP connector setup');
 
   const env = runChecks();
   if (env.fatal) {

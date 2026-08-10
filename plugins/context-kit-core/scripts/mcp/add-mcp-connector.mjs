@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Add a named, credential-scoped MCP server to both Claude configs on this machine, so one
 // machine can hold several workspace- or repo-scoped connections side by side (e.g.
-// "notion-thesis" + "notion-flexsense", "github-thesis" + "github-flexsense").
+// "notion-acme" + "notion-beta", "github-acme" + "github-beta") — the name is
+// <provider>-<project> and the project half is always supplied by the caller.
 //
-//   node add-mcp-connector.mjs --notion notion-thesis
-//   node add-mcp-connector.mjs --github github-flexsense --toolsets repos,issues --readonly
-//   node add-mcp-connector.mjs --github github-thesis --binary /path/to/github-mcp-server.exe
+//   node add-mcp-connector.mjs --notion notion-acme
+//   node add-mcp-connector.mjs --github github-acme --toolsets repos,issues --readonly
+//   node add-mcp-connector.mjs --github github-acme --binary /path/to/github-mcp-server.exe
 //   node add-mcp-connector.mjs notion-personal            (provider defaults to notion)
 //
 // Credentials:
@@ -252,14 +253,14 @@ async function main() {
   let name = opts.name;
   if (!name && process.stdin.isTTY) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    name = (await rl.question('Server name (e.g. notion-thesis, github-flexsense): ')).trim();
+    name = (await rl.question('Server name, as [provider]-[project] (e.g. notion-acme): ')).trim();
     rl.close();
   }
   name = name.toLowerCase().replace(/[^a-z0-9_-]/g, '');
   if (!name) { console.error('No server name provided; nothing changed.'); return 2; }
 
   // Infer the provider from the name when not given explicitly, so the old invocation still
-  // works and "github-flexsense" does the obvious thing.
+  // works and "github-acme" does the obvious thing.
   const providerKey = opts.provider ?? (name.startsWith('github') ? 'github' : 'notion');
   const provider = PROVIDERS[providerKey];
   console.log(`Provider: ${providerKey} (server "${name}")`);
