@@ -5,9 +5,9 @@ description: Change the context plugins themselves — add or edit a skill, hook
 
 # Update the context plugins
 
-Edits the plugins' **own source repo** — `c-energie/context-kit`, a marketplace holding
-`plugins/context-kit-core` and `plugins/context-notion` — and releases the change: check, bump,
-commit, push.
+Edits the plugins' **own source repo** — `c-energie/context-kit`, a marketplace holding one
+directory per plugin under `plugins/` — and releases the change: check, bump, commit, push.
+Step 2 reads the current roster off the checkout, so this file never names a fixed set.
 
 **This skill is deliberately auto-invocable** so that "add a skill that does X" lands here rather
 than a loose file written into whatever repo happens to be open. Editing is fine to do on your own
@@ -47,16 +47,43 @@ ship `skills/`, `commands/`, `agents/` and `hooks/`), fall back to
 
 ## 2. Decide which plugin the change belongs to
 
-This is the judgement the marketplace layout adds, and getting it wrong is how the layering rots:
+**First, list the plugins that actually exist.** Read the roster off the checkout rather than
+trusting any written list — including the one below:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/list-plugins.mjs" "$ROOT" --brief   # one line per plugin
+node "${CLAUDE_PLUGIN_ROOT}/scripts/list-plugins.mjs" "$ROOT"           # ...plus each one's skills
+```
+
+`--brief` is the roster: every plugin, its version and how many skills it has. Without it, each
+plugin's skills are listed too, flagged `[no-auto]` (`disable-model-invocation: true`) and
+`[reference]` (`user-invocable: false`) — use that to check whether the job is **already
+someone's**, since editing an existing skill beats adding a near-duplicate that then competes
+with it for the same trigger phrases. `--json` gives the same data machine-readably.
+
+A hand-written roster in this file is the thing to avoid: it listed two plugins for the whole time
+`context-slack` had been shipping, and a resolver fix following it would have left that plugin's
+copy of `context-repo.sh` behind.
+
+**Then place the change by layer.** This is the judgement the marketplace layout adds, and getting
+it wrong is how the layering rots. The rule is *which facts a change is allowed to know*:
 
 - **`context-kit-core`** — generic context machinery with no backend: loading, refreshing and
   writing *a* project's context repo, the resolvers, the session-start hook, connector setup.
   Nothing here may name a project, a workspace, or a database.
-- **`context-notion`** — the middle layer: Notion skills driven entirely by each project's
+- **`context-notion`** — the Notion middle layer: skills driven entirely by each project's
   `context.json` (`state.notion`). Database IDs, property schemas and rosters live in the
   **project's context repo**, never in the plugin.
+- **`context-slack`** — the Slack delivery layer: skills driven by `connections.slack`,
+  `defaults.slackChannel` and the roster's `slackMemberId`. No channel, member ID or workspace
+  name in the plugin. **Everything here is `disable-model-invocation: true`, without exception** —
+  a Slack message is visible the instant it lands and cannot be recalled, so a new skill that
+  posts inherits that blanket block rather than a per-skill judgement.
 - **Neither** — anything specific to one project or one workspace belongs in that project's own
   context repo, not in a plugin. Say so rather than filing it under the closest plugin.
+
+If the roster shows a plugin this list does not describe, the same test still decides it: name the
+facts the change needs, and put it in the layer allowed to know them.
 
 ## 3. Make the change
 
@@ -99,7 +126,7 @@ not suggestions. Each plugin has its own `CLAUDE.md` stating its invariants; rea
   runs. Most skills are on-demand; only add it if it genuinely belongs in the weekly cadence.
 - Update the plugin's `README.md` skills table and layout tree, and — if the change touches an
   invariant — its `CLAUDE.md`.
-- `marketplace.json` at the repo root names both plugins with relative sources. Keep it to
+- `marketplace.json` at the repo root names every plugin with a relative source. Keep it to
   source / category / tags: a `version` or `description` there **silently overrides**
   `plugin.json`. There is no root-level linter, so hand-verify it after any edit.
 
