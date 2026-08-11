@@ -49,5 +49,6 @@ node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link
   checkout, checks and bumps **per plugin directory**, and asks before every push.
 - **Edit the source checkout, not the installed copy** — `${CLAUDE_PLUGIN_ROOT}` points at
   `~/.claude/plugins/…`, which has no push remote and is overwritten on update. Resolve with
-  `scripts/plugin-repo.sh --writable` (managed clone: `~/.context/context-kit`).
+  `scripts/plugin-repo.sh --writable` (managed clone: `~/.context/c-energie/context-kit` — the
+  same `~/.context/<owner>/<repo>` layout context repos use; flat until 2026-08-11).
 - **`*.sh` stay LF** (enforced by `.gitattributes`).

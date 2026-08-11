@@ -27,7 +27,7 @@ ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-repo.sh" --writable)"
 ```
 
 Uses the current repo if its `origin` is `c-energie/context-kit`, otherwise the managed clone at
-`${CONTEXT_KIT_PLUGIN_DIR:-$HOME/.context/context-kit}` (cloning if missing); un-shallows it so
+`${CONTEXT_KIT_PLUGIN_DIR:-$HOME/.context/c-energie/context-kit}` (cloning if missing); un-shallows it so
 the push can succeed, and pulls `--ff-only --autostash`. It prints the repo root on stdout and
 exits non-zero with a reason if the repo can't be reached — if that happens, say so and stop
 rather than editing the installed copy.
@@ -43,7 +43,7 @@ Today's date: `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs" today`.
 
 If `scripts/plugin-repo.sh` is missing from the installed plugin (packaging is only documented to
 ship `skills/`, `commands/`, `agents/` and `hooks/`), fall back to
-`git clone https://github.com/c-energie/context-kit.git ~/.context/context-kit` and work there.
+`git clone https://github.com/c-energie/context-kit.git ~/.context/c-energie/context-kit` and work there.
 
 ## 2. Decide which plugin the change belongs to
 

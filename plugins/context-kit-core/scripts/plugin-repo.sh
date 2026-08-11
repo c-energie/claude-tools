@@ -29,7 +29,13 @@
 set -u
 
 PLUGIN_REMOTE="c-energie/context-kit"
-CLONE_DIR="${CONTEXT_KIT_PLUGIN_DIR:-$HOME/.context/context-kit}"
+# ~/.context/<owner>/<repo>, the same layout context-repo.sh clones context repos into — derived
+# from PLUGIN_REMOTE rather than spelled out, so the two cannot drift. This repo is a tool, not a
+# context repo, but it is still a c-energie repo: the path mirrors GitHub and carries no meaning
+# beyond that, and what a directory *is* gets decided by content (the marketplace.json check
+# below), never by where it sits. It was a flat ~/.context/context-kit until 2026-08-11; an
+# existing clone under that name is not migrated, just re-cloned here and left to be deleted.
+CLONE_DIR="${CONTEXT_KIT_PLUGIN_DIR:-$HOME/.context/$PLUGIN_REMOTE}"
 cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 PULL=1; WRITABLE=0; PLUGIN=""
