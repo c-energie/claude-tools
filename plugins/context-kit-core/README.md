@@ -84,8 +84,10 @@ connection's PAT. A plain one-line `context-repo.txt` still works but cannot nam
 connections. `context.json` in the context repo remains authoritative once loaded — keep the
 marker's `connections` in step with it (`context-setup` flags drift).
 
-Managed clones land at `~/.context/<owner>-<repo>`; `PROJECT_CONTEXT_DIR` pins the location
-outright. Private repos authenticate via the OS git helper, else `CONTEXT_GIT_TOKEN` /
+Managed clones land at `~/.context/<owner>/<repo>`; `PROJECT_CONTEXT_DIR` pins the location
+outright. (That was a flat `<owner>-<repo>` slug until 2026-08-11 — an existing clone under the
+old name is not migrated, just re-cloned at the new path and left to be deleted by hand.)
+Private repos authenticate via the OS git helper, else `CONTEXT_GIT_TOKEN` /
 `GH_TOKEN` / `GITHUB_TOKEN`, else `gh auth token`. The pull is capped at
 `CONTEXT_GIT_TIMEOUT` seconds (default 30).
 

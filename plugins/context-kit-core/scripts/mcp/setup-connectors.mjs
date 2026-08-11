@@ -76,10 +76,10 @@ function expandHome(p) {
   return p;
 }
 
-// The managed clone lives at ~/.context/<owner>-<repo> — the same layout context-repo.sh
+// The managed clone lives at ~/.context/<owner>/<repo> — the same layout context-repo.sh
 // uses, since it is what puts clones there. Owner included because context repos tend to
-// all be named "context".
-const cloneDir = (repo) => join(homedir(), '.context', repo.replace(/\//g, '-'));
+// all be named "context", and it is its own directory level so the layout mirrors GitHub's.
+const cloneDir = (repo) => join(homedir(), '.context', ...repo.split('/'));
 
 // Which context repo does this project declare? The env var, then the project's .claude
 // settings files (local beats project, matching the client's own precedence). Parsed as
@@ -225,7 +225,7 @@ async function main() {
   const { path: contextFile, hint } = findContext(at('--context'));
   if (!contextFile) {
     bad(hint ?? 'No context.json found.');
-    console.log('\n  Context repos are cloned to ~/.context/<owner>-<repo>, named by the');
+    console.log('\n  Context repos are cloned to ~/.context/<owner>/<repo>, named by the');
     console.log("  PROJECT_CONTEXT_REPO env var or the project's .claude/settings.json.");
     console.log('  Pass --context <path> to override, or see the context-setup skill.\n');
     return 1;

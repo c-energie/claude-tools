@@ -148,11 +148,13 @@ else
   # packaging. Without this branch the whole session context silently disappears when it
   # doesn't. Keep in step with scripts/context-repo.sh; that file is the real one.
   # Clone dir, in step with context-repo.sh: PROJECT_CONTEXT_DIR pins it outright, else
-  # ~/.context/<owner>-<repo>.
+  # ~/.context/<owner>/<repo> — owner as its own directory level, a flat "<owner>-<repo>" slug
+  # until 2026-08-11. Both places must agree, or the hook and the skills resolve to different
+  # checkouts of the same repo.
   if [ -n "${PROJECT_CONTEXT_DIR:-}" ]; then
     CLONE_DIR="$PROJECT_CONTEXT_DIR"
   else
-    CLONE_DIR="$HOME/.context/${CONTEXT_REMOTE//\//-}"
+    CLONE_DIR="$HOME/.context/$CONTEXT_REMOTE"
   fi
   cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 

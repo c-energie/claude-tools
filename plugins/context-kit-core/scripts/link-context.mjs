@@ -110,7 +110,7 @@ if (current && current !== repo && !flags.has('force')) {
 
 // Runs the real resolver with the candidate name in the environment, which is exactly what the
 // SessionStart hook will do next session — so a pass here means the next session passes too.
-// Side effect worth knowing about: it clones the repo to ~/.context/<owner>-<repo> if absent.
+// Side effect worth knowing about: it clones the repo to ~/.context/<owner>/<repo> if absent.
 if (!optOut && !flags.has('no-verify')) {
   const probe = spawnSync('bash', [bash('scripts/context-repo.sh')], {
     encoding: 'utf8',

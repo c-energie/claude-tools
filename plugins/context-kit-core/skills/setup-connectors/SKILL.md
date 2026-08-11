@@ -26,7 +26,7 @@ here. Read the output back to the user before changing anything.
 
 The script finds `context.json` on its own: `PROJECT_CONTEXT_REPO` (the env var, or the
 project's `.claude/settings*.json`) names the repo, and its managed clone lives at
-`~/.context/owner-repo` — cloned there on first use. `--context path` is an override for
+`~/.context/owner/repo` — cloned there on first use. `--context path` is an override for
 odd layouts, not the normal route.
 
 If it can't find `context.json`, that's `context-setup`'s job, not this one — the context repo

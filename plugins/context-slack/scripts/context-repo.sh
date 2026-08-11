@@ -83,13 +83,16 @@ case "$(printf '%s' "$CONTEXT_REMOTE" | tr 'A-Z' 'a-z')" in
     exit 1 ;;
 esac
 
-# The managed clone lands at ~/.context/<owner>-<repo> — owner included because context repos
-# tend to all be *named* "context", and two projects' clones must not collide.
-# PROJECT_CONTEXT_DIR pins the location outright.
+# The managed clone lands at ~/.context/<owner>/<repo> — owner included because context repos
+# tend to all be *named* "context", and two projects' clones must not collide. The owner is its
+# own directory level (it was a "<owner>-<repo>" slug until 2026-08-11) so the layout mirrors
+# GitHub's and `ls ~/.context` reads as one directory per org. Clones made under the old flat
+# name are simply not found: the repo is re-cloned at the new path, and the stale directory can
+# be deleted by hand. PROJECT_CONTEXT_DIR pins the location outright.
 if [ -n "${PROJECT_CONTEXT_DIR:-}" ]; then
   CLONE_DIR="$PROJECT_CONTEXT_DIR"
 else
-  CLONE_DIR="$HOME/.context/${CONTEXT_REMOTE//\//-}"
+  CLONE_DIR="$HOME/.context/$CONTEXT_REMOTE"
 fi
 
 PULL=1; WRITABLE=0
