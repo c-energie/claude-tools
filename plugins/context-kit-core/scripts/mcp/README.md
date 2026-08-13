@@ -106,8 +106,9 @@ config. Backups are left as `.bak-mcp`.
   `~/Library/Logs/Claude/` (macOS).
 - Set short expiries on the tokens. Rerunning the adder with the same name rotates cleanly.
 - On a laptop project whose context repo is configured, the session-start hook also writes a
-  `context-project.json` marker (contextRepo + connections) at the project root — attach that
-  file to the Cowork project so sandbox sessions use the same connections declared here.
+  `context-project.json` marker (contextRepo + connections) into the **context repo's** own
+  `.claude/` — attach that file to the Cowork project so sandbox sessions use the same
+  connections declared here.
 
 ## When this becomes unnecessary
 

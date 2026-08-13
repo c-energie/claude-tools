@@ -15,7 +15,8 @@ the context now, and fixes gaps with the user.
 - The project's `.claude/settings.local.json` / `.claude/settings.json` env block.
 - A marker file — `context-project.json` (JSON: `contextRepo`, plus an optional
   `connections` map naming the MCP connection per provider), or one-line `.context-repo` /
-  `context-repo.txt` — in the working directory
+  `context-repo.txt` — in `.claude/` (where the hook generates the context repo's own marker),
+  the working directory
   or the attached project files. Layouts differ by surface; look in `/mnt/project/`,
   `~/mnt/.projects/*/docs/` (imported project knowledge), `~/mnt/uploads/`, and if none of
   those exist, search: `find ~ /mnt -maxdepth 5 -name "context-project.json" -o -name "context-repo.txt" -o -name ".context-repo" 2>/dev/null`.
@@ -43,9 +44,10 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
   attach a `context-project.json` to the project's files:
   `{ "contextRepo": "owner/repo", "connections": { "github": "github-myproject", "notion": "notion-myproject" } }`
   (a one-line `context-repo.txt` also works but can't name connections). Until they do,
-  every new session starts unconfigured. No need to write it by hand if a laptop already
-  has the project configured: the session-start hook generates exactly this file at the
-  project root there — tell the user to attach that one.
+  every new session starts unconfigured. No need to write it by hand: any laptop session
+  that resolves the context repo generates exactly this file at
+  `[context repo checkout]/.claude/context-project.json` — tell the user to attach that one
+  (and to commit it, so every clone of the context repo carries it).
 - No context repo exists yet at all? Creating one is a separate job with no skill behind it
   yet: point the user at `c-energie/context-template`, whose README covers stamping a new
   context repo. Once it exists, link it with the command above.

@@ -40,6 +40,10 @@ node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link
   stale load is the one failure mode that actively misleads.
 - **`hooks/load-context.sh` carries an inline duplicate of `context-repo.sh`** (packaging may
   drop `scripts/`). Keep the two in step; `context-repo.sh` is the real one.
+- **The generated marker lives in the CONTEXT repo's `.claude/context-project.json`** — one
+  canonical, committable file per context repo, never a generated copy in each project that
+  uses it. The hook merges into whatever is there (unknown keys survive) and writes only on a
+  real change. Marker *lookup* still reads the legacy project-root locations.
 - **Tokens reach git via the environment plus a transient `-c credential.helper` only** —
   never the remote URL, `.git/config`, or a command line. Retry only on auth failures, never
   on timeouts.

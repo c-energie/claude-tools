@@ -35,7 +35,7 @@ Which context repo a session loads is per-project:
 
 in the project's `.claude/settings.json`. The resolvers look for the name in order —
 **env var (`PROJECT_CONTEXT_REPO`) → the project's `.claude/settings(.local).json` env block → a one-line
-`context-project.json` / `.context-repo` / `context-repo.txt` marker file** (checked in the working folder and in
+`context-project.json` / `.context-repo` / `context-repo.txt` marker file** (checked in `.claude/`, the working folder and
 `/mnt/project/`) — with **no default**: an unconfigured project reports itself as such instead of silently loading another project's context. The same committed settings file drives
 Claude Code whether or not the client applies the env var.
 
@@ -83,6 +83,14 @@ read (the hook's hand-off names it). `contextRepo`'s value must be on that GitHu
 connection's PAT. A plain one-line `context-repo.txt` still works but cannot name
 connections. `context.json` in the context repo remains authoritative once loaded — keep the
 marker's `connections` in step with it (`context-setup` flags drift).
+
+**You don't write that file by hand.** Any laptop session that resolves the context repo
+generates it — once, in the **context repo's own `.claude/context-project.json`**, next to the
+committed `settings.json` — with `contextRepo` from the resolved config and `connections`
+mirrored from the repo's `context.json`. Commit it and every clone carries it; that is also
+the file to attach to a Cowork project. One canonical marker per context repo, not a generated
+copy in every project that uses it. Keys the hook doesn't know about are preserved on refresh,
+so anything hand-added survives.
 
 Managed clones land at `~/.context/<owner>/<repo>`; `PROJECT_CONTEXT_DIR` pins the location
 outright. (That was a flat `<owner>-<repo>` slug until 2026-08-11 — an existing clone under the

@@ -50,10 +50,12 @@ CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-}"
 for _f in "$cwd/.claude/settings.local.json" "$cwd/.claude/settings.json"; do
   [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
 done
-# Marker candidates cover every sandbox layout seen so far: the working dir; /mnt/project
-# (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads (the
-# /sessions/... layout, where attached project files land under the session's home).
-for _m in "$cwd/context-project.json" "$cwd/.context-repo" "$cwd/context-repo.txt" \
+# Marker candidates cover every sandbox layout seen so far: .claude/ (where the hook
+# generates the context repo's own marker, next to settings.json); the working dir;
+# /mnt/project (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads
+# (the /sessions/... layout, where attached project files land under the session's home).
+for _m in "$cwd/.claude/context-project.json" \
+          "$cwd/context-project.json" "$cwd/.context-repo" "$cwd/context-repo.txt" \
           "$cwd"/docs/context-project.json "$cwd"/docs/.context-repo "$cwd"/docs/context-repo.txt \
           /mnt/project/context-project.json /mnt/project/.context-repo /mnt/project/context-repo.txt \
           "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \

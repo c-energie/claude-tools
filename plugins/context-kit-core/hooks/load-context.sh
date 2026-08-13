@@ -50,7 +50,8 @@ lookup_repo() {  # line 1: owner/repo (or empty); line 2: the marker file it cam
     r="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
     [ -n "$r" ] && { printf '%s\n\n' "$r"; return; }
   done
-  for _m in "$proj/context-project.json" "$proj/.context-repo" "$proj/context-repo.txt" \
+  for _m in "$proj/.claude/context-project.json" \
+            "$proj/context-project.json" "$proj/.context-repo" "$proj/context-repo.txt" \
             "$proj"/docs/context-project.json "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
             /mnt/project/context-project.json /mnt/project/.context-repo /mnt/project/context-repo.txt \
             "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
@@ -229,40 +230,41 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------- Cowork marker
-# Keep a context-project.json at the project root whenever env or settings named the repo.
-# Cowork sandboxes can only be configured by attaching that file to the project, so the
-# laptop session that already knows the answer writes it, ready to attach — contextRepo from
-# the resolved config, connections mirrored from the context repo's context.json. Never when
-# a marker IS the source (that would overwrite the user's own file), never outside a git
-# checkout (stray directories must not collect one), and never inside the context repo
-# itself (a context repo pointing at itself is noise). Silent on every failure path.
+# ----------------------------------------------------------- context repo marker
+# Keep a context-project.json in the CONTEXT REPO's own .claude/, generated from whatever
+# named the repo this session — contextRepo from the resolved config, connections mirrored
+# from the repo's context.json. ONE canonical marker per context repo, committed alongside
+# `.claude/settings.json`, rather than a generated copy in every project that uses it: a
+# Cowork sandbox sees neither a checkout nor an env var and so cannot make its own, and the
+# file to attach to the Cowork project is this one. Written whichever channel named the repo
+# — the content is derived entirely from the context repo, so it is the same file either way
+# — but unknown keys in an existing marker are preserved, so anything hand-added survives
+# the refresh. Silent on every failure path.
 MARKER_NOTE=""
-if [ -z "${MARKER_SRC:-}" ] && [ -n "$CONTEXT_REMOTE" ] && [ -n "$ROOT" ] \
-   && [ -f "$ROOT/context.json" ] && command -v node >/dev/null 2>&1; then
-  # Both toplevels come from git so they compare in one path style — on Git Bash the
-  # resolver hands back /c/... while rev-parse prints C:/..., and a raw string comparison
-  # against $ROOT would wave the context repo itself straight through the guard.
-  _proj_top="$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null || true)"
-  _ctx_top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [ -n "$_proj_top" ] && [ "$_proj_top" != "${_ctx_top:-$ROOT}" ]; then
-    MARKER_NOTE="$(node -e '
-      const fs = require("fs");
-      const [ctxPath, repo, out] = process.argv.slice(1);
+if [ -n "$CONTEXT_REMOTE" ] && [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] \
+   && command -v node >/dev/null 2>&1; then
+  mkdir -p "$ROOT/.claude" 2>/dev/null || true
+  MARKER_NOTE="$(node -e '
+    const fs = require("fs");
+    const [ctxPath, repo, out] = process.argv.slice(1);
+    try {
+      const ctx = JSON.parse(fs.readFileSync(ctxPath, "utf8").replace(/^\uFEFF/, ""));
+      let prev = null, marker = {};
       try {
-        const ctx = JSON.parse(fs.readFileSync(ctxPath, "utf8").replace(/^\uFEFF/, ""));
-        const marker = { contextRepo: repo };
-        if (ctx.connections && Object.keys(ctx.connections).length) marker.connections = ctx.connections;
-        const next = JSON.stringify(marker, null, 2) + "\n";
-        let prev = null;
-        try { prev = fs.readFileSync(out, "utf8"); } catch {}
-        if (prev !== next) {
-          fs.writeFileSync(out, next);
-          process.stdout.write(prev === null ? "created" : "refreshed");
-        }
-      } catch { /* a marker we cannot write is not worth failing a session over */ }
-    ' "$ROOT/context.json" "$CONTEXT_REMOTE" "$proj/context-project.json" 2>/dev/null || true)"
-  fi
+        prev = fs.readFileSync(out, "utf8");
+        const held = JSON.parse(prev.replace(/^\uFEFF/, ""));
+        // Merge, do not replace: a marker may carry keys this hook knows nothing about.
+        if (held && typeof held === "object" && !Array.isArray(held)) marker = held;
+      } catch { /* absent or unparseable — rewrite it from scratch */ }
+      marker.contextRepo = repo;
+      if (ctx.connections && Object.keys(ctx.connections).length) marker.connections = ctx.connections;
+      const next = JSON.stringify(marker, null, 2) + "\n";
+      if (prev !== next) {
+        fs.writeFileSync(out, next);
+        process.stdout.write(prev === null ? "created" : "refreshed");
+      }
+    } catch { /* a marker we cannot write is not worth failing a session over */ }
+  ' "$ROOT/context.json" "$CONTEXT_REMOTE" "$ROOT/.claude/context-project.json" 2>/dev/null || true)"
 fi
 
 # ---------------------------------------------------------------- emission
@@ -398,7 +400,7 @@ fi
 [ -d "$ROOT/pending" ] && echo "No workspace access? Queue structured items in pending/."
 # Only when the file actually changed this session — a line repeated every start is noise
 # nobody reads, but a fresh marker is something the user may want to attach to Cowork now.
-[ -n "$MARKER_NOTE" ] && echo "Cowork marker $MARKER_NOTE: context-project.json at the project root now mirrors this configuration — attach it to the Cowork project's files so sandbox sessions load the same context and connections."
+[ -n "$MARKER_NOTE" ] && echo "Cowork marker $MARKER_NOTE: .claude/context-project.json in $CONTEXT_REMOTE now mirrors this configuration — commit it there so every clone carries it, and attach that file to a Cowork project so its sandbox sessions load the same context and connections."
 echo
 echo "Full context repo: $CONTEXT_REMOTE."
 # Which checkout this actually came from, and how new it is. Only in --refresh mode: someone
