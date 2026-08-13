@@ -65,6 +65,38 @@ It verifies the repo resolves *before* writing anything, merges `PROJECT_CONTEXT
 argument, never inferred from the project's git remote: guessing it is the wrong-context
 failure this plugin exists to prevent.
 
+**Starting from the context instead of the project.** Everything above answers "which context
+does *this* project load", asked from a session that has already started somewhere. The two
+launchers go the other way — pick a checkout under `~/.context`, then start Claude in it —
+which is what a desktop shortcut needs, having no working directory to speak of:
+
+```powershell
+scripts\Start-ContextSession.ps1              # menu: owner -> repo, then runs `claude` there
+scripts\Start-ContextSession.ps1 -Shortcut    # ...and put a shortcut for it on the Desktop
+```
+
+```bash
+scripts/start-context-session.sh              # the same menu on macOS / Linux
+scripts/start-context-session.sh --shortcut   # ...writes a .desktop (Linux) or .command (macOS)
+```
+
+The menu descends one level at a time and stops as soon as the chosen directory *is* a repo —
+decided by content (`context.json`, `.claude-plugin/marketplace.json`, or a `.git` directory),
+never by depth, so a hand-made or non-standard layout still lists correctly. `-DryRun` /
+`--dry-run` prints the directory instead of launching, `-Root` / `--root` browses somewhere
+else, and anything unrecognised is passed through to `claude` verbatim. The launcher itself
+loads nothing: the new session's SessionStart hook does that, exactly as if you had cd'd there
+by hand. This is the one interactive script here — a menu is the point, not a fallback — so
+unlike `link-context.mjs` it prompts instead of taking its answer as an argument.
+
+`-Shortcut` / `--shortcut` first copies the script to `~/.context/` and points the shortcut at
+**that** copy. An installed plugin lives at a versioned path
+(`~/.claude/plugins/cache/.../context-kit-core/[version]/scripts/`), so a shortcut aimed straight
+at it breaks silently on the next plugin update; re-run with the flag after an update to
+refresh the copy, and the shortcut never needs touching. On Windows the shortcut runs
+PowerShell with `-ExecutionPolicy Bypass`, without which a stock machine refuses an unsigned
+`.ps1` and the double-click looks like it did nothing.
+
 **Cowork** is why the marker file exists: its sandbox sees neither your repo checkout nor any
 env var — the only channel in is files attached to the Cowork project. Attach a
 `context-project.json`:

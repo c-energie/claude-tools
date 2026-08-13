@@ -24,6 +24,8 @@ node scripts/list-plugins.mjs "$ROOT" --brief   # the plugin roster, read from t
 node scripts/list-plugins.mjs "$ROOT"           # ...plus each plugin's skills (--json)
 node scripts/dates.mjs today
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
+pwsh scripts/Start-ContextSession.ps1 -DryRun    # menu over ~/.context; -Shortcut installs a Desktop launcher
+bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux (--shortcut writes .desktop/.command)
 ```
 
 ## Invariants (all load-bearing)
@@ -55,4 +57,8 @@ node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link
   `~/.claude/plugins/…`, which has no push remote and is overwritten on update. Resolve with
   `scripts/plugin-repo.sh --writable` (managed clone: `~/.context/c-energie/context-kit` — the
   same `~/.context/<owner>/<repo>` layout context repos use; flat until 2026-08-11).
+- **The two session launchers are twins, not copies.** `Start-ContextSession.ps1` and
+  `start-context-session.sh` are the same menu written for two shells, so `check-plugin.mjs`'s
+  drift rule (which compares byte-for-byte) deliberately does not cover them — only they can
+  make a `.lnk` and a `.desktop`/`.command` respectively. Change both, or neither.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).

@@ -3,3 +3,4 @@
 *.md text
 *.json text
 *.mjs text
+*.ps1 text
