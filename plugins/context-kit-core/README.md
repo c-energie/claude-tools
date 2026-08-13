@@ -159,6 +159,32 @@ The SessionStart hook loads `memory.md` + thread pointers automatically, with a 
 when the refresh fails — a silently stale context is the one failure mode that actively
 misleads. A project that will never have a context repo opts out with `none`; see above.
 
+### The cross-project layer: `include`
+
+A context repo may declare, in its `context.json`:
+
+```json
+"include": ["owner/repo-a", "owner/repo-b"]
+```
+
+Sessions on that repo then also load each included repo's `memory.md`, `glossary.md` and
+`threads/INDEX.md` — **read-only**, after the repo's own context, each pulled under the same
+ff-only/timeout/credential rules with its own per-repo STALE or UNAVAILABLE banner.
+`refresh-context` re-pulls them too. The contract, all load-bearing:
+
+- **Explicit list only.** The loaded set is committed config, never discovered from the
+  filesystem — an *accidental* cross-project load is the failure mode this plugin exists to
+  prevent, so the deliberate one must be spelled out.
+- **One level.** An included repo's own `include` list is ignored.
+- **Read-only.** Nothing in a combined session writes into an included repo — not git, not
+  its structured-state backend, not its `pending/`. A combined repo that wants to route
+  items outward keeps its own outbox folder (by convention `handoff/`, which the payload
+  mentions when present).
+- **Route-agnostic.** Entries are `owner/repo` names only; nothing in the schema assumes a
+  local clone, so a sandbox route reading repos over the GitHub API can honour the same list.
+- Parsing the array needs `node`; without it the payload says loudly that the includes were
+  skipped rather than quietly omitting them.
+
 ## Roadmap
 
 Planned here: `init-context` (stamp a new context repo from `c-energie/context-template` and

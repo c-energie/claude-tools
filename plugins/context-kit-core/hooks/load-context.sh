@@ -280,7 +280,8 @@ fi
 # the one failure mode that actively misleads. --refresh keeps plain text (the model
 # reads that stdout directly), and no-node degrades to plain text rather than failing.
 OUT_TMP="${TMPDIR:-/tmp}/context-kit-out-$$.txt"
-trap 'rm -f "$ERRFILE" "$OUT_TMP"' EXIT
+INC_TMP="${TMPDIR:-/tmp}/context-kit-inc-$$.txt"
+trap 'rm -f "$ERRFILE" "$OUT_TMP" "$INC_TMP"' EXIT
 
 emit() {  # $1 = one-line user-facing status; the body is already in $OUT_TMP
   if [ "$MODE" = "refresh" ] || ! command -v node >/dev/null 2>&1; then
@@ -345,6 +346,109 @@ if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
   emit "→ Context repo: $CONTEXT_REMOTE — loading via ${GITHUB_CONN:-the GitHub connector} in the first response (git has no credentials in this environment)"
 fi
 
+# ----------------------------------------------------------- included context repos
+# The cross-project layer: a context repo whose context.json declares
+#   "include": ["owner/repo", ...]
+# also gets each named repo's memory.md, glossary.md and threads/INDEX.md loaded — read-only,
+# and ONE level only (an included repo's own include list is ignored, by construction: only
+# the primary repo's context.json is ever read). The list is explicit and committed; nothing
+# is ever discovered from the filesystem. An *accidental* cross-project load is the failure
+# mode this plugin exists to prevent, so the deliberate one must be spelled out in config.
+# Entries are owner/repo names only — the contract stays route-agnostic, so a sandbox session
+# reading repos over the GitHub API (no git) can honour the same list.
+#
+# Each include resolves and pulls under the same rules as the primary repo (ff-only, capped,
+# token via transient helper — the resolver owns all of that) and degrades PER REPO: a stale
+# pull serves that repo's local copy under its own STALE warning; an unreachable repo is a
+# loud absence, never a silent one. A context.json with no include key pays nothing here.
+# Parsing the array needs node (the sed used for scalar keys cannot read a JSON list); if
+# node is missing the payload says the includes were skipped rather than quietly omitting
+# them. The sentinel filter below mirrors is_optout() — keep them in step.
+INC_NAMES=""; INC_STALE=""; INC_NOTE=""
+: > "$INC_TMP" 2>/dev/null || true
+if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"include"' "$ROOT/context.json" 2>/dev/null; then
+  if ! command -v node >/dev/null 2>&1; then
+    INC_NOTE="context.json declares an include list, but node is unavailable, so the cross-project context was NOT loaded this session — say so before answering anything that spans projects."
+  else
+    INCLUDE_LIST="$(node -e '
+      const fs = require("fs");
+      try {
+        const raw = fs.readFileSync(process.argv[1], "utf8");
+        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+        const seen = new Set();
+        for (const e of Array.isArray(ctx.include) ? ctx.include : []) {
+          if (typeof e !== "string") continue;
+          const v = e.trim();
+          if (["none", "off", "false", "no", "-", "disabled"].includes(v.toLowerCase())) continue;
+          if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)) continue;
+          if (v === process.argv[2] || seen.has(v)) continue;
+          seen.add(v);
+          console.log(v);
+        }
+      } catch { /* an unparseable context.json already has bigger problems; load nothing */ }
+    ' "$ROOT/context.json" "$CONTEXT_REMOTE" 2>/dev/null)"
+    for inc in $INCLUDE_LIST; do
+      INC_ROOT=""; INC_WARN=""
+      if [ -f "$RESOLVER" ]; then
+        # The resolver reads PROJECT_CONTEXT_REPO first, so overriding it per call reuses
+        # every rule the primary repo got. PROJECT_CONTEXT_DIR must be cleared: it pins the
+        # clone path outright, and with several repos in play it can only name one of them.
+        INC_ROOT="$(PROJECT_CONTEXT_DIR= PROJECT_CONTEXT_REPO="$inc" bash "$RESOLVER" 2>"$ERRFILE")" || INC_ROOT=""
+        [ -s "$ERRFILE" ] && INC_WARN="$(tr '\n' '; ' < "$ERRFILE" | sed -e 's/context-repo\.sh: //g' -e 's/[; ]*$//')"
+      else
+        # Inline fallback (packaging dropped scripts/): reuse the run_git/git_net helpers the
+        # primary repo's fallback branch defined above — that branch always ran if we are here.
+        INC_DIR="$HOME/.context/$inc"
+        if [ -d "$INC_DIR/.git" ]; then
+          INC_ROOT="$INC_DIR"
+        else
+          mkdir -p "$(dirname "$INC_DIR")" 2>/dev/null || true
+          if git_net 0 clone --depth 1 "https://github.com/$inc.git" "$INC_DIR"; then
+            INC_ROOT="$INC_DIR"
+          else
+            INC_WARN="clone failed (offline, or no git credential for a private repo?)"
+          fi
+        fi
+        if [ -n "$INC_ROOT" ] && ! git_net 1 -C "$INC_ROOT" pull --ff-only --autostash; then
+          INC_WARN="pull failed or timed out after ${CONTEXT_GIT_TIMEOUT:-30}s"
+        fi
+      fi
+      {
+        echo "=== Included context: $inc (read-only) ==="
+        if [ -z "$INC_ROOT" ]; then
+          echo "!!! UNAVAILABLE — $inc could not be reached: ${INC_WARN:-no checkout and the clone failed}"
+          echo "The combined context is incomplete. Say so before answering anything that depends on $inc."
+        else
+          if [ -n "$INC_WARN" ]; then
+            INC_AGE="$(git -C "$INC_ROOT" log -1 --format='%cd' --date=relative 2>/dev/null)" || INC_AGE=""
+            echo "!!! WARNING — THIS INCLUDED CONTEXT MAY BE STALE !!!"
+            echo "The refresh of $inc did not complete: $INC_WARN"
+            echo "Showing the local copy${INC_AGE:+ — its most recent commit is dated $INC_AGE}."
+            echo
+          fi
+          for _incf in memory.md glossary.md threads/INDEX.md; do
+            if [ -f "$INC_ROOT/$_incf" ]; then
+              echo "----- $inc · $_incf -----"
+              cat "$INC_ROOT/$_incf"
+              echo "----- end $inc · $_incf -----"
+            else
+              echo "($inc has no $_incf)"
+            fi
+            echo
+          done
+          echo "Depth on demand, still read-only: full threads/, meetings/ and any notion/ mirror under $INC_ROOT."
+        fi
+        echo
+      } >> "$INC_TMP"
+      INC_NAMES="${INC_NAMES:+$INC_NAMES, }$inc"
+      if [ -z "$INC_ROOT" ] || [ -n "$INC_WARN" ]; then INC_STALE=1; fi
+    done
+  fi
+fi
+INC_SUMMARY=""
+[ -n "$INC_NAMES" ] && INC_SUMMARY=" + included: $INC_NAMES${INC_STALE:+ (some STALE or unavailable)}"
+[ -n "$INC_NOTE" ] && INC_SUMMARY=" ⚠ includes skipped (no node)"
+
 {
 if [ "$MODE" = "refresh" ]; then
   echo "=== Shared context (re-pulled just now — supersedes the copy loaded at session start) ==="
@@ -406,6 +510,18 @@ fi
 # nobody reads, but a fresh marker is something the user may want to attach to Cowork now.
 [ -n "$MARKER_NOTE" ] && echo "Cowork marker $MARKER_NOTE: .claude/context-project.json in $CONTEXT_REMOTE now mirrors this configuration — commit it there so every clone carries it, and attach that file to a Cowork project so its sandbox sessions load the same context and connections."
 echo
+# The cross-project layer, when this repo's context.json declares one (see the include
+# section above). Emitted after the repo's own material: the primary context stays primary.
+if [ -s "$INC_TMP" ]; then
+  echo "=== Cross-project context (this repo's context.json \"include\" list) ==="
+  echo "Every included repo below is READ-ONLY from this session: never commit to it, never"
+  echo "write to its Notion or Slack, never queue into its pending/ — its own facts are owned"
+  echo "by its own sessions, and this combined view must not leak writes into them."
+  [ -d "$ROOT/handoff" ] && echo "Anything belonging to an included project goes in handoff/ HERE (one file per item — see handoff/README.md), to be drained later in that project's own session."
+  echo
+  cat "$INC_TMP"
+fi
+[ -n "$INC_NOTE" ] && { echo "!!! $INC_NOTE"; echo; }
 echo "Full context repo: $CONTEXT_REMOTE."
 # Which checkout this actually came from, and how new it is. Only in --refresh mode: someone
 # asking for a re-pull is asking whether they now hold the latest, and on a surface that runs
@@ -418,8 +534,8 @@ fi
 } > "$OUT_TMP"
 
 if [ -n "$REFRESH_WARNING" ]; then
-  emit "⚠ Shared context loaded but may be STALE — refresh from $CONTEXT_REMOTE failed${LAST_UPDATED:+; newest local commit is $LAST_UPDATED}"
+  emit "⚠ Shared context loaded but may be STALE — refresh from $CONTEXT_REMOTE failed${LAST_UPDATED:+; newest local commit is $LAST_UPDATED}$INC_SUMMARY"
 else
   AGE="$(git -C "$ROOT" log -1 --format='%cd' --date=relative 2>/dev/null)" || AGE=""
-  emit "✓ Shared context loaded — $CONTEXT_REMOTE${AGE:+ · newest commit $AGE}"
+  emit "✓ Shared context loaded — $CONTEXT_REMOTE${AGE:+ · newest commit $AGE}$INC_SUMMARY"
 fi
