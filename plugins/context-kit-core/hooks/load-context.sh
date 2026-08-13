@@ -259,7 +259,11 @@ if [ -n "$CONTEXT_REMOTE" ] && [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] \
       marker.contextRepo = repo;
       if (ctx.connections && Object.keys(ctx.connections).length) marker.connections = ctx.connections;
       const next = JSON.stringify(marker, null, 2) + "\n";
-      if (prev !== next) {
+      // Compare newline-insensitively. A context repo whose .gitattributes marks .json as
+      // `text` checks the marker out with CRLF on Windows, and a byte-exact test would
+      // rewrite it to LF every single session — a permanently dirty repo and a "refreshed"
+      // line on every start, for a file whose content never changed.
+      if (prev === null || prev.replace(/\r\n/g, "\n") !== next) {
         fs.writeFileSync(out, next);
         process.stdout.write(prev === null ? "created" : "refreshed");
       }
