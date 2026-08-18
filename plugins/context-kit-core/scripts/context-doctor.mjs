@@ -67,9 +67,20 @@ const readJson = (file) => {
   const raw = readFileSync(file, 'utf8');
   return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);   // BOM, if an editor left one
 };
-// Two-space indent is what every JSON file in this kit already uses, and what link-context.mjs
-// writes — matching it keeps a --fix diff to the line that actually changed.
-const writeJson = (file, data) => writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+// --fix edits the RAW TEXT, not a parsed-and-restringified object. Round-tripping through
+// JSON.stringify reformats the whole file — inline objects explode into blocks — burying one
+// semantic change in a screenful of churn. For a tool whose entire claim is a minimal,
+// auditable write, the diff IS the product. Each edit therefore rewrites one exact token, and
+// refuses when that token is not unambiguous.
+//
+// Returns the new text, or null when the edit could not be made safely (caller reports it
+// instead of writing).
+const replaceOnce = (text, pattern, replacement) => {
+  const matches = text.match(pattern);
+  if (!matches || matches.length !== 1) return null;   // absent, or ambiguous — do not guess
+  return text.replace(pattern, replacement);
+};
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // ---------------------------------------------------------------- context.json
 
@@ -329,23 +340,43 @@ if (flags.has('include') && Array.isArray(ctx?.include)) {
 // ---------------------------------------------------------------- fix (JSON keys only)
 
 const applied = [];
+const refused = [];
 if (flags.has('fix')) {
-  const byFile = new Map();
+  const byFile = new Map();   // file -> current text, so several edits to one file compose
   for (const f of findings) {
     if (!f.fix) continue;
-    if (!byFile.has(f.fix.file)) byFile.set(f.fix.file, readJson(f.fix.file));
-    const data = byFile.get(f.fix.file);
+    if (!byFile.has(f.fix.file)) byFile.set(f.fix.file, readFileSync(f.fix.file, 'utf8'));
+    const text = byFile.get(f.fix.file);
+    let next = null;
+    let what = null;
+
     if (f.fix.kind === 'rename-enabled-plugin') {
-      const val = data.enabledPlugins[f.fix.from];
-      delete data.enabledPlugins[f.fix.from];
-      data.enabledPlugins[f.fix.to] = val;
-      applied.push(`${basename(f.fix.file)}: enabledPlugins "${f.fix.from}" to "${f.fix.to}"`);
+      // The key token only, quotes included — the value and every byte of layout survive.
+      next = replaceOnce(text, new RegExp(`"${escapeRe(f.fix.from)}"`, 'g'), `"${f.fix.to}"`);
+      what = `enabledPlugins "${f.fix.from}" to "${f.fix.to}"`;
     } else if (f.fix.kind === 'align-env-repo') {
-      data.env = { ...(data.env ?? {}), PROJECT_CONTEXT_REPO: f.fix.to };
-      applied.push(`${basename(f.fix.file)}: PROJECT_CONTEXT_REPO to "${f.fix.to}"`);
+      next = replaceOnce(
+        text,
+        /("PROJECT_CONTEXT_REPO"\s*:\s*)"[^"]*"/g,
+        `$1${JSON.stringify(f.fix.to)}`,
+      );
+      what = `PROJECT_CONTEXT_REPO to "${f.fix.to}"`;
     }
+
+    if (next === null) {
+      refused.push(`${basename(f.fix.file)}: ${what} — the exact text was not found once and only once; fix it by hand`);
+      continue;
+    }
+    // Never hand back a file that stopped being valid JSON.
+    try { JSON.parse(next.charCodeAt(0) === 0xfeff ? next.slice(1) : next); }
+    catch (e) { refused.push(`${basename(f.fix.file)}: ${what} — the edit would not have parsed (${e.message}); nothing written`); continue; }
+
+    byFile.set(f.fix.file, next);
+    applied.push(`${basename(f.fix.file)}: ${what}`);
   }
-  for (const [file, data] of byFile) writeJson(file, data);
+  for (const [file, text] of byFile) {
+    if (text !== readFileSync(file, 'utf8')) writeFileSync(file, text);
+  }
 }
 
 // ---------------------------------------------------------------- report
@@ -353,7 +384,7 @@ if (flags.has('fix')) {
 const fixable = findings.filter((f) => f.fix).length;
 
 if (flags.has('json')) {
-  console.log(JSON.stringify({ root: ROOT, today, findings, includes: includeReports, applied, fixable }, null, 2));
+  console.log(JSON.stringify({ root: ROOT, today, findings, includes: includeReports, applied, refused, fixable }, null, 2));
 } else {
   console.log(`context-doctor — ${ROOT}  (${today})`);
   if (!findings.length && !includeReports.length) console.log('  ok    nothing to report');
@@ -365,11 +396,15 @@ if (flags.has('json')) {
   for (const r of includeReports) {
     console.log(`  note  [include] ${r.repo} — ${r.note} (read-only from here)`);
   }
+  if (refused.length) {
+    console.log('\n  NOT applied:');
+    for (const r of refused) console.log(`    - ${r}`);
+  }
   if (applied.length) {
     console.log('\n  applied:');
     for (const a of applied) console.log(`    - ${a}`);
     console.log('  Settings are read at session start — restart for these to take effect.');
-  } else if (fixable) {
+  } else if (fixable && !flags.has('fix')) {
     console.log(`\n  ${fixable} finding(s) can be fixed automatically (JSON keys only): re-run with --fix`);
   }
 }
