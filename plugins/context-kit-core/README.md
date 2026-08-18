@@ -148,6 +148,7 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 | Skill | What it does |
 | --- | --- |
 | `context-setup` | First-run wiring and diagnosis: how this project names its repo, is it reachable, load it now |
+| `context-doctor` | Health-check an already-linked repo for the drift that never announces itself; fixes derivable config keys only |
 | `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
 | `save-thread` | 🔒 Write up the current work as a `threads/` entry and push (never self-triggers) |
 | `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |
