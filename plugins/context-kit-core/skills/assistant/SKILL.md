@@ -89,10 +89,23 @@ scaffold is a write, so ask first. Create the directory and:
   someone happened to create is not an assistant, for the same reason `include` is never read
   off the filesystem.
 
+Also write **`assistants/README.md`** if it is absent — a short summary of the four-file
+contract, taken from the `assistant-contract` reference skill. That copy is for **humans who do
+not have this plugin**: a colleague can read the repo but has no context-kit, and still needs to
+know what these files are before appending a lesson by hand. Keep it a summary that names the
+skill as canonical, not a second source of truth.
+
+The contract itself is NOT kept in `c-energie/context-template`. The plugin is the layer with a
+distribution mechanism — a marketplace update reaches every repo that enables it, including
+repos never stamped from the template. Anything in the template only ever reaches repos created
+after it changed.
+
 Do **not** create `DOCTRINE.md`. It is machine-written, arriving from a supervisor via a
 `handoff/` item; an empty one invites hand-editing, which is what it exists to prevent.
 
 Scaffolding does not commit. Leave that to the user's normal flow.
+
+**Background:** the four-file contract, and why each rule exists, is `assistant-contract`.
 
 **Not this skill:** recording a transferable lesson for the supervisor is `assistant-lesson`;
 distilling lessons across projects is `supervisor-sweep` and `supervisor-distil`; writing up
