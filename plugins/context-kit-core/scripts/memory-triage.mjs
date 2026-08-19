@@ -1,0 +1,227 @@
+#!/usr/bin/env node
+// Drain Claude's native per-directory memory into the context ladder.
+//
+//   node memory-triage.mjs scan <context-repo-root> [--dir path] [--json] [--today YYYY-MM-DD]
+//   node memory-triage.mjs mark <memory-file> --to "corson94/second-brain memory.md" [--today ...]
+//
+// THE PROBLEM. Claude's own memory lives in ~/.claude/projects/[mangled-cwd]/memory/, keyed by
+// WORKING DIRECTORY. One project spread over several checkouts therefore gets several stores
+// that never see each other — and none of them is committed, so nothing in there is visible to
+// anyone else or to a session opened one directory over. A preference stated once applies in
+// one folder and nowhere else.
+//
+// THE SHAPE OF THE FIX. Native memory is an INBOX, not a layer: the frictionless place a fact
+// lands mid-task. This gives it a drain. Nothing redirects where memory is written — that path
+// belongs to the harness — so integration means promotion.
+//
+// THE SCAN IS ASYMMETRIC, and that asymmetry is what keeps it honest:
+//   * In a PROJECT repo — read only the store for the session's own working directory. No
+//     directory-to-project mapping is guessed, because guessing wrong files a fact under the
+//     wrong project.
+//   * In the CROSS-PROJECT LAYER (a repo whose context.json declares `include`) — read every
+//     store on the machine, but surface only PERSONAL-layer entries (`type: user` /
+//     `feedback`). Those belong to the person, not to the directory they were captured in, so
+//     no mapping is needed to place them.
+//
+// It never writes into a repo. `scan` is read-only; `mark` stamps one metadata key on a native
+// memory file so a promoted entry is not promoted twice. The skill does the promotion itself,
+// into the repo the session is already in — which is the only repo it is allowed to write to.
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve, basename } from 'node:path';
+
+const COMMANDS = ['scan', 'mark'];
+const OPTIONS = ['json', 'dir', 'to', 'today'];
+// The personal layer: facts about the person and how to work with them. `feedback` is included
+// deliberately — "prefers prose over multiple choice" is not a fact about a project.
+const PERSONAL = new Set(['user', 'feedback']);
+
+const die = (m) => { console.error(`memory-triage.mjs: ${m}`); process.exit(2); };
+
+const argv = process.argv.slice(2);
+const flags = new Set();
+const opts = {};
+const positional = [];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--dir' || a === '--to' || a === '--today') opts[a.slice(2)] = argv[++i];
+  else if (a.startsWith('--')) flags.add(a.slice(2));
+  else positional.push(a);
+}
+for (const f of flags) if (!OPTIONS.includes(f)) die(`unknown option --${f}`);
+
+const command = positional[0];
+if (!command) die(`needs a subcommand (${COMMANDS.join(', ')})`);
+if (!COMMANDS.includes(command)) die(`unknown subcommand "${command}"`);
+
+const today = opts.today ?? new Date().toISOString().slice(0, 10);
+if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) die(`--today needs YYYY-MM-DD, got ${opts.today}`);
+
+const PROJECTS = join(homedir(), '.claude', 'projects');
+
+// The harness derives a store name from the working directory by flattening every path
+// separator. Verified against the real directories rather than assumed.
+const storeKey = (dir) => resolve(dir).replace(/[:\\/.]/g, '-');
+
+function parseEntry(file) {
+  const text = readFileSync(file, 'utf8');
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  const get = (k) => {
+    const m = fm && new RegExp(`^\\s*${k}:\\s*(.*)$`, 'm').exec(fm[1]);
+    if (!m) return '';
+    let v = m[1].trim();
+    if (/^"(.*)"$/.test(v) || /^'(.*)'$/.test(v)) v = v.slice(1, -1);
+    return v.trim();
+  };
+  return {
+    file,
+    name: get('name') || basename(file, '.md'),
+    description: get('description'),
+    type: get('type') || 'unknown',
+    modified: (get('modified') || '').slice(0, 10) || null,
+    promotedTo: get('promotedTo') || null,
+    body: text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').trim(),
+  };
+}
+
+function readStore(key) {
+  const dir = join(PROJECTS, key, 'memory');
+  let files = [];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'MEMORY.md');
+  } catch { return null; }
+  return { key, dir, entries: files.map((f) => parseEntry(join(dir, f))) };
+}
+
+// ---------------------------------------------------------------- mark
+
+if (command === 'mark') {
+  const file = positional[1];
+  if (!file) die('mark needs the native memory file to stamp');
+  if (!existsSync(file)) die(`no such file: ${file}`);
+  if (!opts.to) die('mark needs --to "where it was promoted"');
+  const text = readFileSync(file, 'utf8');
+  if (/^\s*promotedTo:/m.test(text)) die(`${basename(file)} is already stamped promotedTo — refusing to stamp twice`);
+  const fm = /^(---\r?\n)([\s\S]*?)(\r?\n---)/.exec(text);
+  if (!fm) die(`${basename(file)} has no front-matter block to stamp`);
+  const nl = text.includes('\r\n') ? '\r\n' : '\n';
+  // Stamped inside metadata, beside the keys the harness already writes there, so the record
+  // travels with the entry. The entry itself is left intact: deleting it would lose the "why",
+  // and re-promotion is what the stamp prevents.
+  const stamped = text.replace(fm[0], `${fm[1]}${fm[2]}${nl}  promotedTo: ${opts.to} (${today})${fm[3]}`);
+  writeFileSync(file, stamped);
+  console.log(`stamped ${basename(file)} -> promotedTo: ${opts.to} (${today})`);
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------- scan
+
+const root = resolve(positional[1] ?? '.');
+if (!existsSync(root)) die(`no such directory: ${root}`);
+
+let ctx = {};
+try {
+  const raw = readFileSync(join(root, 'context.json'), 'utf8');
+  ctx = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
+} catch { die(`no readable context.json at ${root} — not a context repo`); }
+
+// `include` is what makes a repo the cross-project layer. Not `roles` or `supervisors`: those
+// say a repo runs supervisors, whereas `include` is the committed statement of which projects
+// this repo is entitled to see, which is the question being asked here.
+const isCrossProject = Array.isArray(ctx.include) && ctx.include.length > 0;
+
+const stores = [];
+if (isCrossProject) {
+  let keys = [];
+  try { keys = readdirSync(PROJECTS); } catch { die(`cannot read ${PROJECTS}`); }
+  for (const k of keys) {
+    const s = readStore(k);
+    if (s) stores.push(s);
+  }
+} else {
+  const dir = opts.dir ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const s = readStore(storeKey(dir));
+  if (s) stores.push(s);
+  else stores.push({ key: storeKey(dir), dir: join(PROJECTS, storeKey(dir), 'memory'), entries: [], absent: true });
+}
+
+const candidates = [];
+for (const s of stores) {
+  for (const e of s.entries) {
+    if (e.promotedTo) continue;                                   // already drained
+    if (isCrossProject && !PERSONAL.has(e.type)) continue;        // not this layer's business
+    candidates.push({ ...e, store: s.key });
+  }
+}
+
+// `type: feedback` does NOT mean personal, and treating it that way is the mistake this guard
+// exists to prevent. "Jamie prefers prose over multiple choice" is about the person; "Jamie
+// wants FlexSense docs to state only what works" wears the same type and is about a project.
+// Promote the second into the personal layer and a product's documentation convention becomes
+// a fact about a human being.
+//
+// The mechanical signal available without guessing: the store an entry was captured in has the
+// project in its path. If the entry's own text names one of those path segments, it is talking
+// about that project. Reported as a HINT, never as a decision — the skill and the user judge.
+const STOP = new Set(['users', 'corso', 'claude', 'projects', 'documents', 'onedrive', 'context', 'main', 'repo', 'temp', 'scratchpad', 'worktrees']);
+
+const storeTokens = (key) => [...new Set(
+  key.toLowerCase().split('-').filter((t) => t.length >= 4 && !STOP.has(t) && !/^\d+$/.test(t)),
+)];
+
+// Summary only — name and description — never the body. The body of a well-written memory
+// always names the episode the fact was learned from ("on the grid-flex design session he
+// rejected..."), which is evidence for a general preference rather than a limit on its scope.
+// Searching it flags every entry. Word-bounded, so "flex" does not match "flexibility".
+const namesItsProject = (e) => {
+  const hay = `${e.name} ${e.description}`.toLowerCase();
+  return storeTokens(e.store).filter((t) => new RegExp(`\\b${t}\\b`).test(hay));
+};
+
+const suggest = (e) => {
+  if (PERSONAL.has(e.type)) {
+    const named = namesItsProject(e);
+    if (named.length) {
+      return `AMBIGUOUS — names ${named.map((n) => `"${n}"`).join(', ')} from its own store path, so this is probably feedback ABOUT A PROJECT. Promote it to that project's repo, not the personal layer, unless the preference really is general.`;
+    }
+    // A session may only write into its own repo, so from a project this is a finding, not a
+    // task. Saying "promote to the cross-project layer" here would be advice that cannot be
+    // taken. It needs no handoff: the cross-project layer reads every store, so a run there
+    // picks this up on its own.
+    return isCrossProject
+      ? 'personal — this repo, memory.md'
+      : 'personal — NOT promotable from here (a session writes only to its own repo). The cross-project layer reads every store, so run triage there; nothing to carry over.';
+  }
+  if (e.type === 'reference') return 'reference — the project context repo, or leave local if it is a laptop path';
+  return 'project — the project context repo memory.md, unless it is a code convention (CLAUDE.md) or machine-local (leave)';
+};
+
+const data = {
+  root,
+  today,
+  mode: isCrossProject ? 'cross-project (all stores, personal entries only)' : 'project (this working directory only)',
+  storesRead: stores.length,
+  candidates: candidates.map((e) => ({ ...e, suggestion: suggest(e) })),
+};
+
+if (flags.has('json')) {
+  console.log(JSON.stringify(data, null, 2));
+} else {
+  console.log(`memory-triage — ${root}  (${today})`);
+  console.log(`  mode: ${data.mode}; ${stores.length} store(s) read`);
+  if (!candidates.length) {
+    console.log('  ok    nothing to promote');
+  } else {
+    console.log(`  ${candidates.length} entr(ies) not yet promoted:\n`);
+    for (const e of candidates) {
+      console.log(`  ${e.type.padEnd(9)} ${e.name}`);
+      console.log(`            ${e.description || '(no description)'}`);
+      console.log(`            ${e.modified ?? 'undated'} · ${e.store}`);
+      console.log(`            -> ${suggest(e)}`);
+      console.log(`            ${e.file}`);
+      console.log();
+    }
+    console.log('  Nothing has been changed. Promote by hand into THIS repo, then stamp each');
+    console.log('  source with:  memory-triage.mjs mark [file] --to "[where]"');
+  }
+}
