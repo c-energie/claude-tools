@@ -479,7 +479,12 @@ echo
 [ -f "$ROOT/glossary.md" ] && echo "Vocabulary: see glossary.md in $CONTEXT_REMOTE."
 if [ -d "$ROOT/threads" ]; then
   echo "Working threads (one topic per file; newest last):"
-  find "$ROOT/threads" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null \
+  # Assistant threads are excluded from the six. They carry the filename form
+  # YYYY-MM-DD-asst-[role]-topic.md precisely so this filter costs one glob and opens no extra
+  # file: a working assistant writes daily, and without it would fill every slot within a week,
+  # pushing the repo's ordinary threads out of every session start — silently, since the list
+  # never says how much it is hiding. Counted below instead; /assistant loads a role's history.
+  find "$ROOT/threads" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' ! -name '*-asst-*' -print 2>/dev/null \
     | sort | tail -n 6 \
     | while IFS= read -r f; do
         # Title comes from the front-matter `title:` if the file has a block, else the
@@ -494,6 +499,8 @@ if [ -d "$ROOT/threads" ]; then
         [ -z "$title" ] && title="$(basename "$f" .md)"
         echo "   - threads/$(basename "$f") — ${title}"
       done
+  ASST_N="$(find "$ROOT/threads" -maxdepth 1 -name '*-asst-*.md' -print 2>/dev/null | wc -l | tr -d ' ')"
+  [ "${ASST_N:-0}" -gt 0 ] 2>/dev/null && echo "   (+$ASST_N assistant thread(s), not listed — adopt the role with /assistant)"
   [ -f "$ROOT/threads/INDEX.md" ] && echo "   (full list: threads/INDEX.md)"
 fi
 echo
@@ -506,6 +513,40 @@ if [ -f "$ROOT/notion/_synced.json" ]; then
   echo "Read-only Notion mirror in notion/${SYNCED:+ (last synced $SYNCED)}. A snapshot, not a live feed: Notion wins."
 fi
 [ -d "$ROOT/pending" ] && echo "No workspace access? Queue structured items in pending/."
+# The assistant roster: one line, naming what this repo declares. Deliberately a NAME LIST and
+# nothing more — personas, memories and doctrine load only when /assistant is invoked, so this
+# costs a handful of tokens in every session in every project rather than growing without bound.
+# Discoverability is the whole point: a memory layer nobody remembers to consult does not work.
+#
+# Read with an INLINE `node -e`, not scripts/assistants.mjs. Packaging is only documented to
+# ship skills/, commands/, agents/ and hooks/ — the include parser above is inline for exactly
+# this reason, and a call to a .mjs has no fallback: it would fail silently and the roster would
+# simply never appear. sed cannot do it; these are JSON objects, not scalars.
+if [ -f "$ROOT/context.json" ] && grep -q '"assistants"\|"supervisors"' "$ROOT/context.json" 2>/dev/null; then
+  if command -v node >/dev/null 2>&1; then
+    node -e '
+      const fs = require("fs");
+      try {
+        const raw = fs.readFileSync(process.argv[1], "utf8");
+        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+        const names = (o) => (o && typeof o === "object" && !Array.isArray(o)) ? Object.keys(o) : [];
+        const a = names(ctx.assistants), s = names(ctx.supervisors);
+        if (a.length) console.log(`Assistants here: ${a.join(", ")} — adopt one with /assistant [name], which loads that role persona, memory and doctrine.`);
+        if (s.length) console.log(`Supervisors here (cross-project roles): ${s.join(", ")}. supervisor-sweep distils each role LESSONS.md across the include list.`);
+      } catch { /* an unparseable context.json already has bigger problems */ }
+    ' "$ROOT/context.json" 2>/dev/null
+  else
+    # Never a silent absence: "no assistants" and "could not look" must stay distinguishable.
+    echo "context.json declares assistants or supervisors, but node is unavailable, so the roster was NOT read this session."
+  fi
+fi
+# Undrained handoff items are a debt created HERE and payable in another repo's session. Nothing
+# in the target repo can announce them — a project may not even run this plugin — so the only
+# place the reminder can appear is the repo that owes them.
+if [ -d "$ROOT/handoff" ]; then
+  HO_N="$(find "$ROOT/handoff" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null | wc -l | tr -d ' ')"
+  [ "${HO_N:-0}" -gt 0 ] 2>/dev/null && echo "handoff/: $HO_N undrained item(s) bound for other repos — drain each in that project own session (see handoff/INDEX.md)."
+fi
 # Only when the file actually changed this session — a line repeated every start is noise
 # nobody reads, but a fresh marker is something the user may want to attach to Cowork now.
 [ -n "$MARKER_NOTE" ] && echo "Cowork marker $MARKER_NOTE: .claude/context-project.json in $CONTEXT_REMOTE now mirrors this configuration — commit it there so every clone carries it, and attach that file to a Cowork project so its sandbox sessions load the same context and connections."

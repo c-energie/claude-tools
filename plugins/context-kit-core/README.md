@@ -153,6 +153,10 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 | `save-thread` | 🔒 Write up the current work as a `threads/` entry and push (never self-triggers) |
 | `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |
 | `setup-connectors` | Provision the MCP connections a project's `context.json` declares |
+| `assistant` | Adopt a role assistant — its persona, memory, doctrine and thread history; scaffolds one on first use |
+| `assistant-lesson` | 🔒 Record a transferable lesson into `LESSONS.md`, abstracted at write time |
+| `supervisor-sweep` | 🔒 Distil role lessons across every included project into a supervisor thread |
+| `supervisor-distil` | 🔒 Promote supervisor threads into durable doctrine and queue it to each project |
 | `context-access` | _(hidden)_ The GitHub-API route sandboxes use, and the rules that stop an API write truncating a file |
 | `update-plugin` | Change these plugins themselves — check, bump, and (after asking) push |
 

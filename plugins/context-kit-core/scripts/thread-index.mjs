@@ -84,6 +84,15 @@ function scan(dir, archived) {
       return {
         date: /^(\d{4}-\d{2}-\d{2})/.exec(f)?.[1] ?? '—',
         topic: topicOf(text, f),
+        // An assistant's or supervisor's thread is otherwise indistinguishable from an ordinary
+        // one here — tagging rather than nesting was chosen precisely so these stay in the same
+        // flat directory. Surfacing the owner is what keeps the index navigable once a role
+        // starts writing daily, and what lets a reader see which lines belong to a role rather
+        // than to the project itself.
+        owner: fmScalar(splitFrontMatter(text).fm, 'assistant')
+          || fmScalar(splitFrontMatter(text).fm, 'supervisor') || null,
+        kind: fmScalar(splitFrontMatter(text).fm, 'assistant') ? 'assistant'
+          : (fmScalar(splitFrontMatter(text).fm, 'supervisor') ? 'supervisor' : null),
         status: meta.status ?? (archived ? 'archived' : 'TODO: active/settled?'),
         gist: meta.gist ?? 'TODO: one-line gist',
         path: `${dir}/${f}`,
@@ -93,7 +102,7 @@ function scan(dir, archived) {
 
 const active = scan('threads', false);
 const archived = scan('Archive/threads', true);
-const line = (t) => `- ${t.date} · ${t.topic} · ${t.status} · ${t.gist} · \`${t.path}\``;
+const line = (t) => `- ${t.date} · ${t.topic}${t.owner ? ` · ${t.kind}: ${t.owner}` : ''} · ${t.status} · ${t.gist} · \`${t.path}\``;
 
 const out = [
   '# Thread index',

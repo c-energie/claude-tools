@@ -25,6 +25,8 @@ node scripts/list-plugins.mjs "$ROOT"           # ...plus each plugin's skills (
 node scripts/dates.mjs today
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
 node scripts/context-doctor.mjs "$ROOT" --include   # health-check a context repo (--json, --fix, --today)
+node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
+node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not yet distilled
 pwsh scripts/Start-ContextSession.ps1 -DryRun    # menu over ~/.context; -Shortcut installs a Desktop launcher
 bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux (--shortcut writes .desktop/.command)
 ```
