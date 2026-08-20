@@ -445,6 +445,64 @@ if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"include"' "$ROOT/c
     done
   fi
 fi
+# The assistant roster, computed here rather than inside the payload because it has TWO
+# consumers: the payload (which the model reads) and systemMessage (which the USER reads). The
+# roster was originally emitted into the payload alone, which put it 8% of the way into a 70KB
+# block the user never sees — discoverability aimed at the model, when the whole argument for
+# the line was that a memory layer the HUMAN forgets to consult does not work.
+#
+# Read with an INLINE node -e, not scripts/assistants.mjs. Packaging is only documented to ship
+# skills/, commands/, agents/ and hooks/, so a call to a .mjs would fail silently and the roster
+# would simply never appear. sed cannot do it; these are JSON objects, not scalars.
+ASST_NAMES=""; SUP_NAMES=""; ASST_NOTE=""
+if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"assistants"\|"supervisors"' "$ROOT/context.json" 2>/dev/null; then
+  if command -v node >/dev/null 2>&1; then
+    ASST_NAMES="$(node -e '
+      const fs = require("fs");
+      try {
+        const raw = fs.readFileSync(process.argv[1], "utf8");
+        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+        const o = ctx.assistants;
+        if (o && typeof o === "object" && !Array.isArray(o)) console.log(Object.keys(o).join(", "));
+      } catch { /* an unparseable context.json already has bigger problems */ }
+    ' "$ROOT/context.json" 2>/dev/null)"
+    SUP_NAMES="$(node -e '
+      const fs = require("fs");
+      try {
+        const raw = fs.readFileSync(process.argv[1], "utf8");
+        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+        const o = ctx.supervisors;
+        if (o && typeof o === "object" && !Array.isArray(o)) console.log(Object.keys(o).join(", "));
+      } catch { }
+    ' "$ROOT/context.json" 2>/dev/null)"
+  else
+    # Never a silent absence: "no assistants" and "could not look" must stay distinguishable.
+    ASST_NOTE="context.json declares assistants or supervisors, but node is unavailable, so the roster was NOT read this session."
+  fi
+fi
+# Undrained handoff items are a debt created HERE and payable in another repo session. Nothing in
+# the target repo can announce them, so the only place the reminder can appear is the repo that
+# owes them.
+HO_N=0
+if [ -d "$ROOT/handoff" ]; then
+  HO_N="$(find "$ROOT/handoff" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null | wc -l | tr -d ' ')"
+fi
+
+# The user-visible half. Names while the list is short enough to read at a glance; a bare count
+# once it is not, because a summary line nobody finishes reading is the same failure in a new
+# place.
+ASST_SUMMARY=""
+if [ -n "$ASST_NAMES" ]; then
+  ASST_N="$(printf '%s' "$ASST_NAMES" | awk -F', ' '{print NF}')"
+  if [ "${ASST_N:-0}" -le 4 ] 2>/dev/null; then
+    ASST_SUMMARY=" · assistants: $ASST_NAMES"
+  else
+    ASST_SUMMARY=" · $ASST_N assistants (/assistant to list)"
+  fi
+fi
+[ -n "$ASST_NOTE" ] && ASST_SUMMARY=" · ⚠ roster not read (no node)"
+[ "${HO_N:-0}" -gt 0 ] 2>/dev/null && ASST_SUMMARY="$ASST_SUMMARY · handoff: $HO_N undrained"
+
 INC_SUMMARY=""
 [ -n "$INC_NAMES" ] && INC_SUMMARY=" + included: $INC_NAMES${INC_STALE:+ (some STALE or unavailable)}"
 [ -n "$INC_NOTE" ] && INC_SUMMARY=" ⚠ includes skipped (no node)"
@@ -513,40 +571,14 @@ if [ -f "$ROOT/notion/_synced.json" ]; then
   echo "Read-only Notion mirror in notion/${SYNCED:+ (last synced $SYNCED)}. A snapshot, not a live feed: Notion wins."
 fi
 [ -d "$ROOT/pending" ] && echo "No workspace access? Queue structured items in pending/."
-# The assistant roster: one line, naming what this repo declares. Deliberately a NAME LIST and
-# nothing more — personas, memories and doctrine load only when /assistant is invoked, so this
-# costs a handful of tokens in every session in every project rather than growing without bound.
-# Discoverability is the whole point: a memory layer nobody remembers to consult does not work.
-#
-# Read with an INLINE `node -e`, not scripts/assistants.mjs. Packaging is only documented to
-# ship skills/, commands/, agents/ and hooks/ — the include parser above is inline for exactly
-# this reason, and a call to a .mjs has no fallback: it would fail silently and the roster would
-# simply never appear. sed cannot do it; these are JSON objects, not scalars.
-if [ -f "$ROOT/context.json" ] && grep -q '"assistants"\|"supervisors"' "$ROOT/context.json" 2>/dev/null; then
-  if command -v node >/dev/null 2>&1; then
-    node -e '
-      const fs = require("fs");
-      try {
-        const raw = fs.readFileSync(process.argv[1], "utf8");
-        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-        const names = (o) => (o && typeof o === "object" && !Array.isArray(o)) ? Object.keys(o) : [];
-        const a = names(ctx.assistants), s = names(ctx.supervisors);
-        if (a.length) console.log(`Assistants here: ${a.join(", ")} — adopt one with /assistant [name], which loads that role persona, memory and doctrine.`);
-        if (s.length) console.log(`Supervisors here (cross-project roles): ${s.join(", ")}. supervisor-sweep distils each role LESSONS.md across the include list.`);
-      } catch { /* an unparseable context.json already has bigger problems */ }
-    ' "$ROOT/context.json" 2>/dev/null
-  else
-    # Never a silent absence: "no assistants" and "could not look" must stay distinguishable.
-    echo "context.json declares assistants or supervisors, but node is unavailable, so the roster was NOT read this session."
-  fi
+# The same roster, in the payload, because the model needs the names to act on rather than
+# merely to see. Computed above; this only renders it.
+if [ -n "$ASST_NAMES" ]; then
+  echo "Assistants here: $ASST_NAMES — adopt one with /assistant [name], which loads that role persona, memory and doctrine. /assistant on its own lists them."
 fi
-# Undrained handoff items are a debt created HERE and payable in another repo's session. Nothing
-# in the target repo can announce them — a project may not even run this plugin — so the only
-# place the reminder can appear is the repo that owes them.
-if [ -d "$ROOT/handoff" ]; then
-  HO_N="$(find "$ROOT/handoff" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null | wc -l | tr -d ' ')"
-  [ "${HO_N:-0}" -gt 0 ] 2>/dev/null && echo "handoff/: $HO_N undrained item(s) bound for other repos — drain each in that project own session (see handoff/INDEX.md)."
-fi
+[ -n "$SUP_NAMES" ] && echo "Supervisors here (cross-project roles): $SUP_NAMES. supervisor-sweep distils each role LESSONS.md across the include list."
+[ -n "$ASST_NOTE" ] && echo "$ASST_NOTE"
+[ "${HO_N:-0}" -gt 0 ] 2>/dev/null && echo "handoff/: $HO_N undrained item(s) bound for other repos — drain each in that project own session (see handoff/INDEX.md)."
 # Only when the file actually changed this session — a line repeated every start is noise
 # nobody reads, but a fresh marker is something the user may want to attach to Cowork now.
 [ -n "$MARKER_NOTE" ] && echo "Cowork marker $MARKER_NOTE: .claude/context-project.json in $CONTEXT_REMOTE now mirrors this configuration — commit it there so every clone carries it, and attach that file to a Cowork project so its sandbox sessions load the same context and connections."
@@ -575,8 +607,8 @@ fi
 } > "$OUT_TMP"
 
 if [ -n "$REFRESH_WARNING" ]; then
-  emit "⚠ Shared context loaded but may be STALE — refresh from $CONTEXT_REMOTE failed${LAST_UPDATED:+; newest local commit is $LAST_UPDATED}$INC_SUMMARY"
+  emit "⚠ Shared context loaded but may be STALE — refresh from $CONTEXT_REMOTE failed${LAST_UPDATED:+; newest local commit is $LAST_UPDATED}$INC_SUMMARY$ASST_SUMMARY"
 else
   AGE="$(git -C "$ROOT" log -1 --format='%cd' --date=relative 2>/dev/null)" || AGE=""
-  emit "✓ Shared context loaded — $CONTEXT_REMOTE${AGE:+ · newest commit $AGE}$INC_SUMMARY"
+  emit "✓ Shared context loaded — $CONTEXT_REMOTE${AGE:+ · newest commit $AGE}$INC_SUMMARY$ASST_SUMMARY"
 fi

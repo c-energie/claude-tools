@@ -209,22 +209,49 @@ const ctx = loadContext(root);
 const { assistants, supervisors, roles } = roster(ctx);
 
 if (command === 'roster') {
+  // Per role: which of the four files actually exist, and the registry description where this
+  // repo has a registry. A name on its own does not tell you whether the thing behind it is a
+  // working assistant or an empty directory, and that difference is the reason to look.
+  const detail = Object.keys(assistants).map((role) => {
+    const p = slicePaths(root, role);
+    const have = ['persona', 'memory', 'lessons', 'doctrine'].filter((k) => existsSync(p[k]));
+    return { role, files: have, description: roles[role]?.description ?? null };
+  });
   const data = {
     repo: ctx.contextRepo ?? null,
     assistants: Object.keys(assistants),
     supervisors: Object.keys(supervisors),
     roles: Object.keys(roles),
-    // What the hook needs, already phrased. Kept here so the wording lives in one place even
-    // though the hook itself inlines its own reader.
+    detail,
     line: Object.keys(assistants).length
       ? `Assistants here: ${Object.keys(assistants).join(', ')} — adopt one with /assistant [name]`
       : null,
   };
-  out(data, [
-    data.line ?? 'No assistants declared in context.json.',
-    ...(data.supervisors.length ? [`Supervisors here: ${data.supervisors.join(', ')}`] : []),
-    ...(data.roles.length ? [`Role registry: ${data.roles.join(', ')}`] : []),
-  ]);
+  const lines = [];
+  if (!detail.length) {
+    lines.push('No assistants declared in context.json.');
+    lines.push('  A directory nobody declared is not an assistant. /assistant [role] can scaffold one.');
+  } else {
+    lines.push(`Assistants in ${data.repo ?? root} — adopt one with /assistant [name]:`);
+    lines.push('');
+    for (const d of detail) {
+      lines.push(`  ${d.role.padEnd(20)} ${d.files.join(' ')}`);
+      // Wrapped at a width that survives a narrow terminal without a dependency.
+      if (d.description) {
+        let line = '';
+        for (const w of d.description.split(/\s+/)) {
+          if ((line + ' ' + w).trim().length > 74) { lines.push(`      ${line}`); line = w; }
+          else line = (line + ' ' + w).trim();
+        }
+        if (line) lines.push(`      ${line}`);
+      }
+      lines.push('');
+    }
+  }
+  if (data.supervisors.length) lines.push(`Supervisors (distilled here): ${data.supervisors.join(', ')}`);
+  if (data.roles.length) lines.push(`Role registry: ${data.roles.join(', ')}`);
+  else lines.push('No role registry in this repo — the canonical names live in the cross-project layer.');
+  out(data, lines);
   process.exit(0);
 }
 

@@ -1,6 +1,6 @@
 ---
 name: assistant
-description: Adopt one of this context repo's role assistants — a software developer, a financial assistant, an executive assistant — loading its persona, its own memory, the cross-project doctrine it has been given, and its thread history, so the rest of the session is worked in that role. Also scaffolds a new assistant on first use. Triggers like "be my software developer assistant", "switch to the financial assistant", "adopt the executive assistant", "which assistants do I have", "set up a new assistant", "assistant off".
+description: List the role assistants a context repo has, or adopt one — a software developer, a financial assistant, an executive assistant — loading its persona, its own memory, the cross-project doctrine it has been given, and its thread history, so the rest of the session is worked in that role. Also scaffolds a new assistant on first use. Triggers like "what assistants do I have", "list my assistants", "which roles are set up here", "be my software developer assistant", "switch to the financial assistant", "adopt the executive assistant", "which assistants do I have", "set up a new assistant", "assistant off".
 ---
 
 # Adopt a role assistant
@@ -23,8 +23,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/assistants.mjs" roster "$ROOT"
 `--no-pull` because adopting a persona is a read. If the resolver exits non-zero the problem is
 the link, not the assistant — route to `context-setup`.
 
-**No role named?** List what the roster reports and ask which one. Never guess: adopting the
-wrong persona silently colours everything that follows.
+**No role named, or `list` asked for?** Print the roster and STOP. `roster` shows each
+declared role, which of its four files exist, and the registry description where the repo has a
+registry. That is a complete answer on its own: someone asking what they have is not
+necessarily about to adopt one, and pushing them to choose turns a lookup into a decision.
+Offer to adopt one, then wait.
+
+Never guess a role. Adopting the wrong persona silently colours everything that follows.
 
 ## 2. Resolve the name
 
