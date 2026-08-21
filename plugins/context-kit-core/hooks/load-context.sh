@@ -445,6 +445,40 @@ if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"include"' "$ROOT/c
     done
   fi
 fi
+# Lists the newest threads in a directory, with titles. Shared by the project layer and the
+# per-repo layer so the title-extraction awk exists once: it was duplicated the moment a second
+# thread location appeared, and a title parser that drifts between two copies would print the
+# literal front-matter fence in one of them with nobody noticing which.
+#   list_threads DIR DISPLAY_PREFIX MAX
+list_threads() {
+  _d="$1"; _pfx="$2"; _max="${3:-6}"
+  find "$_d" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' ! -name '*-asst-*' -print 2>/dev/null     | sort | tail -n "$_max"     | while IFS= read -r f; do
+        title="$(awk '
+          NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+          fm == 1 && /^---[[:space:]]*$/ { fm = 0; next }
+          fm == 1 && /^title:[[:space:]]/ { sub(/^title:[[:space:]]*/, ""); print; exit }
+          fm == 0 && /^#+[[:space:]]/ { sub(/^#+[[:space:]]*/, ""); print; exit }
+        ' "$f" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
+        [ -z "$title" ] && title="$(basename "$f" .md)"
+        echo "   - ${_pfx}$(basename "$f") — ${title}"
+      done
+}
+
+# Per-repo threads: .claude/threads/ in the WORKING directory, a different layer from the
+# project's context repo. A code repo's narrative travels with its own clone and is readable by
+# anyone who has that repo without the context repo, which is the whole reason it lives there
+# rather than as a tag in the project layer.
+#
+# Skipped when the working directory IS the context repo, where the two would be the same
+# material listed twice under different names.
+REPO_THREADS=""
+if [ -n "$ROOT" ] && [ -d "$proj/.claude/threads" ]; then
+  _pp="$(cd "$proj" 2>/dev/null && pwd -P)"; _rp="$(cd "$ROOT" 2>/dev/null && pwd -P)"
+  [ "$_pp" != "$_rp" ] && REPO_THREADS="$proj/.claude/threads"
+fi
+REPO_N=0
+[ -n "$REPO_THREADS" ] && REPO_N="$(find "$REPO_THREADS" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null | wc -l | tr -d ' ')"
+
 # The assistant roster, computed here rather than inside the payload because it has TWO
 # consumers: the payload (which the model reads) and systemMessage (which the USER reads). The
 # roster was originally emitted into the payload alone, which put it 8% of the way into a 70KB
@@ -502,6 +536,7 @@ if [ -n "$ASST_NAMES" ]; then
 fi
 [ -n "$ASST_NOTE" ] && ASST_SUMMARY=" · ⚠ roster not read (no node)"
 [ "${HO_N:-0}" -gt 0 ] 2>/dev/null && ASST_SUMMARY="$ASST_SUMMARY · handoff: $HO_N undrained"
+[ "${REPO_N:-0}" -gt 0 ] 2>/dev/null && ASST_SUMMARY="$ASST_SUMMARY · repo threads: $REPO_N"
 
 INC_SUMMARY=""
 [ -n "$INC_NAMES" ] && INC_SUMMARY=" + included: $INC_NAMES${INC_STALE:+ (some STALE or unavailable)}"
@@ -542,24 +577,21 @@ if [ -d "$ROOT/threads" ]; then
   # file: a working assistant writes daily, and without it would fill every slot within a week,
   # pushing the repo's ordinary threads out of every session start — silently, since the list
   # never says how much it is hiding. Counted below instead; /assistant loads a role's history.
-  find "$ROOT/threads" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' ! -name '*-asst-*' -print 2>/dev/null \
-    | sort | tail -n 6 \
-    | while IFS= read -r f; do
-        # Title comes from the front-matter `title:` if the file has a block, else the
-        # first markdown heading. Taking line 1 blindly prints "---" for every file
-        # written since the front-matter convention landed.
-        title="$(awk '
-          NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
-          fm == 1 && /^---[[:space:]]*$/ { fm = 0; next }
-          fm == 1 && /^title:[[:space:]]/ { sub(/^title:[[:space:]]*/, ""); print; exit }
-          fm == 0 && /^#+[[:space:]]/ { sub(/^#+[[:space:]]*/, ""); print; exit }
-        ' "$f" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
-        [ -z "$title" ] && title="$(basename "$f" .md)"
-        echo "   - threads/$(basename "$f") — ${title}"
-      done
+  list_threads "$ROOT/threads" "threads/" 6
   ASST_N="$(find "$ROOT/threads" -maxdepth 1 -name '*-asst-*.md' -print 2>/dev/null | wc -l | tr -d ' ')"
   [ "${ASST_N:-0}" -gt 0 ] 2>/dev/null && echo "   (+$ASST_N assistant thread(s), not listed — adopt the role with /assistant)"
   [ -f "$ROOT/threads/INDEX.md" ] && echo "   (full list: threads/INDEX.md)"
+fi
+
+# The repo's own layer, after the project's: the primary context stays primary, and the heading
+# says which is which so a decision about the product and a note about this codebase are never
+# read as the same kind of thing.
+if [ -n "$REPO_THREADS" ] && [ "${REPO_N:-0}" -gt 0 ] 2>/dev/null; then
+  echo
+  echo "This repo's own threads (.claude/threads/ in $proj — travels with THIS repo, not with the project context):"
+  list_threads "$REPO_THREADS" ".claude/threads/" 6
+  [ "${REPO_N:-0}" -gt 6 ] 2>/dev/null && echo "   ($REPO_N in total)"
+  echo "   Decisions about the product still belong in $CONTEXT_REMOTE; these are about this codebase."
 fi
 echo
 # The mirror is the only structured state a Notion *guest* can see (guests get empty results from

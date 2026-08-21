@@ -5,6 +5,7 @@
 //   node thread-index.mjs <context-repo-root>                 # skeleton, gist left as TODO
 //   node thread-index.mjs <root> --gists gists.json           # fill from {"<file>": {"status","gist"}}
 //   node thread-index.mjs <root> --gists g.json --write       # write threads/INDEX.md
+//   node thread-index.mjs <repo> --dir .claude/threads         # a repo's own thread layer
 //
 // Prints the index to stdout unless --write. Filenames are expected as YYYY-MM-DD-<topic>.md;
 // anything else is still listed, just without a date.
@@ -21,8 +22,13 @@ const argv = process.argv.slice(2);
 const flags = new Set();
 const positional = [];
 let gistsPath = null;
+// --dir points the index at a repo's OWN thread layer (.claude/threads) instead of a context
+// repo's threads/. That layer has no Archive/, so the archived scan is skipped rather than
+// reported empty: "0 archived" would imply an archive exists and is empty.
+let dirArg = null;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--gists') gistsPath = argv[++i];
+  else if (argv[i] === '--dir') dirArg = argv[++i];
   else if (argv[i].startsWith('--')) flags.add(argv[i].slice(2));
   else positional.push(argv[i]);
 }
@@ -72,6 +78,36 @@ function topicOf(text, filename) {
   return filename.replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
 }
 
+// Status and gist are judgement, and judgement already spent is not free to spend again. A bare
+// --write used to replace every existing gist with a TODO, so rebuilding an index that had them
+// meant re-deriving twelve summaries by hand — which is why an index goes stale rather than
+// being rebuilt. So: read whatever INDEX.md is already there and carry its answers forward,
+// keyed on PATH, which is stable when a title is edited.
+//
+// Precedence: --gists (an explicit answer now) beats the existing file, which beats TODO.
+// Lines that do not parse are counted and reported rather than dropped in silence: losing a
+// hand-written gist without saying so is exactly the failure this is fixing.
+const INDEX_LINE = /^-\s+(\S+)\s+·\s+(.*?)\s+·\s+([^·]*?)\s+·\s+(.*?)\s+·\s+`([^`]+)`\s*$/;
+let carriedUnparsed = 0;
+function readExistingIndex(dir) {
+  const file = join(root, ...dir.split('/'), 'INDEX.md');
+  const map = new Map();
+  if (!existsSync(file)) return map;
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    if (!line.startsWith('- ')) continue;
+    if (line.trim() === '- _none_') continue;
+    const m = INDEX_LINE.exec(line);
+    if (!m) { carriedUnparsed++; continue; }
+    const [, , , status, gist, path] = m;
+    // A carried TODO is not an answer; leave it to be regenerated.
+    map.set(path, {
+      status: status.startsWith('TODO:') ? undefined : status,
+      gist: gist.startsWith('TODO:') ? undefined : gist,
+    });
+  }
+  return map;
+}
+
 function scan(dir, archived) {
   const abs = join(root, dir);
   if (!existsSync(abs)) return [];
@@ -80,7 +116,13 @@ function scan(dir, archived) {
     .sort()
     .map((f) => {
       const text = readFileSync(join(abs, f), 'utf8');
-      const meta = gists[f] ?? gists[`${dir}/${f}`] ?? {};
+      const explicit = gists[f] ?? gists[`${dir}/${f}`] ?? {};
+      const carried = existing.get(`${dir}/${f}`) ?? {};
+      const meta = {
+        status: explicit.status ?? carried.status,
+        gist: explicit.gist ?? carried.gist,
+      };
+      if (carried.gist && !explicit.gist) carriedCount++;
       return {
         date: /^(\d{4}-\d{2}-\d{2})/.exec(f)?.[1] ?? '—',
         topic: topicOf(text, f),
@@ -100,8 +142,11 @@ function scan(dir, archived) {
     });
 }
 
-const active = scan('threads', false);
-const archived = scan('Archive/threads', true);
+const THREAD_DIR = dirArg ?? 'threads';
+const existing = readExistingIndex(THREAD_DIR);
+let carriedCount = 0;
+const active = scan(THREAD_DIR, false);
+const archived = dirArg ? [] : scan('Archive/threads', true);
 const line = (t) => `- ${t.date} · ${t.topic}${t.owner ? ` · ${t.kind}: ${t.owner}` : ''} · ${t.status} · ${t.gist} · \`${t.path}\``;
 
 const out = [
@@ -112,14 +157,28 @@ const out = [
   `## Active (${active.length})`,
   ...(active.length ? active.map(line) : ['- _none_']),
   '',
-  `## Archived (${archived.length})`,
-  ...(archived.length ? archived.map(line) : ['- _none_']),
-  '',
+  // The repo layer has no Archive/, so the section is omitted rather than shown empty: a
+  // "## Archived (0)" implies an archive exists and happens to be empty, a different claim.
+  ...(dirArg ? [] : [
+    `## Archived (${archived.length})`,
+    ...(archived.length ? archived.map(line) : ['- _none_']),
+    '',
+  ]),
 ].join('\n');
 
 if (flags.has('write')) {
-  writeFileSync(join(root, 'threads', 'INDEX.md'), out);
-  console.error(`Wrote threads/INDEX.md — ${active.length} active, ${archived.length} archived.`);
+  writeFileSync(join(root, ...THREAD_DIR.split('/'), 'INDEX.md'), out);
+  console.error(`Wrote ${THREAD_DIR}/INDEX.md — ${active.length} active${dirArg ? '' : `, ${archived.length} archived`}.`);
 } else {
   console.log(out);
+}
+
+const missing = [...active, ...archived].filter((t) => t.gist.startsWith('TODO:')).length;
+console.error(
+  `${active.length + archived.length} thread(s): ${carriedCount} gist(s) carried from the existing index`
+  + `, ${missing} still needing one.`);
+if (carriedUnparsed) {
+  console.error(
+    `WARNING: ${carriedUnparsed} line(s) in the existing INDEX.md could not be parsed, so any`
+    + ` gist they held was NOT carried forward. Check them before writing.`);
 }

@@ -33,13 +33,39 @@ succeeds (ask before the write, not before a push), and appending means read the
 write the whole thing back — never rebuild it from memory. No connector either? Say so and
 keep the draft in the reply rather than inventing a destination.
 
-## 2. New thread, or update an existing one?
+## 2. Which layer: the project's, or this repo's?
+
+Two thread layers exist and they answer different questions.
+
+- **The project's `threads/`**, in the context repo. Decisions about the product, the research
+  or the direction. Audience: whoever thinks about the project.
+- **The repo's own `.claude/threads/`**, in the working directory. How this codebase works, what
+  was tried in it, why the build is shaped as it is. Audience: whoever next opens this repo.
+  It travels with a clone of THAT repo, so it reaches someone who does not have the context repo
+  at all.
+
+**The audience decides, not the subject matter.** A note about the website that is really a
+product decision belongs to the project; a product-shaped question about how to structure the
+static export belongs to the repo.
+
+Default to the **project** layer when the working directory is the context repo, or when the
+work spans repos. Default to the **repo** layer when the session is in a code repo and the work
+was about that code. Genuinely ambiguous, or spanning both: ask, and say which way you are
+leaning and why.
+
+The repo layer is plain markdown in `.claude/threads/`, same filename and front-matter
+convention. Create the directory if it is absent; `.claude/` is already committed in these repos
+alongside `.claude/skills/`, so a thread there is shared rather than local. **Check it is not
+gitignored** before writing: a `/.claude/*` ignore rule would make the thread invisible to
+everyone else, silently, which is the failure this layer exists to avoid.
+
+## 3. New thread, or update an existing one?
 
 List `$ROOT/threads/*.md`. If one clearly covers this topic, **append** a dated section —
 `## YYYY-MM-DD — what changed` — without rewriting earlier content. Otherwise create
 `threads/YYYY-MM-DD-short-topic.md` (kebab-case; `-2` if taken). Genuinely ambiguous → ask.
 
-## 3. Write it (house style)
+## 4. Write it (house style)
 
 - **Write for a stranger** — zero assumed context, acronyms spelled out on first use.
 - Structure: what happened / where we got to, then **Decisions** and **Follow-ups / open
@@ -50,7 +76,7 @@ List `$ROOT/threads/*.md`. If one clearly covers this topic, **append** a dated 
 - **No angle brackets in any front-matter value** — ingesters read `[token]`-style angle
   brackets as tags and silently drop the field. Use `[topic]` or `{topic}`.
 
-## 4. Commit + push
+## 5. Commit + push
 
 Stage **only the thread file(s) you touched**:
 
@@ -60,7 +86,7 @@ git -C "$ROOT" add threads/FILE && git -C "$ROOT" commit -m "threads: topic" && 
 
 Report the file path and the pushed commit.
 
-## 5. Remind (don't do automatically)
+## 6. Remind (don't do automatically)
 
 If a conclusion has **settled**, suggest promoting it into `memory.md`. If the project has a
 structured decision log (see its `context.json`), suggest recording the decision there too.

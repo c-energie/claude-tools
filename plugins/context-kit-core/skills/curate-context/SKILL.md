@@ -85,7 +85,17 @@ Present this as a clear plan: which threads stay, which are promoted / condensed
    repo's own rule: open a pull request where the repo asks for one, else commit to the default
    branch. Report the PR / commit.
 
-## 6. Assistant and supervisor threads
+## 6. The repo's own threads are not this skill's
+
+A code repo may keep `.claude/threads/` of its own: how that codebase works, what was tried in
+it. That layer travels with its repo and is curated **in a session opened there**, not from
+here. This skill operates on the context repo's root and does not reach into a working
+directory.
+
+Say so if you notice one going stale rather than silently ignoring it. A layer nobody curates
+stops being read, and the whole point of separating the two was that each has an owner.
+
+## 7. Assistant and supervisor threads
 
 A repo with role assistants keeps their threads in this same flat `threads/` — tagged
 `assistant: [role]` (or `supervisor: [role]`), and named `YYYY-MM-DD-asst-[role]-topic.md`.
@@ -107,7 +117,7 @@ were fresh evidence — or an already-unread one becomes permanently invisible. 
 append-only; corrections are new entries that supersede old ones in their text. Archiving it is
 not a curation option.
 
-## 6. Boundaries
+## 8. Boundaries
 
 - **Never delete** a thread — archive it. **Never** rewrite an active thread's content.
 - Where the project has a structured decision log (its `context.json` declares one), decisions

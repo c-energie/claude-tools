@@ -166,6 +166,19 @@ The SessionStart hook loads `memory.md` + thread pointers automatically, with a 
 when the refresh fails — a silently stale context is the one failure mode that actively
 misleads. A project that will never have a context repo opts out with `none`; see above.
 
+### Two thread layers
+
+A **project's** threads live in its context repo: decisions about the product, the research or
+the direction. A **repo's own** threads live in `.claude/threads/` inside that repo: how this
+codebase works and what was tried in it. The session-start hook lists both, under separate
+headings, and skips the second when the working directory *is* the context repo.
+
+The audience decides which layer, not the subject. A repo's threads travel with a clone of that
+repo, so they reach someone who does not have the context repo at all, which is the reason the
+layer exists rather than being a tag in the project's `threads/`. Each layer is curated by
+whoever is standing in it: `curate-context` owns the project's and deliberately does not reach
+into a working directory.
+
 ### The cross-project layer: `include`
 
 A context repo may declare, in its `context.json`:
