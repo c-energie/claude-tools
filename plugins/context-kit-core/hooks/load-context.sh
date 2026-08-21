@@ -479,6 +479,16 @@ fi
 REPO_N=0
 [ -n "$REPO_THREADS" ] && REPO_N="$(find "$REPO_THREADS" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null | wc -l | tr -d ' ')"
 
+# The repo's own durable layer, injected rather than pointed at. A pointer in CLAUDE.md would
+# be a hint the model may or may not follow, which is the same failure as a roster sitting in a
+# payload nobody reads. Every layer therefore behaves the same way: memory is loaded, threads
+# are pointed at. Guarded on the same cwd-is-not-the-context-repo test as the threads above.
+REPO_MEMORY=""
+if [ -n "$ROOT" ] && [ -f "$proj/.claude/memory.md" ]; then
+  _pp="$(cd "$proj" 2>/dev/null && pwd -P)"; _rp="$(cd "$ROOT" 2>/dev/null && pwd -P)"
+  [ "$_pp" != "$_rp" ] && REPO_MEMORY="$proj/.claude/memory.md"
+fi
+
 # The assistant roster, computed here rather than inside the payload because it has TWO
 # consumers: the payload (which the model reads) and systemMessage (which the USER reads). The
 # roster was originally emitted into the payload alone, which put it 8% of the way into a 70KB
@@ -569,6 +579,23 @@ cat "$ROOT/memory.md"
 echo
 echo "----- end memory.md -----"
 echo
+# The deep half of the durable layer. curate-context condenses settled work into
+# Archive/history.md and calls it "read on demand, NOT injected each session" — which is lazy
+# loading by design, and until now nothing told a session the file existed. A lazy layer nobody
+# is told about is not lazy, it is lost, and worse: condensing something out of memory.md made
+# it invisible, so the safe move was always to leave memory.md long. That is why one of these
+# repos carries 292 lines of durable layer.
+#
+# So: the section headings, not the content. Enough to know whether the answer is in there and
+# to go and read it, at a cost that does not grow with the history itself. Capped, because an
+# unbounded list would recreate the problem one layer up.
+if [ -f "$ROOT/Archive/history.md" ]; then
+  HIST_LINES="$(wc -l < "$ROOT/Archive/history.md" 2>/dev/null | tr -d ' ')"
+  echo "Condensed history of settled work in Archive/history.md (${HIST_LINES:-?} lines, NOT loaded here). Read it when a question touches one of these; do not answer from silence if it might be in there:"
+  grep -E '^#{2,3} ' "$ROOT/Archive/history.md" 2>/dev/null     | sed -e 's/^#\{1,\}[[:space:]]*/   - /' | head -n 12
+  HIST_N="$(grep -cE '^#{2,3} ' "$ROOT/Archive/history.md" 2>/dev/null | tr -d ' ')"
+  [ "${HIST_N:-0}" -gt 12 ] 2>/dev/null && echo "   (+$((HIST_N - 12)) more themes)"
+fi
 [ -f "$ROOT/glossary.md" ] && echo "Vocabulary: see glossary.md in $CONTEXT_REMOTE."
 if [ -d "$ROOT/threads" ]; then
   echo "Working threads (one topic per file; newest last):"
@@ -581,6 +608,16 @@ if [ -d "$ROOT/threads" ]; then
   ASST_N="$(find "$ROOT/threads" -maxdepth 1 -name '*-asst-*.md' -print 2>/dev/null | wc -l | tr -d ' ')"
   [ "${ASST_N:-0}" -gt 0 ] 2>/dev/null && echo "   (+$ASST_N assistant thread(s), not listed — adopt the role with /assistant)"
   [ -f "$ROOT/threads/INDEX.md" ] && echo "   (full list: threads/INDEX.md)"
+fi
+
+# The repo's own durable layer, before its threads, mirroring the order the project layer uses.
+if [ -n "$REPO_MEMORY" ]; then
+  echo
+  echo "----- this repo's own .claude/memory.md (durable layer for THIS codebase) -----"
+  cat "$REPO_MEMORY" 2>/dev/null
+  echo
+  echo "----- end .claude/memory.md -----"
+  echo "Facts about the PROJECT still live in $CONTEXT_REMOTE; the file above is about this codebase."
 fi
 
 # The repo's own layer, after the project's: the primary context stays primary, and the heading

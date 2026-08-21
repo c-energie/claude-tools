@@ -143,10 +143,17 @@ function scan(dir, archived) {
 }
 
 const THREAD_DIR = dirArg ?? 'threads';
+// The archive is always a sibling of the thread directory: threads/ archives to
+// Archive/threads/, and .claude/threads/ archives to .claude/Archive/threads/. Deriving it
+// removes the special case that skipped the archive entirely for the repo layer, which was
+// only ever right while that layer had nowhere to archive to.
+const ARCHIVE_DIR = THREAD_DIR.includes('/')
+  ? `${THREAD_DIR.split('/').slice(0, -1).join('/')}/Archive/threads`
+  : 'Archive/threads';
 const existing = readExistingIndex(THREAD_DIR);
 let carriedCount = 0;
 const active = scan(THREAD_DIR, false);
-const archived = dirArg ? [] : scan('Archive/threads', true);
+const archived = scan(ARCHIVE_DIR, true);
 const line = (t) => `- ${t.date} · ${t.topic}${t.owner ? ` · ${t.kind}: ${t.owner}` : ''} · ${t.status} · ${t.gist} · \`${t.path}\``;
 
 const out = [
@@ -157,18 +164,18 @@ const out = [
   `## Active (${active.length})`,
   ...(active.length ? active.map(line) : ['- _none_']),
   '',
-  // The repo layer has no Archive/, so the section is omitted rather than shown empty: a
+  // Omitted rather than shown empty when no archive directory exists at all: a
   // "## Archived (0)" implies an archive exists and happens to be empty, a different claim.
-  ...(dirArg ? [] : [
+  ...(existsSync(join(root, ...ARCHIVE_DIR.split('/'))) ? [
     `## Archived (${archived.length})`,
     ...(archived.length ? archived.map(line) : ['- _none_']),
     '',
-  ]),
+  ] : []),
 ].join('\n');
 
 if (flags.has('write')) {
   writeFileSync(join(root, ...THREAD_DIR.split('/'), 'INDEX.md'), out);
-  console.error(`Wrote ${THREAD_DIR}/INDEX.md — ${active.length} active${dirArg ? '' : `, ${archived.length} archived`}.`);
+  console.error(`Wrote ${THREAD_DIR}/INDEX.md — ${active.length} active, ${archived.length} archived.`);
 } else {
   console.log(out);
 }

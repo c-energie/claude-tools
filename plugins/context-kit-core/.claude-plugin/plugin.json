@@ -1,6 +1,6 @@
 {
   "name": "context-kit-core",
   "description": "Core context-repo machinery for Claude Code / Cowork: loads a project's context repo (memory.md, threads, mirrors) at session start, refreshes it mid-session, and saves working threads back. Which repo is per-project via PROJECT_CONTEXT_REPO. Project-specific layers (e.g. a Notion layer) install alongside this.",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "author": { "name": "c-energie" }
 }

@@ -166,6 +166,24 @@ The SessionStart hook loads `memory.md` + thread pointers automatically, with a 
 when the refresh fails — a silently stale context is the one failure mode that actively
 misleads. A project that will never have a context repo opts out with `none`; see above.
 
+### What is loaded eagerly, and what is announced
+
+`memory.md` is **injected** every session, at both the project and repo layer: it is the
+authoritative durable layer, and a missing authoritative fact produces a confidently wrong
+answer with nothing to signal the gap.
+
+Everything deeper is **announced rather than loaded** — threads by title, the `notion/` mirror
+by pointer, and `Archive/history.md` by its section headings. `curate-context` has always
+described that file as "read on demand, NOT injected each session", but nothing used to tell a
+session it existed, so condensing anything out of `memory.md` made it invisible. That made the
+safe move always to leave `memory.md` long, which is how a durable layer reaches 292 lines and
+92% of a payload. The headings cost about 3% of the file they stand for, and they are what makes
+curation lossless from a session's point of view.
+
+Lazy-loading `memory.md` itself is deliberately **not** done. Threads can be lazy because
+missing one loses depth; authoritative facts cannot, because a topic index fails exactly when a
+question is phrased in a way it did not anticipate, and fails silently.
+
 ### Two thread layers
 
 A **project's** threads live in its context repo: decisions about the product, the research or
@@ -175,9 +193,25 @@ headings, and skips the second when the working directory *is* the context repo.
 
 The audience decides which layer, not the subject. A repo's threads travel with a clone of that
 repo, so they reach someone who does not have the context repo at all, which is the reason the
-layer exists rather than being a tag in the project's `threads/`. Each layer is curated by
-whoever is standing in it: `curate-context` owns the project's and deliberately does not reach
-into a working directory.
+layer exists rather than being a tag in the project's `threads/`.
+
+Each layer mirrors the other:
+
+| | project | repo |
+| --- | --- | --- |
+| working notes | `threads/` | `.claude/threads/` |
+| durable layer | `memory.md` | `.claude/memory.md` |
+| settled work | `Archive/threads/` | `.claude/Archive/threads/` |
+
+Both durable layers are **injected** by the hook rather than pointed at, so neither depends on
+the model choosing to follow a link. `.claude/memory.md` is the promotion target rather than
+`CLAUDE.md`, which stays instructions for working in the repo rather than becoming a changelog.
+
+**`curate-context` curates exactly one layer: whichever the session is standing in.** A sweep
+across a project's code repos was considered and rejected. The context repo does not know which
+code repos belong to it, since the link runs child to parent only; there is no way to resolve a
+code repo's name to a checkout on an arbitrary machine; and judging whether a thread has settled
+needs the code in front of you.
 
 ### The cross-project layer: `include`
 

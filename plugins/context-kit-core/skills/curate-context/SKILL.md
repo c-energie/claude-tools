@@ -85,15 +85,53 @@ Present this as a clear plan: which threads stay, which are promoted / condensed
    repo's own rule: open a pull request where the repo asks for one, else commit to the default
    branch. Report the PR / commit.
 
-## 6. The repo's own threads are not this skill's
+## 6. Two modes: which layer this session curates
 
-A code repo may keep `.claude/threads/` of its own: how that codebase works, what was tried in
-it. That layer travels with its repo and is curated **in a session opened there**, not from
-here. This skill operates on the context repo's root and does not reach into a working
-directory.
+**The session's working directory decides, and it curates exactly one layer.**
 
-Say so if you notice one going stale rather than silently ignoring it. A layer nobody curates
-stops being read, and the whole point of separating the two was that each has an owner.
+- **In the context repo** — curate the project's `threads/`, promoting into `memory.md` and
+  archiving to `Archive/threads/`. Everything above describes this mode.
+- **In a code repo** — curate that repo's own `.claude/threads/`, promoting into
+  `.claude/memory.md` and archiving to `.claude/Archive/threads/`. Nothing else.
+
+Never both. A sweep across a project's code repos was considered and rejected: the context repo
+does not know which code repos belong to it (the link runs child to parent only), there is no
+way to resolve a code repo's name to a checkout on an arbitrary machine, and the judgement of
+whether a thread has settled needs the code in front of you. Curating from a distance produces
+confident wrong archiving.
+
+### Code-repo mode, in detail
+
+**Touch only these paths**, and say so before starting:
+
+```
+.claude/threads/           the working layer
+.claude/Archive/threads/   settled threads, git mv'd here
+.claude/memory.md          the durable layer this promotes into
+```
+
+Never source, tests, build config or `CLAUDE.md`. A curation skill loose in a codebase is a bad
+shape, and the fact that it rewrites prose elsewhere is exactly why the boundary is stated
+rather than assumed.
+
+**`.claude/memory.md` is the promotion target, not `CLAUDE.md`.** `CLAUDE.md` is instructions
+for working in the repo; a durable record of what was tried and concluded is a different kind of
+thing, and merging them turns the instructions into a changelog. Create `.claude/memory.md` if
+absent, with a `_Last reviewed:_` line. The session-start hook injects it, so it is loaded
+rather than merely pointed at, which means the same discipline applies: keep it tight.
+
+**Archiving alone is a complete outcome.** Not every settled thread has a durable fact in it.
+"Here is how the nav rework went" is finished work, not a standing instruction, and archiving it
+without promoting anything is the right answer.
+
+Rebuild that layer's index with the same script, pointed at it:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/thread-index.mjs" "$PWD" --dir .claude/threads --gists g.json --write
+```
+
+**Check `.claude/` is not gitignored** before writing. A `/.claude/*` rule would make the whole
+layer invisible to everyone else, silently.
 
 ## 7. Assistant and supervisor threads
 
@@ -124,6 +162,10 @@ not a curation option.
   belong there — `log-decision`, not `memory.md`; summarise only the load-bearing ones in
   `memory.md`.
 - Stay faithful — condense and reorganise; don't invent conclusions a thread didn't actually reach.
+
+**Curating the other layer is this skill too**, run from the other directory: open a session in
+the code repo to curate its threads, or in the context repo to curate the project's. If you
+notice the layer you are *not* in going stale, say so rather than reaching into it.
 
 **Not this skill:** writing up the current session is `save-thread`; re-reading the context is
 `refresh-context`; recording a transferable lesson for a supervisor is `assistant-lesson`;
