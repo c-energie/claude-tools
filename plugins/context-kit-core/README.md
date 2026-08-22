@@ -147,6 +147,7 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 
 | Skill | What it does |
 | --- | --- |
+| `init-context` | Stamp a NEW context repo from `c-energie/context-template` — and, on the first run, the cross-project second brain (asks before creating anything) |
 | `context-setup` | First-run wiring and diagnosis: how this project names its repo, is it reachable, load it now |
 | `context-doctor` | Health-check an already-linked repo for the drift that never announces itself; fixes derivable config keys only |
 | `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
@@ -239,10 +240,28 @@ ff-only/timeout/credential rules with its own per-repo STALE or UNAVAILABLE bann
 - Parsing the array needs `node`; without it the payload says loudly that the includes were
   skipped rather than quietly omitting them.
 
-## Roadmap
+### Creating the repos in the first place — `init-context`
 
-Planned here: `init-context` (stamp a new context repo from `c-energie/context-template` and
-wire it up end to end — the one remaining hand-run checklist).
+`scripts/init-context.mjs` stamps `c-energie/context-template` into a real repo, clones it to
+`~/.context/[owner]/[repo]` where the resolver looks, fills the template placeholders, applies
+the derivable `context-doctor` fixes, and pushes. **Nothing reaches the network without
+`--yes`:** the default run is a plan, and the skill asks before passing it.
+
+The **first** stamp on an account also bootstraps the cross-project **second brain** at
+`~/.context/[login]/second-brain` — the same template plus `assets/second-brain/`, the overlay
+that makes a context repo the layer *above* the projects (an `include` list, a `handoff/`
+outbox, the read-only contract in its `CLAUDE.md`). Three properties are load-bearing:
+
+- **Owned by the authenticated user, not the project's owner.** A project context repo often
+  lives under an org; a personal layer governed by one project's org is the wrong shape, and
+  invisible to the next project's owner.
+- **Stamped once, then adopted.** An existing repo — on GitHub or already cloned — is taken as
+  it is, never re-stamped. Re-running for a second project is safe by construction.
+- **The `include` list starts empty and is never written for you.** The script prints the exact
+  edit and stops: an *accidental* cross-project load is the failure mode the include contract
+  exists to prevent, so every entry is a deliberate, committed act.
+
+## Roadmap
 
 A project must never enable two plugins whose hooks both load context — the context loads
 twice.

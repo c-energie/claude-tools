@@ -1,0 +1,15 @@
+{
+  "_comment_overlay": "Merged into the stamped context.json by init-context.mjs (top-level keys, this file's values winning), then deleted from the working tree. It carries only what makes a context repo the CROSS-PROJECT layer rather than a project's own.",
+
+  "_comment_include": "The cross-project layer: sessions here also load each included repo's memory.md, glossary.md and threads/INDEX.md (read-only; one level, never recursive). Explicit list only — never filesystem discovery. Route-agnostic: entries are owner/repo names, nothing here may assume a local clone. Starts EMPTY: every entry is added by hand, because an accidental cross-project load is the failure mode this contract exists to prevent.",
+  "include": [],
+
+  "_comment_roles": "The canonical role vocabulary for assistants, and the authority children reference by exact string. Aliases make a rename additive. Without a registry, the same role spelled two ways becomes two half-empty supervisors that never merge and nothing reports it. Populated by the assistant skill on first use.",
+  "roles": {},
+
+  "_comment_assistants": "Role assistants this repo hosts. Declared, never discovered: a folder nobody declared is not an assistant. This repo holds the CORE half of each role; a project repo declaring the same role is authoritative about that project.",
+  "assistants": {},
+
+  "_comment_supervisors": "Cross-project roles distilled HERE from each included repo's assistants/[role]/LESSONS.md. Sources are the include list plus this repo. threshold overrides the self-tuned value in supervisors/[role]/memory.md front-matter; null leaves it tuned.",
+  "supervisors": {}
+}

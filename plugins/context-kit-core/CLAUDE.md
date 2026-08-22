@@ -23,6 +23,7 @@ bash scripts/plugin-repo.sh --plugin context-kit-core   # ...or one plugin's own
 node scripts/list-plugins.mjs "$ROOT" --brief   # the plugin roster, read from the checkout — never hand-written
 node scripts/list-plugins.mjs "$ROOT"           # ...plus each plugin's skills (--json)
 node scripts/dates.mjs today
+node scripts/init-context.mjs owner/repo            # PLAN a new context repo (+ the second brain, once); --yes does it
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
 node scripts/context-doctor.mjs "$ROOT" --include   # health-check a context repo (--json, --fix, --today)
 node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
@@ -72,4 +73,9 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   `start-context-session.sh` are the same menu written for two shells, so `check-plugin.mjs`'s
   drift rule (which compares byte-for-byte) deliberately does not cover them — only they can
   make a `.lnk` and a `.desktop`/`.command` respectively. Change both, or neither.
+- **The second brain is stamped once and then adopted.** `init-context` bootstraps
+  `~/.context/[login]/second-brain` from the template plus `assets/second-brain/` only when no
+  such repo exists locally or on GitHub; an existing one is cloned and left exactly as it is.
+  It never writes that repo's `include` list — it prints the edit. Owner is the authenticated
+  GitHub user, never the project's owner, and never inferred from a git remote.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).
