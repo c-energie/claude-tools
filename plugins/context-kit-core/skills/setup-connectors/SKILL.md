@@ -30,8 +30,15 @@ project's `.claude/settings*.json`) names the repo, and its managed clone lives 
 odd layouts, not the normal route.
 
 If it can't find `context.json`, that's `context-setup`'s job, not this one — the context repo
-isn't configured. If it finds the file but there's no `connections` block, offer to add one;
-the block is what stops a multi-workspace machine writing to the wrong place.
+isn't configured. If it finds the file but there's **no `connections` key at all**, offer to add
+one; the block is what stops a multi-workspace machine writing to the wrong place.
+
+**`"connections": {}` is not the same thing, and must not be treated as one.** An empty block is
+a decision already taken — this project declares no connections — exactly as `none` is a decision
+about the repo name rather than a missing one. The script reports it and exits 0; say so and stop
+rather than offering to fill it in. A repo whose whole safety property is holding no workspace
+credential is precisely the one that writes `{}` and means it. If the user genuinely wants to
+reopen it, `--add [provider]` names what to declare.
 
 ## 2. Provision what's missing
 

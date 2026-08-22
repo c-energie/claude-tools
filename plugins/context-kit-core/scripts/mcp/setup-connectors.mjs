@@ -13,6 +13,14 @@
 // several projects' connections from writing through the wrong one. If the block is missing,
 // this script proposes names and writes it.
 //
+// ABSENT and EMPTY are different, and never conflated — the same distinction the repo-name
+// resolvers draw between *unconfigured* and *opted out*. No `connections` key means nobody has
+// decided yet, so this offers to write one. `"connections": {}` is a decision already taken —
+// this project declares none, deliberately — so it is reported and left alone, and `--check`
+// exits 0 rather than 1. A cross-project layer that must never hold a workspace credential is
+// exactly the repo that writes `{}` and means it; treating that as an omission nags forever and
+// invites someone to "fix" it. `--add [provider]` is how a deliberate none is reopened.
+//
 // The runtime is copied out of the plugin into ~/.mcp/ before use, so the paths written into
 // the Claude configs survive a plugin update, reinstall or marketplace re-sync.
 import { createInterface } from 'node:readline/promises';
@@ -238,6 +246,8 @@ async function main() {
 
   const slug = projectSlug(contextFile, cfg);
   const connections = { ...(cfg.connections ?? {}) };
+  // Present but empty: a committed "this project declares none", not a gap to fill.
+  const declaredNone = cfg.connections !== undefined && !Object.keys(cfg.connections).length;
   const interactive = process.stdin.isTTY && !checkOnly;
   const rl = interactive ? createInterface({ input: process.stdin, output: process.stdout }) : null;
 
@@ -245,6 +255,13 @@ async function main() {
     // --- declare, if there is nothing to work from ---
     const wanted = extraProvider ? [extraProvider] : [];
     if (!Object.keys(connections).length && !wanted.length) {
+      if (declaredNone) {
+        ok('"connections": {} — this project declares no connections, deliberately.');
+        console.log('\n  Nothing to provision, and nothing wrong. Every skill that needs a');
+        console.log('  connection stands down here rather than reaching for another project.');
+        console.log('  To reopen the decision, name the provider: --add github\n');
+        return 0;
+      }
       warn('No "connections" block — nothing declared for this project yet.');
       if (!interactive) {
         console.log('\n  Add one naming the MCP server each provider should use here, e.g.');
