@@ -150,6 +150,7 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 | `init-context` | Stamp a NEW context repo from `c-energie/context-template` — and, on the first run, the cross-project second brain (asks before creating anything) |
 | `context-setup` | First-run wiring and diagnosis: how this project names its repo, is it reachable, load it now |
 | `context-doctor` | Health-check an already-linked repo for the drift that never announces itself; fixes derivable config keys only |
+| `context-status` | What is outstanding: lessons awaiting a sweep, sweeps awaiting distillation, undrained handoff, curation lag, native memory — and the skill that clears each |
 | `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
 | `save-thread` | 🔒 Write up the current work as a `threads/` entry and push (never self-triggers) |
 | `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |

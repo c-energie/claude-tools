@@ -1,6 +1,6 @@
 ---
 name: weekly-review
-description: The weekly runner — a maintained checklist of the recurring skills to run at the start or end of each week (pending queue, watch-list review, action triage, decisions due to revisit, periodic tidy-ups, mirror sync). Run when the user says "weekly review", "start of week", "end of week", "what do I need to run this week", or "run my weekly skills".
+description: The weekly runner — a maintained checklist of the recurring skills to run at the start or end of each week (outstanding-queue count, pending queue, watch-list review, action triage, decisions due to revisit, periodic tidy-ups, mirror sync). Run when the user says "weekly review", "start of week", "end of week", "what do I need to run this week", or "run my weekly skills".
 ---
 
 # Weekly review — run these each week
@@ -27,6 +27,12 @@ than reporting a full run.
    1 and 8 read and write that checkout, and a session left open (or one whose start-of-session
    load warned it was stale) works from a copy that predates whatever was pushed this week. Cheap,
    read-only, and it says in a line if nothing changed. *Always run this, first.*
+0b. **`context-status`** (context-kit-core) — count what has built up across the context ladder:
+   lessons awaiting a sweep, sweeps awaiting distillation, undrained handoff items, curation lag,
+   native memory. It writes nothing, and it is what makes the judgement calls below evidence-based
+   rather than a feeling — item 10 especially, which otherwise gets skipped every week until the
+   week it is a big job. Numbered `0b` rather than inserted as `1` so the cross-references in the
+   items below keep pointing at what they mean. *Always run this, second.*
 1. **`process-pending`** — transfer what was queued in the context repo's `pending/` folder into
    Notion. **First, deliberately:** workspace guests write to the queue instead of to Notion, so
    anything they logged this week is invisible to items 2–4 until this has run. Skip only if the
@@ -53,7 +59,9 @@ than reporting a full run.
    plugin and the project's Slack connection; skip the line silently if either is absent. Offer
    it — it never posts unprompted.
 10. **`curate-context`** (context-kit-core) — only about monthly, or when `threads/` has grown
-    unwieldy. Offer it if it hasn't run in a few weeks; skip most weeks.
+    unwieldy. Offer it if it hasn't run in a few weeks; skip most weeks. Item 0b prints the two
+    numbers that decide it: threads since the last review, and whether `threads/INDEX.md` has
+    fallen behind what is on disk.
 
 ## Keeping the list current
 

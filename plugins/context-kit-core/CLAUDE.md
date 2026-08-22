@@ -26,6 +26,7 @@ node scripts/dates.mjs today
 node scripts/init-context.mjs owner/repo            # PLAN a new context repo (+ the second brain, once); --yes does it
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
 node scripts/context-doctor.mjs "$ROOT" --include   # health-check a context repo (--json, --fix, --today)
+node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every queue (--json, --role, --no-memory)
 node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
 node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not yet distilled
 node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion
