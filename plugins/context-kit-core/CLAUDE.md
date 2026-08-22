@@ -78,4 +78,13 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   such repo exists locally or on GitHub; an existing one is cloned and left exactly as it is.
   It never writes that repo's `include` list — it prints the edit. Owner is the authenticated
   GitHub user, never the project's owner, and never inferred from a git remote.
+- **`connections` is ENFORCED, not merely announced.** `hooks/connection-gate.mjs` runs
+  `PreToolUse` on every `mcp__*` call and denies any connector that is not the one the
+  project's `connections` declares for that provider. The policy is *derived* from
+  `context.json` (falling back to the marker's mirrored copy, which is what reaches a Cowork
+  sandbox) — never a hand-written deny list, which enumerates the others and is stale the day
+  a connection is added. It **fails open and says so on stderr** when the policy cannot be
+  read: a gate that blocked every MCP call on a missing checkout would be worse than none.
+  `connections: {}` denies every provider connector; an absent `connections` key denies
+  nothing — the same absent-versus-empty distinction drawn everywhere else.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).

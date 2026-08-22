@@ -261,6 +261,34 @@ outbox, the read-only contract in its `CLAUDE.md`). Three properties are load-be
   edit and stops: an *accidental* cross-project load is the failure mode the include contract
   exists to prevent, so every entry is a deliberate, committed act.
 
+### The connection gate
+
+`connections` used to be enforced by *telling* the model to respect it: the session payload says
+"use only what it declares", and nothing checked. The only real gate was a `permissions.deny` list
+hand-written per repo, which enumerates *the others* — so it is written against the connections
+that existed the day it was written, and goes stale silently in the dangerous direction.
+
+`hooks/connection-gate.mjs` (`PreToolUse`, matcher `mcp__.*`) derives the decision instead:
+
+| Situation | Outcome |
+| --- | --- |
+| server is the project's declared connection for that provider | pass, silently |
+| server resembles no provider the project knows | pass, silently |
+| server is another project's connector for a declared provider | **deny**, naming the one to use |
+| provider not declared, `connections` non-empty | **deny** |
+| `connections: {}` (a deliberate "none") | **deny** every provider connector |
+| no `connections` key at all | pass — nobody has decided |
+| policy unreadable (no repo, no clone, broken JSON) | pass, with the reason on stderr |
+
+Two properties are load-bearing. It **fails open and says why**, because a gate that blocks every
+MCP call the moment a checkout is missing is worse than no gate and breaks the hook contract. And
+it reads `context.json` *or* the `.claude/context-project.json` marker, whose `connections` the
+session-start hook already mirrors — which is what makes it the only mechanism that reaches
+**Cowork**, where there is no checkout and so no `.claude/settings.json` to carry permissions.
+
+A `permissions.deny` list still works and still composes; it is simply no longer the only thing
+standing between a session and another project's workspace.
+
 ## Roadmap
 
 A project must never enable two plugins whose hooks both load context — the context loads
