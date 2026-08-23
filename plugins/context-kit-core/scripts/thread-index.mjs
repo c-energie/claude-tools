@@ -87,7 +87,19 @@ function topicOf(text, filename) {
 // Precedence: --gists (an explicit answer now) beats the existing file, which beats TODO.
 // Lines that do not parse are counted and reported rather than dropped in silence: losing a
 // hand-written gist without saying so is exactly the failure this is fixing.
-const INDEX_LINE = /^-\s+(\S+)\s+·\s+(.*?)\s+·\s+([^·]*?)\s+·\s+(.*?)\s+·\s+`([^`]+)`\s*$/;
+//
+// The owner segment is OPTIONAL and must be matched explicitly, because this file has to
+// re-parse its own output. A thread tagged `assistant:` or `supervisor:` emits SIX fields, not
+// five; without the optional group the parser read the owner as the status and carried
+// "supervisor: editor" forward as a status — a line that still matched, so carriedUnparsed
+// stayed 0 and nothing was reported. Latent until the first owner-bearing line was generated
+// (2026-08-23): the three that existed had been hand-written into an index, five fields wide.
+const INDEX_LINE =
+  /^-\s+(\S+)\s+·\s+(.*?)\s+·\s+(?:(?:assistant|supervisor):\s*[^·]+?\s+·\s+)?([^·]*?)\s+·\s+(.*?)\s+·\s+`([^`]+)`\s*$/;
+// Belt and braces for the same failure: a status is never an owner tag, so if one ever appears
+// there again the line is treated as unparsed and COUNTED, rather than silently overwriting a
+// real status. A format change should cost a warning, not a column.
+const OWNER_AS_STATUS = /^(assistant|supervisor):/;
 let carriedUnparsed = 0;
 function readExistingIndex(dir) {
   const file = join(root, ...dir.split('/'), 'INDEX.md');
@@ -99,6 +111,7 @@ function readExistingIndex(dir) {
     const m = INDEX_LINE.exec(line);
     if (!m) { carriedUnparsed++; continue; }
     const [, , , status, gist, path] = m;
+    if (OWNER_AS_STATUS.test(status)) { carriedUnparsed++; continue; }
     // A carried TODO is not an answer; leave it to be regenerated.
     map.set(path, {
       status: status.startsWith('TODO:') ? undefined : status,
