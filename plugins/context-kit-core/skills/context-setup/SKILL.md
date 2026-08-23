@@ -14,7 +14,8 @@ the context now, and fixes gaps with the user.
 - `PROJECT_CONTEXT_REPO` in the environment.
 - The project's `.claude/settings.local.json` / `.claude/settings.json` env block.
 - A marker file — `context-project.json` (JSON: `contextRepo`, plus an optional
-  `connections` map naming the MCP connection per provider), or one-line `.context-repo` /
+  `connections` map naming the MCP connection per provider and an optional `threads`
+  routing flag, see below), or one-line `.context-repo` /
   `context-repo.txt` — in `.claude/` (where the hook generates the context repo's own marker),
   the working directory
   or the attached project files. Layouts differ by surface; look in `/mnt/project/`,
@@ -26,6 +27,24 @@ the context now, and fixes gaps with the user.
 Multiple channels disagreeing is worth surfacing: the precedence is env → settings → marker.
 A channel holding `none` (or `off` / `false` / `no` / `-`) is not a misconfiguration: it is
 this project saying it deliberately has no context repo, and the hook stays silent for it.
+
+### Thread routing, the second setting a project can carry
+
+Separate from *which* repo, and easy to miss because nothing complains when it is absent:
+`PROJECT_CONTEXT_THREADS` says **where this project's working notes go** — `repo`
+(`.claude/threads/` inside the working repo), `context` (the context repo's `threads/`), or
+nothing at all, the default, where `save-thread` picks by audience. Same ladder, same
+precedence: env, then `.claude/settings*.json`, then a `"threads"` key in a JSON marker.
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --threads
+```
+
+Set it to `context` for a repo that is **shared as a tool** rather than worked on as a project.
+There a thread in `.claude/threads/` ships one person's dated working notes to everyone who
+clones it, and nothing in the thread reveals that, because it is a fact about the repo's
+distribution. Offer it when someone says a repo is a tool others install — and flag the one
+combination that resolves to nowhere: `context` with a context repo of `none`.
 
 ## 2. Nothing found? Configure it with the user
 

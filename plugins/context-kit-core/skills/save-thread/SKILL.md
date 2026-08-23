@@ -44,6 +44,30 @@ Two thread layers exist and they answer different questions.
   It travels with a clone of THAT repo, so it reaches someone who does not have the context repo
   at all.
 
+**Check the routing before judging it — a repo can have decided already:**
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --threads
+```
+
+- **`context`** — the repo layer is **off**. Write to the project's `threads/`, whatever the
+  subject. This repo is *shared as a tool* rather than worked on as a project, so a thread in
+  `.claude/threads/` would ship one person's dated working notes to everyone who clones it.
+  Nothing in a thread's content reveals that — it is a fact about the repo's distribution — which
+  is exactly why it is configured rather than judged. Name the repo it came from in the
+  front-matter (`repo: owner/name`), so the project's `threads/` stays readable once several
+  tools write into it.
+- **`repo`** — write to `.claude/threads/`, whatever the subject.
+- **`auto`** — nothing configured; judge it as below.
+
+It prints in one line without touching git or the network, and it still answers for a project
+whose context repo is `none`. **`context` with a context repo of `none` is a contradiction** —
+threads are routed somewhere that does not exist. Say so and stop. Do **not** fall back to
+`.claude/threads/`: writing into the shared repo is the precise outcome the flag was set to
+prevent, and doing it quietly is worse than not saving the thread.
+
+### Judging it, when the routing is `auto`
+
 **The audience decides, not the subject matter.** A note about the website that is really a
 product decision belongs to the project; a product-shaped question about how to structure the
 static export belongs to the repo.

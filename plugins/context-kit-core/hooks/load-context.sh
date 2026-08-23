@@ -42,6 +42,34 @@ is_optout() {  # $1 = the configured value; true when it means "deliberately no 
     *) return 1 ;;
   esac
 }
+# Thread routing, in step with scripts/context-repo.sh --threads: WHERE this project's working
+# notes go, which is a different question from where its context lives. `repo` = .claude/threads/
+# inside the working repo, `context` = threads/ in the context repo, absent = `auto` (save-thread
+# picks by audience, the historical behaviour). It exists for repos SHARED as tools, where the
+# repo layer's travelling property inverts and a dated working note would ship to everyone who
+# clones the thing. Only the JSON markers are read — a one-line marker has nowhere to put this.
+# One deliberate difference from the resolver: an unrecognised value falls back to `auto` in
+# silence here. The resolver names it on stderr, which is where a misconfiguration should be
+# reported; a hook that writes to stderr on every session of a mistyped repo is just noise.
+normalise_threads() {
+  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')" in
+    repo)            echo repo ;;
+    context|project) echo context ;;
+    *)               echo auto ;;
+  esac
+}
+lookup_threads() {
+  local t="${PROJECT_CONTEXT_THREADS:-}"
+  for _f in "$proj/.claude/settings.local.json" "$proj/.claude/settings.json"; do
+    [ -z "$t" ] && t="$(settings_key "$_f" PROJECT_CONTEXT_THREADS)"
+  done
+  for _m in "$proj/.claude/context-project.json" "$proj/context-project.json" \
+            "$proj"/docs/context-project.json /mnt/project/context-project.json \
+            "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/uploads/context-project.json; do
+    [ -z "$t" ] && [ -f "$_m" ] && t="$(settings_key "$_m" threads)"
+  done
+  normalise_threads "$t"
+}
 lookup_repo() {  # line 1: owner/repo (or empty); line 2: the marker file it came from (or empty)
   local r=""
   r="${PROJECT_CONTEXT_REPO:-}"
@@ -115,6 +143,9 @@ fi
 # one so the hand-off payload can say exactly which connector to read the repo with.
 GITHUB_CONN=""
 [ -n "${MARKER_SRC:-}" ] && GITHUB_CONN="$(settings_key "$MARKER_SRC" github)"
+# Resolved here, once, so the payload can state the routing rather than leaving each skill to
+# re-derive it — and so a session in a shared tool repo is told before it writes anything.
+THREADS_MODE="$(lookup_threads)"
 # The real resolver re-derives this identically; exporting pins both to the same answer even
 # if only one copy is ever updated.
 export PROJECT_CONTEXT_REPO="$CONTEXT_REMOTE"
@@ -625,10 +656,29 @@ fi
 # read as the same kind of thing.
 if [ -n "$REPO_THREADS" ] && [ "${REPO_N:-0}" -gt 0 ] 2>/dev/null; then
   echo
-  echo "This repo's own threads (.claude/threads/ in $proj — travels with THIS repo, not with the project context):"
+  if [ "${THREADS_MODE:-auto}" = "context" ]; then
+    # Listed, not hidden: these threads exist and are worth reading. But routing has moved, so
+    # the heading has to say that adding to them is the wrong move — an unlabelled list here
+    # reads as an invitation, and the whole point of the flag is that nothing in a thread's
+    # content reveals which repo it should have been written into.
+    echo "This repo's own threads (.claude/threads/ in $proj) — EXISTING only. Thread routing here is \"context\", so new working notes go to $CONTEXT_REMOTE threads/, not this folder:"
+  else
+    echo "This repo's own threads (.claude/threads/ in $proj — travels with THIS repo, not with the project context):"
+  fi
   list_threads "$REPO_THREADS" ".claude/threads/" 6
   [ "${REPO_N:-0}" -gt 6 ] 2>/dev/null && echo "   ($REPO_N in total)"
-  echo "   Decisions about the product still belong in $CONTEXT_REMOTE; these are about this codebase."
+  [ "${THREADS_MODE:-auto}" != "context" ] && \
+    echo "   Decisions about the product still belong in $CONTEXT_REMOTE; these are about this codebase."
+fi
+# Said even with nothing to list, because the whole value of the flag is that the routing is
+# known BEFORE the first thread is written. The condition mirrors REPO_THREADS above: a real
+# context repo, and a working directory that is not it.
+if [ "${THREADS_MODE:-auto}" = "context" ] && [ -n "$ROOT" ] && [ "${REPO_N:-0}" -eq 0 ] 2>/dev/null; then
+  _pp="$(cd "$proj" 2>/dev/null && pwd -P)"; _rp="$(cd "$ROOT" 2>/dev/null && pwd -P)"
+  if [ "$_pp" != "$_rp" ]; then
+    echo
+    echo "Thread routing for this repo is \"context\": working notes go to $CONTEXT_REMOTE threads/, never .claude/threads/ here. This repo is shared with others, so a thread written into it would travel to everyone who clones it."
+  fi
 fi
 echo
 # The mirror is the only structured state a Notion *guest* can see (guests get empty results from

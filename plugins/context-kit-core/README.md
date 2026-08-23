@@ -209,6 +209,38 @@ Both durable layers are **injected** by the hook rather than pointed at, so neit
 the model choosing to follow a link. `.claude/memory.md` is the promotion target rather than
 `CLAUDE.md`, which stays instructions for working in the repo rather than becoming a changelog.
 
+#### Turning the repo layer off: `PROJECT_CONTEXT_THREADS`
+
+The property that makes the repo layer valuable — a thread travels with a clone — is the same
+property that makes it wrong for a repo **shared as a tool** rather than worked on as a project.
+There, `.claude/threads/` ships one person's dated working notes to everyone who installs the
+thing. Same mechanism, opposite verdict, and no amount of reading a thread reveals which case it
+is: distribution is a fact about the repo, not about its contents. So it is configured, not
+judged.
+
+`PROJECT_CONTEXT_THREADS` takes `repo` (always `.claude/threads/`), `context` (always the context
+repo's `threads/`), or nothing at all — the default `auto`, where `save-thread` picks by audience
+as above. It resolves on the same ladder as the repo name, and for the same reason: env, then
+`.claude/settings*.json`, then a `"threads"` key in a `context-project.json` marker, because a
+laptop can set an env block and a sandbox can only be handed a file. The one-line marker forms
+(`.context-repo`, `context-repo.txt`) cannot carry it — they are one line by definition.
+
+```bash
+bash scripts/context-repo.sh --threads                        # repo | context | auto
+node scripts/link-context.mjs owner/repo --threads context     # set it; `auto` clears the key
+```
+
+Two things follow from it being a *routing* flag rather than a second destination. It never names
+a repo: threads go to the context repo already resolved for the project, so there is only ever one
+answer to "which repo does this project use" and no second channel to disagree with the first.
+And `context` with a context repo of `none` is a **contradiction** — routed somewhere that does
+not exist — which `save-thread` reports and refuses rather than quietly falling back into the
+shared repo, the one outcome the flag was set to prevent.
+
+The flag covers **threads only**. `.claude/memory.md` keeps working in a shared repo, deliberately:
+a promoted, durable account of how a codebase works is exactly what someone cloning the tool
+should read first, where a dated session narrative is not.
+
 **`curate-context` curates exactly one layer: whichever the session is standing in.** A sweep
 across a project's code repos was considered and rejected. The context repo does not know which
 code repos belong to it, since the link runs child to parent only; there is no way to resolve a

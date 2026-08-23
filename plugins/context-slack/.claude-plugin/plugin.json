@@ -1,6 +1,6 @@
 {
   "name": "context-slack",
   "description": "Slack delivery layer for context-kit: post a per-person 'who's got what' digest to a channel, and nudge whoever drains the pending queue — driven by the project's context.json (connections.slack, defaults.slackChannel, and the roster's slackMemberId), so one install serves every project. Nothing here posts unprompted. Requires the Slack connector and the context-kit plugin; the digest also reads Notion.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "author": { "name": "c-energie" }
 }

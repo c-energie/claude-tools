@@ -9,6 +9,7 @@
 #   scripts/context-repo.sh              # resolve + pull --ff-only --autostash (30s cap)
 #   scripts/context-repo.sh --no-pull    # resolve only — no network against an existing clone
 #   scripts/context-repo.sh --writable   # also un-shallow the managed clone so pushes work
+#   scripts/context-repo.sh --threads    # print this project's thread routing, then exit
 #
 # The pull is capped at CONTEXT_GIT_TIMEOUT seconds (default 30) where `timeout` exists.
 # Clone and --unshallow are deliberately NOT capped: they are one-off and legitimately slower
@@ -24,6 +25,20 @@
 set -u
 
 cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
+
+# Parsed before anything else so --threads can answer without touching git, and so it still
+# answers for a project whose context repo is `none`: "threads go to the context repo" and
+# "there is no context repo" is a contradiction a caller has to be able to SEE, and it cannot
+# see it if the opt-out exit below fires first.
+PULL=1; WRITABLE=0; THREADS_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-pull)  PULL=0 ;;
+    --writable) WRITABLE=1 ;;
+    --threads)  THREADS_ONLY=1 ;;
+    *) echo "context-repo.sh: unknown option $arg" >&2; exit 2 ;;
+  esac
+done
 
 # Which context repo, in order: the env var; else the project's .claude settings files (the
 # laptop route — the committed settings.json rides along in the checkout; local beats project,
@@ -46,6 +61,48 @@ marker_repo() {
     *)   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n' ;;
   esac
 }
+
+# ------------------------------------------------------------------- thread routing
+# WHERE this project's working notes go, which is a different question from where its context
+# lives. Two layers exist: `repo` = .claude/threads/ inside the working repo, which travels
+# with a clone of it; `context` = threads/ in the context repo, which does not. Absent means
+# `auto` — the historical behaviour, where save-thread picks by audience.
+#
+# The flag exists for repos that are SHARED as tools rather than worked on as projects. There
+# the travelling property inverts: .claude/threads/ ships one person's dated working notes to
+# everyone who installs the thing, and no amount of reading a thread reveals that, because it
+# is a fact about the repo's distribution and not about its contents.
+#
+# Same precedence ladder as the repo name — env, then the project's .claude settings files,
+# then a marker — for the same reason: a laptop sets an env block, a sandbox can only be
+# handed a file. Only the JSON markers are consulted; .context-repo and context-repo.txt are
+# one plain line by definition and have nowhere to put a second value.
+normalise_threads() {
+  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')" in
+    repo)            echo repo ;;
+    context|project) echo context ;;
+    auto|"")         echo auto ;;
+    *) echo auto
+       echo "context-repo.sh: unknown thread routing \"$1\" — expected \"repo\" or \"context\"; treating as \"auto\"" >&2 ;;
+  esac
+}
+lookup_threads() {
+  local t="${PROJECT_CONTEXT_THREADS:-}"
+  for _f in "$cwd/.claude/settings.local.json" "$cwd/.claude/settings.json"; do
+    [ -z "$t" ] && t="$(settings_key "$_f" PROJECT_CONTEXT_THREADS)"
+  done
+  for _m in "$cwd/.claude/context-project.json" "$cwd/context-project.json" \
+            "$cwd"/docs/context-project.json /mnt/project/context-project.json \
+            "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/uploads/context-project.json; do
+    [ -z "$t" ] && [ -f "$_m" ] && t="$(settings_key "$_m" threads)"
+  done
+  normalise_threads "$t"
+}
+if [ "$THREADS_ONLY" -eq 1 ]; then
+  lookup_threads
+  exit 0
+fi
+
 CONTEXT_REMOTE="${PROJECT_CONTEXT_REPO:-}"
 for _f in "$cwd/.claude/settings.local.json" "$cwd/.claude/settings.json"; do
   [ -z "$CONTEXT_REMOTE" ] && CONTEXT_REMOTE="$(settings_key "$_f" PROJECT_CONTEXT_REPO)"
@@ -96,15 +153,6 @@ if [ -n "${PROJECT_CONTEXT_DIR:-}" ]; then
 else
   CLONE_DIR="$HOME/.context/$CONTEXT_REMOTE"
 fi
-
-PULL=1; WRITABLE=0
-for arg in "$@"; do
-  case "$arg" in
-    --no-pull)  PULL=0 ;;
-    --writable) WRITABLE=1 ;;
-    *) echo "context-repo.sh: unknown option $arg" >&2; exit 2 ;;
-  esac
-done
 
 # The pull runs inside the SessionStart hook, so an unbounded one stalls the start of every
 # session on a slow or half-open connection. Cap it. `timeout` is GNU coreutils — present in

@@ -10,6 +10,14 @@
 //   node link-context.mjs <owner/repo> --load                 # print the context to stdout now
 //   node link-context.mjs none                                # opt OUT: this project has no
 //                                                             # context repo, hook goes silent
+//   node link-context.mjs <owner/repo> --threads context      # working notes go to the CONTEXT
+//                                                             # repo, not .claude/threads/ here
+//
+// --threads is a separate question from which repo: it says where this project's working notes
+// are written, and exists for repos SHARED as tools. There, .claude/threads/ ships one person's
+// dated notes to everyone who clones the thing — a fact about the repo's distribution that no
+// amount of reading a thread reveals, so it is configured rather than judged. `repo` keeps them
+// local, `auto` (the default, and what clears the key) leaves save-thread to pick by audience.
 //
 // The repo is an ARGUMENT, never a prompt: the same call then works from a terminal, from a
 // `!` line in a session, and from a tool call — where stdin is closed and a prompt would hang
@@ -28,6 +36,8 @@ import { bashBin, bashPath, NO_BASH } from './bash-bin.mjs';
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OPTIONS = ['local', 'force', 'no-verify', 'load'];
+// --threads takes a value, so it is parsed like --project rather than as a boolean flag.
+const THREADS = ['repo', 'context', 'auto'];
 // The opt-out sentinel, in step with hooks/load-context.sh and scripts/context-repo.sh: a
 // project that deliberately has no context repo, so the session-start hook stays silent
 // instead of reporting it unconfigured every time. `none` is the spelling to document.
@@ -55,9 +65,11 @@ const argv = process.argv.slice(2);
 const flags = new Set();
 const positional = [];
 let projectArg = null;
+let threadsArg = null;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--project') projectArg = argv[++i];
+  else if (a === '--threads') threadsArg = argv[++i];
   else if (a.startsWith('--')) flags.add(a.slice(2));
   else positional.push(a);
 }
@@ -74,6 +86,10 @@ if (!optOut && !/^[A-Za-z0-9][\w.-]*\/[\w.-]+$/.test(repo)) die(`not an owner/re
 
 const project = resolve(untilde(projectArg ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd()));
 if (!existsSync(project)) die(`no such directory: ${project}`);
+const threads = threadsArg === null ? null : String(threadsArg).trim().toLowerCase();
+if (threads !== null && !THREADS.includes(threads)) {
+  die(`--threads takes ${THREADS.join(' | ')}, got ${JSON.stringify(threadsArg)}`);
+}
 const local = flags.has('local');
 const file = join(project, '.claude', local ? 'settings.local.json' : 'settings.json');
 const rel = relative(project, file).replace(/\\/g, '/');
@@ -102,6 +118,10 @@ if (existsSync(file)) {
 // with `none` is a no-op rather than a --force prompt.
 const rawCurrent = settings.env?.PROJECT_CONTEXT_REPO;
 const current = rawCurrent && OPTOUT.includes(rawCurrent.trim().toLowerCase()) ? 'none' : rawCurrent;
+// Thread routing is deliberately NOT behind --force. Re-pointing a project at a different
+// context repo can strand a session on the wrong context; changing where working notes are
+// written cannot — the wrong choice puts a file in a visible place with the wrong name on it.
+const currentThreads = settings.env?.PROJECT_CONTEXT_THREADS;
 if (current && current !== repo && !flags.has('force')) {
   const target = optOut ? 'opt it out' : `re-point it to ${repo}`;
   die(`${rel} already points this project at ${current} — pass --force to ${target}`);
@@ -133,16 +153,39 @@ if (!optOut && !flags.has('no-verify')) {
   }
 }
 
-if (current === repo) {
+const repoChanged = current !== repo;
+// `auto` is the ABSENCE of the key, not a value to store: an explicit "auto" in the file would
+// read as a decision someone made, when it is only ever the default nobody has overridden.
+const threadsChanged = threads !== null
+  && (threads === 'auto' ? currentThreads !== undefined : currentThreads !== threads);
+
+if (!repoChanged && !threadsChanged) {
   say(optOut
     ? `  ok    ${rel} already opts this project out of a context repo — left as is`
     : `  ok    ${rel} already links this project to ${repo} — left as is`);
 } else {
   settings.env = { ...(settings.env ?? {}), PROJECT_CONTEXT_REPO: repo };
+  if (threads === 'auto') delete settings.env.PROJECT_CONTEXT_THREADS;
+  else if (threads !== null) settings.env.PROJECT_CONTEXT_THREADS = threads;
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
-  say(`  ok    ${current ? 're-pointed' : 'wrote'} ${rel} → ${repo}`);
-  if (optOut) say('        This project has no context repo: the session-start hook will load nothing and say nothing.');
+  if (repoChanged) {
+    say(`  ok    ${current ? 're-pointed' : 'wrote'} ${rel} → ${repo}`);
+    if (optOut) say('        This project has no context repo: the session-start hook will load nothing and say nothing.');
+  }
+  if (threadsChanged) {
+    if (threads === 'auto') say(`  ok    ${rel} thread routing cleared — save-thread picks the layer by audience again`);
+    else if (threads === 'context') say(`  ok    ${rel} thread routing → context: working notes go to ${optOut ? 'the context repo' : `${repo} threads/`}, not .claude/threads/ here`);
+    else say(`  ok    ${rel} thread routing → repo: working notes stay in .claude/threads/ here`);
+  }
+}
+
+// The one combination that resolves to nowhere. Warned rather than refused: the two settings
+// can legitimately be written in either order, and refusing the first half would make
+// "route threads away, then say where" impossible to express.
+if (threads === 'context' && optOut) {
+  say('  warn  threads are routed to the context repo, but this project has opted out of having one.');
+  say('        save-thread will refuse rather than write into this repo. Give it an owner/repo, or use --threads repo.');
 }
 
 // A committed settings.json under the common `/.claude/*` ignore rule reaches nobody else —

@@ -94,6 +94,19 @@ Present this as a clear plan: which threads stay, which are promoted / condensed
 - **In a code repo** — curate that repo's own `.claude/threads/`, promoting into
   `.claude/memory.md` and archiving to `.claude/Archive/threads/`. Nothing else.
 
+**Unless that code repo has routed its threads away.** Check before choosing:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --threads
+```
+
+`context` means this repo has no working layer of its own — it is shared as a tool, so its
+working notes were written into the **context repo** instead. Curate that one, first mode above,
+and leave `.claude/` here alone. The flag covers threads only: `.claude/memory.md` is still this
+codebase's durable layer, so when a thread in the context repo settles into a fact about *this
+code*, say so and offer to promote it here rather than into the project's `memory.md`. That
+promotion crosses a repo boundary, so it is a suggestion to the user, never automatic.
+
 Never both. A sweep across a project's code repos was considered and rejected: the context repo
 does not know which code repos belong to it (the link runs child to parent only), there is no
 way to resolve a code repo's name to a checkout on an arbitrary machine, and the judgement of

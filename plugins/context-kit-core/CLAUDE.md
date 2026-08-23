@@ -18,6 +18,7 @@ A fix to the resolver or hook belongs in all three plugins' copies (see the mark
 node scripts/check-plugin.mjs .          # lint manifests/skills/hooks; exit 1 on error — run before any commit
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
+bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
 bash scripts/plugin-repo.sh --writable   # resolve THIS repo's checkout (root), push-ready
 bash scripts/plugin-repo.sh --plugin context-kit-core   # ...or one plugin's own directory
 node scripts/list-plugins.mjs "$ROOT" --brief   # the plugin roster, read from the checkout — never hand-written
@@ -25,6 +26,7 @@ node scripts/list-plugins.mjs "$ROOT"           # ...plus each plugin's skills (
 node scripts/dates.mjs today
 node scripts/init-context.mjs owner/repo            # PLAN a new context repo (+ the second brain, once); --yes does it
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
+node scripts/link-context.mjs owner/repo --threads context   # ...and route its threads off this repo
 node scripts/context-doctor.mjs "$ROOT" --include   # health-check a context repo (--json, --fix, --today)
 node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every queue (--json, --role, --no-memory)
 node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
@@ -56,6 +58,16 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   bash problem — which is exactly what `link-context.mjs` did, refusing to write a setting
   that was correct. `bashBin()` returning null means no Git Bash: a state to report, not an
   error to swallow.
+- **`PROJECT_CONTEXT_THREADS` routes threads; it never names a repo.** `repo` / `context` /
+  absent (`auto`), on the same env → settings → JSON-marker ladder as the repo name, resolved by
+  `context-repo.sh --threads` and inlined in the hook. It exists for repos SHARED as tools, where
+  `.claude/threads/` would ship one person's working notes to everyone who clones them — a fact
+  about distribution that no thread's *content* reveals, which is why it is configured rather
+  than judged. Two consequences are load-bearing: threads go to the context repo already
+  resolved, so no second channel can disagree about which repo a project uses; and `context`
+  with a repo of `none` is a **contradiction** that `save-thread` must report and refuse, never
+  fall back from into the shared repo. Covers threads only — `.claude/memory.md` is untouched,
+  because a durable account of how a codebase works *should* travel with a clone of it.
 - **The generated marker lives in the CONTEXT repo's `.claude/context-project.json`** — one
   canonical, committable file per context repo, never a generated copy in each project that
   uses it. The hook merges into whatever is there (unknown keys survive) and writes only on a
