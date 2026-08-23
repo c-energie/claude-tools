@@ -48,6 +48,14 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   stale load is the one failure mode that actively misleads.
 - **`hooks/load-context.sh` carries an inline duplicate of `context-repo.sh`** (packaging may
   drop `scripts/`). Keep the two in step; `context-repo.sh` is the real one.
+- **Never spawn bare `bash` from a `.mjs`** — always `bashBin()` from `scripts/bash-bin.mjs`
+  (copied to all three plugins). On Windows the `bash` on PATH is WSL's `System32\bash.exe`:
+  a real executable, so `spawnSync` reports no `error`, but it has its own filesystem and
+  `$HOME`, so it exits 127 on a Windows path and could never see the clone the resolver
+  prints back anyway. A caller checking only `status` then blames the *context repo* for a
+  bash problem — which is exactly what `link-context.mjs` did, refusing to write a setting
+  that was correct. `bashBin()` returning null means no Git Bash: a state to report, not an
+  error to swallow.
 - **The generated marker lives in the CONTEXT repo's `.claude/context-project.json`** — one
   canonical, committable file per context repo, never a generated copy in each project that
   uses it. The hook merges into whatever is there (unknown keys survive) and writes only on a

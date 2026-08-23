@@ -31,11 +31,15 @@ via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_REPO`).
 
 ## Invariants
 
-- **`scripts/context-repo.sh` is a copy of context-kit-core's** — plugins cannot reference each
-  other's `${CLAUDE_PLUGIN_ROOT}`, so this copy exists on purpose. A resolver fix lands in
-  context-kit-core first, then here. This plugin is the **origin** for `lib.mjs`, `dates.mjs` and
-  `pending-parse.mjs`, which context-slack copies: fix them here first. `check-plugin.mjs` errors
-  if any copy drifts, comparing below the header banner.
+- **`scripts/context-repo.sh`, `scripts/dates.mjs` and `scripts/bash-bin.mjs` are copies of
+  context-kit-core's** — plugins cannot reference each other's `${CLAUDE_PLUGIN_ROOT}`, so these
+  copies exist on purpose. A fix to any of them lands in context-kit-core first, then here. This
+  plugin is the **origin** for `lib.mjs` and `pending-parse.mjs`, which context-slack copies: fix
+  those here first. `check-plugin.mjs` errors if any copy drifts, comparing below the header banner.
+- **Never spawn bare `bash`** — go through `bashBin()` from `scripts/bash-bin.mjs`. On Windows the
+  `bash` on PATH is WSL's `System32\bash.exe`, which has its own filesystem and `$HOME`: it exits
+  127 on a Windows path, and a caller reading only `status` blames the context repo for a bash
+  problem.
 - **`pending-parse.mjs` owns the pending entry format** — the single definition, so
   queues stay interchangeable across plugin versions.
 - **`mirror-render.mjs` owns the `notion/` folder, and its property is "unchanged Notion ⇒ no

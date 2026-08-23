@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { bashBin, bashPath, NO_BASH } from './bash-bin.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -20,7 +21,12 @@ const posixToNative = (p) =>
 
 function configPath() {
   if (process.env.CONTEXT_CONFIG) return process.env.CONTEXT_CONFIG;
-  const root = execFileSync('bash', [join(here, 'context-repo.sh'), '--no-pull'], {
+  // bashBin() rather than `bash`: the Windows PATH entry is WSL's launcher, which has its own
+  // filesystem and $HOME — it cannot see this script, and cannot see the clone the resolver
+  // would print back. Failing by name beats resolving against the wrong ~.
+  const bin = bashBin();
+  if (!bin) throw new Error(`${NO_BASH} (or set CONTEXT_CONFIG to skip the resolver)`);
+  const root = execFileSync(bin, [bashPath(join(here, 'context-repo.sh')), '--no-pull'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();

@@ -24,6 +24,7 @@ import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bashBin, bashPath, NO_BASH } from './bash-bin.mjs';
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OPTIONS = ['local', 'force', 'no-verify', 'load'];
@@ -112,10 +113,14 @@ if (current && current !== repo && !flags.has('force')) {
 // SessionStart hook will do next session — so a pass here means the next session passes too.
 // Side effect worth knowing about: it clones the repo to ~/.context/<owner>/<repo> if absent.
 if (!optOut && !flags.has('no-verify')) {
-  const probe = spawnSync('bash', [bash('scripts/context-repo.sh')], {
+  // bashBin() rather than `bash`: on Windows the PATH entry is WSL's launcher, which cannot
+  // see this file and exits 127 — indistinguishable here from the repo failing to resolve, so
+  // a bash problem used to be reported as a bad repo name and the write refused.
+  const bin = bashBin();
+  const probe = bin ? spawnSync(bin, [bash('scripts/context-repo.sh')], {
     encoding: 'utf8',
     env: { ...process.env, PROJECT_CONTEXT_REPO: repo, CLAUDE_PROJECT_DIR: project },
-  });
+  }) : { error: { code: NO_BASH } };
   if (probe.error) {
     // No bash (stock Windows shell, no Git Bash) is a reason to skip the check, not to refuse
     // the write — the setting is still correct, and the hook will report on it next session.
@@ -155,10 +160,11 @@ if (!local) {
 if (optOut) {
   say('        Restart Claude Code here for the hook to go quiet; re-run with an owner/repo to undo.');
 } else if (flags.has('load')) {
-  const load = spawnSync('bash', [bash('hooks/load-context.sh'), '--refresh'], {
+  const bin = bashBin();
+  const load = bin ? spawnSync(bin, [bash('hooks/load-context.sh'), '--refresh'], {
     encoding: 'utf8',
     env: { ...process.env, PROJECT_CONTEXT_REPO: repo, CLAUDE_PROJECT_DIR: project },
-  });
+  }) : { error: { code: NO_BASH } };
   if (load.error) say(`  warn  could not run the loader (${load.error.code}) — start a new session instead`);
   else process.stdout.write(load.stdout ?? '');
 } else {

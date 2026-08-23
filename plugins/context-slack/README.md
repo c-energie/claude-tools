@@ -64,10 +64,10 @@ node ../context-kit-core/scripts/bump-version.mjs . patch
 cut-off, `@`-mention rendering, the 5000-character split — so the digest reads the same every week
 and nobody's row is quietly dropped.
 
-**Deliberate copies.** `context-repo.sh`, `lib.mjs`, `dates.mjs` and `pending-parse.mjs` are copies
-of context-notion's: plugins cannot reach into each other's install directories. Their originals
-live in context-notion (and, for `context-repo.sh`, in context-kit-core) — **fix there first, then
-copy here.** `pending-parse.mjs` in particular *defines* the pending entry format; a drifted copy
+**Deliberate copies.** `context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `lib.mjs` and
+`pending-parse.mjs` are copies: plugins cannot reach into each other's install directories. The
+generic three originate in context-kit-core and the two Notion-coupled ones (`lib.mjs`,
+`pending-parse.mjs`) in context-notion — **fix there first, then copy here.** `pending-parse.mjs` in particular *defines* the pending entry format; a drifted copy
 means a queue that reads differently depending on which plugin looked at it.
 
 ## Roadmap

@@ -28,6 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bashBin, bashPath } from '../bash-bin.mjs';
 import { homedir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -59,20 +60,6 @@ function has(cmd) {
 // Windows editors and PowerShell routinely write JSON with a UTF-8 BOM, which JSON.parse
 // rejects — strip it before parsing anything user-editable.
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
-
-// Git Bash, never WSL's System32\bash.exe — WSL has its own filesystem and $HOME, so the
-// resolver would clone somewhere this script can never see. `bash` is often not on PATH
-// under PowerShell at all, so probe the Git for Windows install locations directly.
-function bashBin() {
-  if (process.platform !== 'win32') return 'bash';
-  for (const c of [
-    join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe'),
-    join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Git', 'bin', 'bash.exe'),
-    join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Git', 'bin', 'bash.exe'),
-  ]) if (existsSync(c)) return c;
-  const w = spawnSync('where.exe', ['bash'], { encoding: 'utf8', windowsHide: true });
-  return (w.stdout ?? '').split(/\r?\n/).filter(Boolean).find((p) => !/system32/i.test(p)) ?? null;
-}
 
 // ---------------------------------------------------------------- context.json
 
@@ -121,7 +108,7 @@ function resolverContext() {
   if (!existsSync(resolver)) return null;
   const bash = bashBin();
   if (!bash) return null;
-  const out = spawnSync(bash, [resolver.replace(/\\/g, '/'), '--no-pull'],
+  const out = spawnSync(bash, [bashPath(resolver), '--no-pull'],
     { encoding: 'utf8', windowsHide: true });
   if (out.status !== 0) return null;
   const root = nativePath((out.stdout ?? '').trim());

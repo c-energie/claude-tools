@@ -37,11 +37,16 @@ CONTEXT_CONFIG=path/to/context.json node scripts/pending-parse.mjs "$ROOT" --sla
 - **Only the declared `connections.slack` connection** — several may be visible on one machine.
 - **No connector ⇒ show the text and say it was NOT sent.** Never report a message as posted, and
   never treat a missing connector as failure of the underlying job.
-- **`context-repo.sh`, `lib.mjs`, `dates.mjs` and `pending-parse.mjs` are COPIES** — plugins cannot
-  reference each other's `${CLAUDE_PLUGIN_ROOT}`. Fix the original in context-notion (or, for
-  `context-repo.sh`, context-kit-core) first, then copy here. `pending-parse.mjs` owns the pending
+- **`context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `lib.mjs` and `pending-parse.mjs` are COPIES** —
+  plugins cannot reference each other's `${CLAUDE_PLUGIN_ROOT}`. Fix the original first, then copy
+  here; the origin goes by *layer*, so the three generic ones (`context-repo.sh`, `dates.mjs`,
+  `bash-bin.mjs`) come from context-kit-core and the two Notion-coupled ones (`lib.mjs`,
+  `pending-parse.mjs`) from context-notion. `pending-parse.mjs` owns the pending
   entry format; a drifted copy breaks the single-definition rule — and `check-plugin.mjs` now
   errors on drift, comparing below each copy's header banner.
+- **Never spawn bare `bash`** — go through `bashBin()` from `scripts/bash-bin.mjs`. On Windows the
+  `bash` on PATH is WSL's `System32\bash.exe`, which has its own filesystem and `$HOME` and so
+  cannot see either this script or the clone the resolver prints back.
 - **`person-digest.mjs` owns the digest's fixed rules** — grouping, the due-date cut-off, mention
   rendering, the 5000-char split — so it reads identically every week. The project's name reaches
   it via `--title`; the script never reads `context.json` itself.
