@@ -19,7 +19,10 @@ plugin names a channel, a person or a workspace: all of that comes from the cont
       "people": [
         { "name": "Ada", "notionUserId": "…", "slackMemberId": "U0123ABC" }
       ],
-      "defaults": { "slackChannel": "#standup" }
+      "defaults": {
+        "slackChannel": "#standup",
+        "slackChannels": { "weeklyRoundup": "#standup", "newsWatch": "#news-feed" }
+      }
     }
   }
 }
@@ -29,7 +32,11 @@ plugin names a channel, a person or a workspace: all of that comes from the cont
   several; the skills use only the declared one, and ask rather than guess when there is no
   declaration. Posting through another project's connection puts a message in a stranger's
   workspace, and it cannot be unsent.
-- **`defaults.slackChannel`** — the default channel for team-wide posts.
+- **`defaults.slackChannels`** — a **purpose → channel** map, for a project whose streams go to
+  different places. The plugin knows only the keys; it defines `weeklyRoundup`
+  (`person-slack-digest`), and a project may add its own for its own tooling.
+- **`defaults.slackChannel`** — the single fallback channel, used by any purpose the map does not
+  name. A project that sends everything to one place needs only this key.
 - **`people[].slackMemberId`** — the roster's member IDs. Resolved **here, never from a user
   search or from "the logged-in user"**: in the account owner's own session those coincide, in a
   colleague's they don't, and the message goes to the sender instead. `null` renders a plain name
@@ -44,6 +51,7 @@ The Slack keys sit inside the same roster the Notion layer uses, so a project th
 | --- | --- |
 | `slack-config` | _(hidden)_ The contract above, the person-resolution traps, and the posting rules |
 | `person-slack-digest` | 🔒 Per-person digest of actions, watches, questions and relationships → a channel |
+| `weekly-roundup` | 🔒 Team-facing roundup of a `weekly-review` run → the `weeklyRoundup` channel |
 | `notify-pending` | 🔒 DM whoever drains the `pending/` queue that items are waiting |
 
 🔒 = `disable-model-invocation: true`. **Every skill here is blocked from self-triggering**, with
@@ -52,9 +60,9 @@ recalled. They run when the user names them, or when context-notion's `weekly-re
 and the user accepts.
 
 ## Scripts
-
 ```bash
 node scripts/person-digest.mjs digest.json --title "Project"   # --json, --today YYYY-MM-DD
+node scripts/slack-sections.mjs                                # the canonical headings; --json
 node scripts/pending-parse.mjs "$ROOT" --slack --added-by ada  # the queue message
 node ../context-kit-core/scripts/check-plugin.mjs .            # lint — run before any commit
 node ../context-kit-core/scripts/bump-version.mjs . patch
@@ -63,6 +71,11 @@ node ../context-kit-core/scripts/bump-version.mjs . patch
 `person-digest.mjs` owns the digest's fixed rules — grouping by owner, the overdue / due-this-week
 cut-off, `@`-mention rendering, the 5000-character split — so the digest reads the same every week
 and nobody's row is quietly dropped.
+
+`slack-sections.mjs` owns the **section headings and their icons**, and both Slack posts read them
+from it. It exists because they drifted: the weekly roundup carried a full icon set on 29 Jul and
+3 Aug 2026 and none by 11 Aug, because it was composed freehand with nothing holding its format.
+Five headings are shared with the digest and mean the same in both; three are the roundup's own.
 
 **Deliberate copies.** `context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `lib.mjs` and
 `pending-parse.mjs` are copies: plugins cannot reach into each other's install directories. The

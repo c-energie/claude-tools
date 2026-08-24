@@ -73,8 +73,11 @@ worth sending at all this week.
 
 ## 3. Post it
 
-1. **Channel** — `defaults.slackChannel` from the project's config; resolve its ID and pass it as
-   `channel_id`. To preview by DM, pass a **user ID** as `channel_id` instead.
+1. **Channel** — resolve it as `defaults.slackChannels.weeklyRoundup` → `defaults.slackChannel` →
+   ask. This digest is the `weeklyRoundup` purpose; a project that splits its streams sends other
+   things elsewhere, so do not reach for whichever channel the config happens to name first.
+   Resolve the chosen channel's ID and pass it as `channel_id`. To preview by DM, pass a **user
+   ID** as `channel_id` instead.
 2. If the user hasn't seen the text, show it first — or send it as a draft where that exists.
 3. Report what was posted and where, with the returned message link.
 

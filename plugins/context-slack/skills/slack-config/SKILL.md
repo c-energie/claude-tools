@@ -1,6 +1,6 @@
 ---
 name: slack-config
-description: How the context-slack skills find and use a project's Slack configuration — the context.json connections.slack and defaults.slackChannel contract, member IDs in the roster, and the rules that keep a message from going to the wrong workspace or the wrong person. Background knowledge for every skill in this plugin; not a task to run.
+description: How the context-slack skills find and use a project's Slack configuration — the context.json connections.slack contract, the defaults.slackChannels purpose-to-channel map and its slackChannel fallback, member IDs in the roster, and the rules that keep a message from going to the wrong workspace, the wrong channel or the wrong person. Background knowledge for every skill in this plugin; not a task to run.
 user-invocable: false
 ---
 
@@ -25,8 +25,28 @@ What this plugin reads:
   one this project declares.** If several are visible and the project declares none, **ask — never
   guess.** Posting through another project's connection puts a message in a stranger's workspace,
   and it cannot be unsent.
-- **`state.notion.defaults.slackChannel`** — the project's default channel for team-wide posts
-  (e.g. `#standup`). Absent → ask which channel, and offer to add it to `context.json`.
+- **`state.notion.defaults.slackChannels`** — a map of **purpose → channel**, for a project that
+  sends different streams to different places, e.g.
+  `{ "weeklyRoundup": "#standup", "newsWatch": "#news-feed" }`. The plugin knows only the *keys*;
+  every channel name is the project's.
+- **`state.notion.defaults.slackChannel`** — the single fallback channel for team-wide posts
+  (e.g. `#standup`), used by any purpose the map does not name. A project that sends everything
+  to one place needs only this.
+
+**Resolve a channel in this order, every time:** `slackChannels[purpose]` → `slackChannel` →
+**ask, and offer to add it to `context.json`.** Never substitute a channel that merely looks
+right: a roundup posted to the news channel is noise, and news posted to the standup channel
+buries the thing people open that channel to read.
+
+**The purpose keys this plugin defines** are the only ones its own skills read:
+
+| Key | Read by | What goes there |
+| --- | --- | --- |
+| `weeklyRoundup` | `person-slack-digest` | The per-person "who's got what" digest |
+
+`notify-pending` sends a DM and reads no channel at all. **A project may declare further keys for
+its own tooling** — a news feed, a build alert — and this plugin neither reads nor validates them.
+An unknown key is the project's business, not a config error to report.
 - **`state.notion.people[].slackMemberId`** — the roster's Slack member IDs. **This is the only
   place to resolve a person.**
 

@@ -58,6 +58,13 @@ than reporting a full run.
    project's channel. **After item 8**, so it reflects the week's changes. Needs the context-slack
    plugin and the project's Slack connection; skip the line silently if either is absent. Offer
    it — it never posts unprompted.
+9b. **`weekly-roundup`** (context-slack) — post the team-facing roundup of *this* run: what is
+   late, what lands this week, decisions due to revisit, the housekeeping flags items 0b–8 turned
+   up, and the last meeting. Same plugin and connection as item 9, same silent skip, same
+   never-unprompted rule. **Both can go out in the same week** — the digest tells each person what
+   is on their plate, the roundup tells the team where the project is. This one reports the
+   findings of the run you have just done, so offer it last, and offer it even if item 9 was
+   declined.
 10. **`curate-context`** (context-kit-core) — only about monthly, or when `threads/` has grown
     unwieldy. Offer it if it hasn't run in a few weeks; skip most weeks. Item 0b prints the two
     numbers that decide it: threads since the last review, and whether `threads/INDEX.md` has

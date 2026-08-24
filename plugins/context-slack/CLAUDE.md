@@ -5,9 +5,11 @@
 The **Slack delivery layer** plugin (`context-slack`) in the c-energie context architecture:
 core = context-kit-core (repo machinery), middle = context-notion (Notion) and this (Slack),
 project = each context repo's `context.json`. Nothing project-specific belongs here — no channel,
-no member ID, no workspace name. A skill that needs one reads `connections.slack`,
-`defaults.slackChannel` or the roster's `slackMemberId`; `skills/slack-config/SKILL.md` is the
-contract and the file to update when it grows.
+no member ID, no workspace name. A skill that needs one reads `connections.slack`, the
+`defaults.slackChannels` purpose map (falling back to `defaults.slackChannel`) or the roster's
+`slackMemberId`; `skills/slack-config/SKILL.md` is the contract and the file to update when it
+grows. **The plugin defines the purpose keys, never the channels** — a project may declare keys
+this plugin has never heard of, and an unknown key is not a config error.
 
 Lives at `plugins/context-slack` **inside the context-kit repo** (`c-energie/context-kit`), whose
 `marketplace.json` lists it with a relative source. There is no marketplace.json here, and the
@@ -21,6 +23,7 @@ version lives in `plugin.json` only.
 node ../context-kit-core/scripts/check-plugin.mjs .          # lint; run before any commit
 node ../context-kit-core/scripts/bump-version.mjs . patch    # writes plugin.json only
 CONTEXT_CONFIG=path/to/context.json node scripts/person-digest.mjs digest.json --today 2026-08-07
+node scripts/slack-sections.mjs                              # canonical headings + icons; --json
 CONTEXT_CONFIG=path/to/context.json node scripts/pending-parse.mjs "$ROOT" --slack
 ```
 
@@ -50,4 +53,8 @@ CONTEXT_CONFIG=path/to/context.json node scripts/pending-parse.mjs "$ROOT" --sla
 - **`person-digest.mjs` owns the digest's fixed rules** — grouping, the due-date cut-off, mention
   rendering, the 5000-char split — so it reads identically every week. The project's name reaches
   it via `--title`; the script never reads `context.json` itself.
+- **`slack-sections.mjs` owns every section heading and icon**, and both posting skills read them
+  from it rather than typing them out. A heading typed into a SKILL.md is the bug this file
+  prevents: the roundup lost its icons between 3 and 11 Aug 2026 that way. Never add a heading to
+  a skill — add it here, and say whether it is shared with the digest or roundup-only.
 - Version in `plugin.json` only; no angle brackets in front-matter values; `*.sh` stay LF.

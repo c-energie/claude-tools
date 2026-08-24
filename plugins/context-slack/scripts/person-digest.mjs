@@ -16,6 +16,7 @@
 // }
 
 import { bucket, byDue, config, mention, person, pretty, readInput, today } from './lib.mjs';
+import { SHARED } from './slack-sections.mjs';
 
 const LIMIT = 5000;
 const argv = process.argv.slice(2);
@@ -56,13 +57,14 @@ for (const s of data.stakeholders ?? []) {
 }
 
 const link = (t, u) => (u ? `[${t}](${u})` : t);
+// Headings come from slack-sections.mjs so the roundup and this digest cannot drift apart.
 const SECTIONS = [
-  ['overdue', '⏰ Overdue / due this week', (r) => `- ⏰ ${link(r.task, r.url)} — due ${pretty(r.due)}`],
-  ['open', '✅ Other open actions', (r) => `- ${link(r.task, r.url)} — ${pretty(r.due)}`],
-  ['watching', '👀 Watching (grants / events / reminders)',
+  ['overdue', SHARED.overdue, (r) => `- ⏰ ${link(r.task, r.url)} — due ${pretty(r.due)}`],
+  ['open', SHARED.open, (r) => `- ${link(r.task, r.url)} — ${pretty(r.due)}`],
+  ['watching', SHARED.watching,
     (r) => `- ${link(r.task, r.url)} — next check ${pretty(r.due)}${r._bucket === 'checkDue' ? ' **· due to check**' : ''}`],
-  ['questions', '❓ Questions to chase', (r) => `- ${link(r.question, r.url)}`],
-  ['relationships', '🤝 Relationships',
+  ['questions', SHARED.questions, (r) => `- ${link(r.question, r.url)}`],
+  ['relationships', SHARED.relationships,
     (r) => `- ${link(r.name, r.url)} — ${r.nextAction}${r.stage ? ` (${r.stage}` : ''}${r.stage && r.lastContacted ? `, last contacted ${pretty(r.lastContacted)}` : ''}${r.stage ? ')' : ''}`],
 ];
 
