@@ -1,6 +1,6 @@
 ---
 name: synthesise-meeting
-description: Synthesise a meeting into the context repo's meetings/ folder from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases; can also run as a sweep to catch up every past meeting missing a summary. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session", "catch up any meetings missing a summary".
+description: Synthesise a meeting into the context repo's meetings/ folder from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases; can also run as a sweep to catch up every past meeting missing a summary, optionally bounded by a scope word such as today, yesterday, this week or last week. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session", "catch up any meetings missing a summary", "synthesise last week's meetings", "write up this week's meetings".
 ---
 
 # Synthesise a meeting
@@ -50,13 +50,16 @@ the project declares no meetings database, say which key is missing rather than 
 
 **Or there's no single meeting to point at — the ask is general.** "Catch up the meetings",
 "synthesise anything missing a summary", "which meetings haven't been written up" all mean run
-this as a **sweep** instead of a single lookup:
+this as a **sweep** instead of a single lookup — as does a bare **scope word** (`today`,
+`yesterday`, `this week`, `last week`), which bounds the sweep rather than naming one meeting:
 
 1. Query `databases.meetings` for pages dated **on or before today** — excluding future
    placeholders (see the date check below) and page templates.
-2. **Bound the sweep** unless told otherwise: default to roughly the **last two months** of past
-   meetings rather than the whole database's history, and say what window you used. Widen it if
-   the user asks for further back.
+2. **Bound the sweep.** If the ask carried a **scope word**, resolve it with `dates.mjs range`
+   (below) and treat the result as a **hard** window. With no scope, default to roughly the
+   **last two months** of past meetings rather than the whole database's history, and widen only
+   if the user asks for further back. **Either way, say which window you used** — a sweep that
+   doesn't name its window can't be told from one that found nothing.
 3. Apply the **duplicate check** below to every candidate; drop anything that already has a
    `## Summary`.
 4. For each survivor, work out whether there's anything to synthesise from: non-trivial content
@@ -70,6 +73,37 @@ this as a **sweep** instead of a single lookup:
    in full for each, in date order. Keep every meeting's writeup and logged items separate — never
    merge two meetings into one entry, even if they're thin.
 7. Finish with the roll-up described in step 7.
+
+### Scoping the sweep
+
+`today`, `yesterday`, `this week` and `last week` are the words people actually use for this.
+**Never work the dates out by hand** — a hand-counted week is wrong about as often as it's right,
+and the error is invisible in the output, because a window that silently started on the wrong day
+still returns meetings:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs" range last-week
+# {"scope":"last-week","from":"2026-08-17","to":"2026-08-21"}
+```
+
+It takes the spaced or hyphenated spelling, and `--from YYYY-MM-DD` to pin the run. The rules it
+encodes, each of which changes what you report back:
+
+- **A week is Monday to Friday.** `this week` runs Monday to today, capped at Friday; `last week`
+  is the previous Monday to the previous Friday. Sunday belongs to the week that began the Monday
+  before it, so `last week` read on a Sunday is the week before the one just ending.
+- **Weekend dates fall inside no week scope.** That's deliberate, but it means a Saturday meeting
+  is unreachable by `this week` or `last week`. If the database holds one just outside the window,
+  **name it and say it fell outside the scope** rather than dropping it silently — "no meetings
+  that week" and "one I couldn't see" read identically otherwise.
+- **An explicit scope is a hard bound. Never widen it.** If nothing falls inside, say the window
+  was empty and stop. Only the two-month default widens, and only when asked. A scoped run that
+  quietly reaches further back answers a question the user didn't ask.
+- **A scope relaxes nothing else.** The date check, the page templates, the duplicates and the
+  already-has-a-`## Summary` guard all still apply inside the window.
+- **The clock is worth one sanity check.** `dates.mjs` reads the machine's date; if the backend's
+  own timestamps disagree with it, say so rather than picking one silently — a day's drift turns a
+  past meeting into a "future placeholder" and drops it from the sweep unnoticed.
 
 **Check the date property, not just the ordering.** A meetings database holds *future* meetings —
 recurring syncs are created with their agenda days ahead. A meeting dated later than today has not
@@ -265,9 +299,11 @@ complete.
 If step 1's duplicate check stopped a single-meeting run early, report that instead: which
 meeting, that it already had a Summary (or already-logged items), and that nothing was re-written.
 
-**For a sweep**, report each synthesised meeting exactly as above, then close with a one-line
-roll-up: how many were synthesised, how many already had a summary, and how many were skipped for
-lack of source material (name them, so the user can go find or record what's missing rather than
-wondering whether the sweep just missed them).
+**For a sweep**, open with **the window it covered and the scope word that produced it** ("last
+week, 17–21 August"), then report each synthesised meeting exactly as above, and close with a
+one-line roll-up: how many were synthesised, how many already had a summary, and how many were
+skipped for lack of source material (name them, so the user can go find or record what's missing
+rather than wondering whether the sweep just missed them). Name anything that fell just outside
+the window too — see the scoping rules in step 1.
 
 **Not this skill:** a session write-up that isn't a meeting is context-kit-core's `save-thread`.
