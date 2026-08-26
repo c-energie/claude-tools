@@ -49,7 +49,10 @@ than reporting a full run.
    don't force it weekly. `process-pending` can run it over rows it just created, so a week where
    item 1 did the work needs nothing here.
 6. **`tidy-projects`** — the same, for the external-projects register.
-7. **`synthesise-meeting`** — if a meeting happened this week that isn't written up yet, offer it.
+7. **`synthesise-meeting`** — catch up any meeting that happened and isn't written up yet. **Pass
+   it a scope word** so the sweep matches when you are running this: `this week` at the end of a
+   week, `last week` at the start of the next one. A scope is a hard window, so if the run
+   straddles a weekend, check both rather than assuming one covered it.
 8. **`sync-notion-mirror`** — refresh the read-only copy of the Notion databases in the context
    repo's `notion/`. **Run it after items 1–7**, since it is a snapshot of whatever they left
    behind. This is the only way teammates without the Notion connector see any of the week's
