@@ -5,9 +5,12 @@
 The c-energie **marketplace repo**, holding the context plugins as subdirectories:
 `plugins/context-kit-core` (core layer), `plugins/context-notion` (Notion middle layer) and
 `plugins/context-slack` (Slack delivery layer, added 2026-08-07). The root carries only
-`.claude-plugin/marketplace.json`, `.gitattributes` and this file — every plugin file, script
-and invariant lives inside its plugin directory, each with its own `CLAUDE.md`. The first two
-moved here from repo-root / standalone-repo layouts on 2026-08-02 so that one repo fetch
+`.claude-plugin/marketplace.json`, `.gitattributes`, an optional `justfile` and this file —
+every plugin file, script and invariant lives inside its plugin directory, each with its own
+`CLAUDE.md`. The `justfile` is convenience only: `just` is not installed by default and
+Cowork sandboxes cannot install it, so nothing may ever depend on a recipe, and a recipe that
+grows logic of its own belongs in a `scripts/*.mjs` where `check-plugin.mjs` can see it.
+The first two moved here from repo-root / standalone-repo layouts on 2026-08-02 so that one fetch
 delivers everything (Cowork cannot fetch a second private repo, and its installer did not
 surface a root-sourced plugin).
 

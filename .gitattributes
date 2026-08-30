@@ -4,3 +4,4 @@
 *.json text
 *.mjs text
 *.ps1 text
+justfile text eol=lf

@@ -52,6 +52,23 @@ PLUGIN="$(bash plugins/context-kit-core/scripts/plugin-repo.sh --plugin context-
 node "$PLUGIN/scripts/init-context.mjs" <owner>/<project>-context
 ```
 
+**Optionally, `just`.** A root `justfile` wraps the connector steps so none of those paths have to
+be typed. Recipes name a context repo as `<owner>/<repo>`, matching the `~/.context` clone layout,
+and run from anywhere inside this checkout:
+
+```bash
+just connector-check corson94/thesis-context          # diagnose, changes nothing
+just connector-add   corson94/thesis-context github   # declare the provider in context.json
+just connector       corson94/thesis-context          # provision, prompting for the credential
+```
+
+Convenience only, and today it covers the connector steps alone. `just` is not installed by
+default (`winget install --id Casey.Just`) and Cowork sandboxes cannot install it, so **nothing in
+this repo may depend on a recipe** — each one is a thin pass-through to the same script, and the
+scripts stay the reproducible route. `just connector` needs a real terminal: the credential is read
+from a hidden prompt so it never reaches a conversation or a shell history, which also means it
+cannot be driven by an agent.
+
 The full narrative checklist lives in the
 [context-template README](https://github.com/c-energie/context-template); the short form:
 
