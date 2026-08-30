@@ -65,6 +65,13 @@ It verifies the repo resolves *before* writing anything, merges `PROJECT_CONTEXT
 argument, never inferred from the project's git remote: guessing it is the wrong-context
 failure this plugin exists to prevent.
 
+**`${CLAUDE_PLUGIN_ROOT}` in these commands is not a shell variable.** The plugin loader
+substitutes it into skill text and hook commands before they run, per plugin; a terminal knows
+nothing of it and expands it to the empty string, turning the line above into
+`node /scripts/link-context.mjs`. Pasting one of these into a shell needs the directory named
+instead — `bash scripts/plugin-repo.sh --plugin context-kit-core` prints it, resolving the
+source checkout rather than the read-only installed copy under `~/.claude/plugins/`.
+
 **Starting from the context instead of the project.** Everything above answers "which context
 does *this* project load", asked from a session that has already started somewhere. The two
 launchers go the other way — pick a checkout under `~/.context`, then start Claude in it —

@@ -38,6 +38,20 @@ Where to run them from: inside a session with the plugin installed, the scripts 
 prompts and the checks around it — the scripts are what makes each step reproducible, not a
 second way to do it.
 
+**`${CLAUDE_PLUGIN_ROOT}` is not a shell variable.** The plugin loader substitutes it into skill
+text and hook commands before either runs, and does so *per plugin* — so it resolves for a skill
+calling a script inside its own plugin, and expands to **nothing** in a terminal, where
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/init-context.mjs"` quietly becomes
+`node /scripts/init-context.mjs`. Setting it by hand is not the fix: one value cannot be right for
+three plugins at once, and it would shadow the correct one the loader injects. From a shell, name
+the directory instead — `plugins/context-kit-core/scripts/…` inside a checkout, or ask the
+resolver, which answers with the source checkout rather than the read-only installed copy:
+
+```bash
+PLUGIN="$(bash plugins/context-kit-core/scripts/plugin-repo.sh --plugin context-kit-core)"
+node "$PLUGIN/scripts/init-context.mjs" <owner>/<project>-context
+```
+
 The full narrative checklist lives in the
 [context-template README](https://github.com/c-energie/context-template); the short form:
 
