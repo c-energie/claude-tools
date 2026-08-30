@@ -14,6 +14,22 @@
 // filename slug. Reading the first non-empty line instead — which was the original behaviour —
 // yields the literal `---` fence for every file in a repo that uses front-matter, i.e. every
 // file this is pointed at. Observed on a real curation pass, 2026-08-13.
+//
+// AUDIENCE. A thread's optional `audience:` says who it was written for — `working` (session
+// sediment, nobody needs to read it cold), `team` (a document a colleague should read), or
+// `external` (fit to leave the organisation). It is surfaced here because the question "which
+// of these is a document rather than a pile of notes" is otherwise answerable only by opening
+// twenty files, and because it is the one classification a reader cannot infer: every thread is
+// written to the same house style whether or not anyone but its author will ever want it.
+//
+// It is read from front-matter and NEVER supplied through --gists. status and gist are
+// index-side judgements *about* a thread and belong to whoever rebuilds the index; audience is a
+// property *of* the thread, authored with it. Accepting it here as well would create a second
+// place to answer it, and the two would disagree the first time a thread was edited.
+//
+// An absent audience renders nothing rather than a default. Treating absent as `working` would
+// silently classify every thread written before the field existed, which is precisely the claim
+// nobody has made yet — the same absent-versus-empty distinction drawn across this plugin.
 
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,6 +53,12 @@ if (!root) { console.error('thread-index.mjs: needs the context repo root'); pro
 const gists = gistsPath ? JSON.parse(readFileSync(gistsPath, 'utf8')) : {};
 
 const SKIP = new Set(['README.md', 'INDEX.md']);
+
+// Ordered least to most public. The order is the point: `working` is the default a thread earns
+// by being nobody's document but its author's, and each step out widens who is expected to read
+// it. Anything else in the field is reported rather than rejected — see scan().
+const AUDIENCES = ['working', 'team', 'external'];
+const unknownAudience = [];
 
 // Split leading YAML front-matter from the body. Returns fm as an array of lines (null when the
 // file has none, or when the block is never closed — an unterminated fence must not swallow the
@@ -94,12 +116,17 @@ function topicOf(text, filename) {
 // "supervisor: editor" forward as a status — a line that still matched, so carriedUnparsed
 // stayed 0 and nothing was reported. Latent until the first owner-bearing line was generated
 // (2026-08-23): the three that existed had been hand-written into an index, five fields wide.
+//
+// `audience:` is the second such optional segment and is matched the same way, for the same
+// reason. Both are prefixed with a literal tag in the rendered line precisely so this pattern
+// can tell them apart from the status that follows — an untagged optional field between two
+// free-text ones cannot be located unambiguously at all.
 const INDEX_LINE =
-  /^-\s+(\S+)\s+·\s+(.*?)\s+·\s+(?:(?:assistant|supervisor):\s*[^·]+?\s+·\s+)?([^·]*?)\s+·\s+(.*?)\s+·\s+`([^`]+)`\s*$/;
-// Belt and braces for the same failure: a status is never an owner tag, so if one ever appears
-// there again the line is treated as unparsed and COUNTED, rather than silently overwriting a
-// real status. A format change should cost a warning, not a column.
-const OWNER_AS_STATUS = /^(assistant|supervisor):/;
+  /^-\s+(\S+)\s+·\s+(.*?)\s+·\s+(?:(?:assistant|supervisor):\s*[^·]+?\s+·\s+)?(?:audience:\s*[^·]+?\s+·\s+)?([^·]*?)\s+·\s+(.*?)\s+·\s+`([^`]+)`\s*$/;
+// Belt and braces for the same failure: a status is never a tag, so if one ever appears there
+// again the line is treated as unparsed and COUNTED, rather than silently overwriting a real
+// status. A format change should cost a warning, not a column.
+const TAG_AS_STATUS = /^(assistant|supervisor|audience):/;
 let carriedUnparsed = 0;
 function readExistingIndex(dir) {
   const file = join(root, ...dir.split('/'), 'INDEX.md');
@@ -111,7 +138,7 @@ function readExistingIndex(dir) {
     const m = INDEX_LINE.exec(line);
     if (!m) { carriedUnparsed++; continue; }
     const [, , , status, gist, path] = m;
-    if (OWNER_AS_STATUS.test(status)) { carriedUnparsed++; continue; }
+    if (TAG_AS_STATUS.test(status)) { carriedUnparsed++; continue; }
     // A carried TODO is not an answer; leave it to be regenerated.
     map.set(path, {
       status: status.startsWith('TODO:') ? undefined : status,
@@ -136,6 +163,12 @@ function scan(dir, archived) {
         gist: explicit.gist ?? carried.gist,
       };
       if (carried.gist && !explicit.gist) carriedCount++;
+      const fm = splitFrontMatter(text).fm;
+      const audience = fmScalar(fm, 'audience');
+      // An unknown value is rendered as written and counted, never corrected or dropped. A
+      // typo'd value the reader can see is a two-second fix; one this silently swallowed would
+      // leave a thread looking unclassified forever, and the author would never learn why.
+      if (audience && !AUDIENCES.includes(audience)) unknownAudience.push(`${dir}/${f}: ${audience}`);
       return {
         date: /^(\d{4}-\d{2}-\d{2})/.exec(f)?.[1] ?? '—',
         topic: topicOf(text, f),
@@ -144,10 +177,10 @@ function scan(dir, archived) {
         // flat directory. Surfacing the owner is what keeps the index navigable once a role
         // starts writing daily, and what lets a reader see which lines belong to a role rather
         // than to the project itself.
-        owner: fmScalar(splitFrontMatter(text).fm, 'assistant')
-          || fmScalar(splitFrontMatter(text).fm, 'supervisor') || null,
-        kind: fmScalar(splitFrontMatter(text).fm, 'assistant') ? 'assistant'
-          : (fmScalar(splitFrontMatter(text).fm, 'supervisor') ? 'supervisor' : null),
+        owner: fmScalar(fm, 'assistant') || fmScalar(fm, 'supervisor') || null,
+        kind: fmScalar(fm, 'assistant') ? 'assistant'
+          : (fmScalar(fm, 'supervisor') ? 'supervisor' : null),
+        audience: audience || null,
         status: meta.status ?? (archived ? 'archived' : 'TODO: active/settled?'),
         gist: meta.gist ?? 'TODO: one-line gist',
         path: `${dir}/${f}`,
@@ -167,12 +200,15 @@ const existing = readExistingIndex(THREAD_DIR);
 let carriedCount = 0;
 const active = scan(THREAD_DIR, false);
 const archived = scan(ARCHIVE_DIR, true);
-const line = (t) => `- ${t.date} · ${t.topic}${t.owner ? ` · ${t.kind}: ${t.owner}` : ''} · ${t.status} · ${t.gist} · \`${t.path}\``;
+const line = (t) => `- ${t.date} · ${t.topic}`
+  + `${t.owner ? ` · ${t.kind}: ${t.owner}` : ''}`
+  + `${t.audience ? ` · audience: ${t.audience}` : ''}`
+  + ` · ${t.status} · ${t.gist} · \`${t.path}\``;
 
 const out = [
   '# Thread index',
   '',
-  `_Generated ${new Date().toISOString().slice(0, 10)} — one line per thread. Format: date · topic · status · gist · path._`,
+  `_Generated ${new Date().toISOString().slice(0, 10)} — one line per thread. Format: date · topic · [assistant/supervisor: owner] · [audience: working|team|external] · status · gist · path. The two bracketed segments appear only when the thread declares them._`,
   '',
   `## Active (${active.length})`,
   ...(active.length ? active.map(line) : ['- _none_']),
@@ -201,4 +237,19 @@ if (carriedUnparsed) {
   console.error(
     `WARNING: ${carriedUnparsed} line(s) in the existing INDEX.md could not be parsed, so any`
     + ` gist they held was NOT carried forward. Check them before writing.`);
+}
+
+// Reported, never actioned. An unclassified thread is not a defect — the field is optional and
+// most threads predate it — but the count is the only way anyone learns the classification
+// exists, and a number that moves is what makes it worth setting.
+const unclassified = [...active, ...archived].filter((t) => !t.audience).length;
+if (unclassified) {
+  console.error(
+    `${unclassified} thread(s) declare no audience: — add `
+    + `\`audience: ${AUDIENCES.join('|')}\` to a thread's front-matter to say who it was written for.`);
+}
+if (unknownAudience.length) {
+  console.error(
+    `WARNING: ${unknownAudience.length} thread(s) declare an audience outside `
+    + `${AUDIENCES.join('|')} — rendered as written:\n    ${unknownAudience.join('\n    ')}`);
 }

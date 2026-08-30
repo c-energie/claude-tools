@@ -361,7 +361,75 @@ const threads = {
 if (threads.index.behind) actions.push(`/curate-context  (threads/INDEX.md lists ${threads.index.entries ?? 0} of ${threads.index.covers} threads)`);
 else if (threads.sinceReview >= 5) actions.push(`/curate-context  (${threads.sinceReview} threads since the last review${reviewed ? ` on ${reviewed}` : ''})`);
 
-// ---------------------------------------------------------------- 6. pending, and native memory
+// ---------------------------------------------------------------- 6. outcomes that never landed
+
+// A thread reaches a decision, names an action or leaves a question open, and that outcome is
+// supposed to end up somewhere structured — a decision log, an issue tracker — because a
+// decision only findable by rereading the thread that produced it is a decision nobody will
+// find. `save-thread` REMINDS the author to do that and deliberately does not do it itself, so
+// the reminder is exactly as reliable as the person reading it. Nothing counted whether it was
+// ever acted on, which made this the one queue in the ladder with no depth gauge at all.
+//
+// WHAT COUNTS AS LANDED is the front-matter link key, and the absent-versus-empty distinction
+// drawn everywhere else in this plugin is the whole mechanism:
+//   absent          — never reconciled. Reported.
+//   `notion_ids: []` — reconciled, and there was nothing to log. Clear.
+//   non-empty       — the outcome landed and here is where. Clear.
+// So the queue drains to zero by doing the work OR by recording that there was none, both of
+// them one line in the file. A queue that can only be drained by the first is a queue that
+// never reaches zero, and a number that cannot reach zero stops being read.
+//
+// TWO KEYS, because outcomes have two destinations and core is not entitled to know which one
+// this project uses: `notion_ids` for the decision-log route, `issue_ids` for the tracker
+// route. Either satisfies the check. Naming both here rather than reading the backend config
+// keeps this a generic scan — context-notion owns what a Notion id *means*, this owns only
+// whether the author answered the question.
+//
+// HEADINGS, NOT PROSE. Whether a thread carries an outcome is judged from its section headings
+// alone. Reading the body for decision-shaped sentences would be a second, fuzzier authority on
+// what a decision is, disagreeing with the author's own structure. The house template already
+// names these sections, so a thread that has one meant it.
+//
+// ACTIVE THREADS ONLY. An archived thread's outcomes were curate-context's business at the
+// moment it was archived, and nobody is going to reopen a settled thread to log a decision from
+// it. Counting them would put a floor under the number that no amount of work could lift.
+const OUTCOME_HEADING =
+  /^#{2,6}\s*(decisions?|actions?|action items?|follow[-\s]?ups?|next steps?|open questions?)\b/i;
+const LINK_KEYS = ['notion_ids', 'issue_ids'];
+
+const reconcile = { total: allThreads.length, unlinked: [], carrying: 0 };
+for (const f of allThreads) {
+  const text = readFileSync(join(threadsDir, f), 'utf8');
+  const fm = frontMatter(text);
+  // Any of the keys PRESENT — at any value, including empty — is an answer. Only silence counts.
+  if (LINK_KEYS.some((k) => fmValue(fm, k) !== null)) continue;
+  const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, '');
+  const sections = [...new Set(
+    body.split(/\r?\n/).map((l) => OUTCOME_HEADING.exec(l)?.[1].toLowerCase()).filter(Boolean),
+  )];
+  reconcile.unlinked.push({
+    file: f,
+    date: fmValue(fm, 'date') ?? fileDate(f),
+    title: fmValue(fm, 'title') ?? f.replace(/\.md$/, ''),
+    sections,
+  });
+  if (sections.length) reconcile.carrying += 1;
+}
+// Carrying an outcome first, then oldest first: the top of the list is the thread that has been
+// waiting longest with something in it actually worth logging.
+reconcile.unlinked.sort((a, b) =>
+  (b.sections.length ? 1 : 0) - (a.sections.length ? 1 : 0)
+  || String(a.date ?? '9999').localeCompare(String(b.date ?? '9999')));
+
+// Only the carrying ones raise an action. A thread with no outcome section and no link key has
+// nothing to reconcile yet, and telling someone to go and confirm that would be manufacturing
+// work rather than reporting it.
+if (reconcile.carrying > 0) {
+  actions.push(`${reconcile.carrying} thread(s) carry decisions/actions with no outcome link`
+    + ` — log them (/log-decision, /add-action if this project uses Notion), or record \`notion_ids: []\``);
+}
+
+// ---------------------------------------------------------------- 7. pending, and native memory
 
 // pending/ belongs to whichever backend layer is installed — context-notion owns its format.
 // Counting files needs none of that, and a queue nobody counts is a queue nobody drains, so
@@ -388,7 +456,7 @@ const data = {
   root, repo: repoName, today,
   kind: sweeps ? 'cross-project layer' : 'project context repo',
   declared: { assistants: Object.keys(assistants), supervisors: Object.keys(supervisors), include: includes },
-  queues: { lessons, slices, sweptThreads, handoff, doctrine, threads, pending, memory },
+  queues: { lessons, slices, sweptThreads, handoff, doctrine, threads, reconcile, pending, memory },
   actions,
 };
 
@@ -399,6 +467,7 @@ if (flags.has('json')) {
 
 const L = [];
 const pad = (s, n) => String(s).padEnd(n);
+const clip = (s, n) => (String(s).length > n ? `${String(s).slice(0, n - 1)}…` : String(s));
 const head = (title, owner) => {
   L.push('');
   L.push(`  ${title}${owner ? `${' '.repeat(Math.max(2, 58 - title.length))}${owner}` : ''}`);
@@ -486,6 +555,23 @@ L.push(`    last review: ${threads.lastReviewed ?? 'never stamped in memory.md'}
 L.push(threads.index.present
   ? `    threads/INDEX.md lists ${threads.index.entries} of ${threads.index.covers}${threads.index.behind ? '  — BEHIND' : ''}`
   : '    threads/INDEX.md is absent');
+
+if (reconcile.total) {
+  head('THREAD OUTCOMES NEVER LOGGED', '/log-decision · /add-action');
+  L.push(`    ${reconcile.carrying} of ${reconcile.total} active thread(s) carry decisions/actions/questions`
+    + ' and declare no outcome link');
+  for (const t of reconcile.unlinked.filter((t) => t.sections.length)) {
+    L.push(`        ${t.date ?? 'undated'}  ${pad(clip(t.title, 46), 46)} ${t.sections.join(', ')}`);
+  }
+  const silent = reconcile.unlinked.length - reconcile.carrying;
+  // Stated rather than listed. These are threads with nothing to reconcile, and a name per line
+  // would bury the ones that do under the ones that do not.
+  if (silent) L.push(`    ${silent} more carry no outcome section — nothing to log`);
+  if (reconcile.carrying || silent) {
+    L.push('    Clear one by logging the outcome and recording where it went, or by writing');
+    L.push('    `notion_ids: []` — absent means never checked, empty means checked and there was none.');
+  }
+}
 
 if (pending.present) {
   head('PENDING QUEUE', '');
