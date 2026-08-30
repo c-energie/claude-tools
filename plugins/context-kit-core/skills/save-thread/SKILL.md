@@ -96,6 +96,17 @@ List `$ROOT/threads/*.md`. If one clearly covers this topic, **append** a dated 
   questions** if any. Tight — this is the working layer, not the durable one.
 - New files start with the front-matter block the repo's `templates/thread.md` defines (if the
   repo has one — read it rather than inventing). Appends leave existing front-matter alone.
+- **`audience:` — say who this was written for.** `working` (session sediment; nobody needs to
+  read it cold), `team` (a document a colleague should read), or `external` (fit to leave the
+  organisation). It is the one thing about a thread a later reader cannot infer: every thread is
+  written to the same house style whether or not anyone but its author will ever want it, so
+  without the field the pile is undifferentiated and the readable documents in it stay buried.
+  `thread-index.mjs` surfaces it as a column. **Set it from the work, not from the polish** —
+  a rough note that a colleague needs is `team`; a beautifully written trace of a debugging
+  session is `working`. Genuinely unsure, or appending to a thread that has no `audience:`
+  yet → leave it out. Absent means unclassified, and is treated as such everywhere; guessing
+  `working` to fill the field in is the one way to make the classification worse than no
+  classification.
 - The filename **must** end `.md` — the SessionStart hook only finds `*.md`.
 - **No angle brackets in any front-matter value** — ingesters read `[token]`-style angle
   brackets as tags and silently drop the field. Use `[topic]` or `{topic}`.
@@ -114,5 +125,20 @@ Report the file path and the pushed commit.
 
 If a conclusion has **settled**, suggest promoting it into `memory.md`. If the project has a
 structured decision log (see its `context.json`), suggest recording the decision there too.
+
+**Then record the answer, whichever way it goes.** A thread whose decisions were logged and a
+thread whose decisions were forgotten look identical from the outside, so the reminder above was
+for years exactly as reliable as the person reading it. Close the loop in the front-matter:
+
+- `notion_ids: ["url", ...]` (or `issue_ids:` for a tracker) — where the outcome landed.
+- `notion_ids: []` — asked and answered: there was nothing here worth logging.
+- **the key absent** — nobody has considered it yet.
+
+That absent-versus-empty distinction is the whole mechanism: `context-status` counts threads
+carrying a Decisions / Actions / Open questions / Next step section with **no** link key, and
+reports them under `THREAD OUTCOMES NEVER LOGGED`. Writing `notion_ids: []` is therefore a real
+answer that drains the queue, not a way of dodging it — and the queue can only reach zero
+because that answer exists. Offer the line; don't write outcomes to Notion unasked (that is
+`add-action` / `log-decision`, and both are their own skills for a reason).
 
 **Not this skill:** re-reading the context is `refresh-context`.

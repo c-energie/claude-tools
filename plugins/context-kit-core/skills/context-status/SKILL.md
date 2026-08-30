@@ -1,6 +1,6 @@
 ---
 name: context-status
-description: Report what is outstanding across the context ladder — lessons waiting for a sweep, sweeps waiting to be distilled, handoff items nobody has drained, threads due for curation, a pending queue, and native memory awaiting triage — each with the skill that clears it. Triggers like "what is outstanding", "what do I need to run", "what is queued up", "is anything waiting", "status of my context", "catch me up on the context system", "what has built up".
+description: Report what is outstanding across the context ladder — lessons waiting for a sweep, sweeps waiting to be distilled, handoff items nobody has drained, threads due for curation, thread outcomes never logged to a decision log or tracker, a pending queue, and native memory awaiting triage — each with the skill that clears it. Triggers like "what is outstanding", "what do I need to run", "what is queued up", "is anything waiting", "status of my context", "catch me up on the context system", "what has built up", "did those decisions ever get logged".
 ---
 
 # What is outstanding
@@ -56,6 +56,11 @@ Then add the judgement the script cannot:
 - **A threshold is a floor, not a schedule.** `ready` means there is enough evidence to distil,
   not that it must happen today. Distilling two lessons into doctrine manufactures confidence
   the evidence does not support — which is exactly why the threshold exists.
+- **"Never logged" is a question, not an accusation.** `THREAD OUTCOMES NEVER LOGGED` counts
+  threads that reached a decision or named an action and carry no `notion_ids` / `issue_ids`
+  link. It cannot tell whether the outcome was logged and simply never linked back. So offer
+  the two ways to clear each one — log it now, or record `notion_ids: []` because there was
+  nothing to log — and never assert that the work was skipped.
 - **An absent clone contributed nothing.** If a source repo has no clone, its lessons were not
   counted, and the total is a floor rather than a figure. Say so; never let silence read as
   "that project had nothing to add".

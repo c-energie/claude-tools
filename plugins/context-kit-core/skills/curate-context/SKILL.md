@@ -81,6 +81,14 @@ Present this as a clear plan: which threads stay, which are promoted / condensed
 
    `gists.json` is `{"[filename].md": {"status": "active", "gist": "one line"}}`. Anything you omit
    is left as a visible `TODO:` — never leave those in a committed index.
+
+   **`audience:` is not one of the fields you supply here.** It is read from each thread's own
+   front-matter and rendered as a column. `status` and `gist` are index-side judgements *about*
+   a thread and belong to whoever rebuilds the index; audience is a property *of* the thread,
+   authored with it. If curation shows a thread is plainly a document the team should read, edit
+   that thread's front-matter and rebuild — never route it through `gists.json`, which would
+   create a second place to answer the same question. The script reports how many threads
+   declare no audience at all; that count is information, not a TODO to clear.
 3. This changes shared understanding, so **ask the user before publishing** and follow the
    repo's own rule: open a pull request where the repo asks for one, else commit to the default
    branch. Report the PR / commit.

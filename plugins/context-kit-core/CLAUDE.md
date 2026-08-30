@@ -68,6 +68,27 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   with a repo of `none` is a **contradiction** that `save-thread` must report and refuse, never
   fall back from into the shared repo. Covers threads only — `.claude/memory.md` is untouched,
   because a durable account of how a codebase works *should* travel with a clone of it.
+- **A thread's `audience:` is AUTHORED, and absent is not a value.** `working` / `team` /
+  `external`, in that order of reach, declared in the thread's own front-matter and rendered by
+  `thread-index.mjs` as an optional index column. It answers the one thing a later reader cannot
+  infer — every thread is written to the same house style whether or not anyone but its author
+  will want it. Two rules keep it honest: it is **never** supplied through `--gists`, because
+  `status` and `gist` are judgements *about* a thread while audience is a property *of* one, and
+  a second place to answer it would disagree the first time a thread was edited; and **absent
+  renders nothing rather than defaulting to `working`**, since defaulting would silently
+  classify every thread written before the field existed. An unrecognised value is rendered as
+  written and reported, never corrected — a typo the author can see costs seconds, one this
+  swallowed would leave the thread unclassified forever with no way to learn why.
+- **A thread's outcome link is absent / empty / present, and all three mean different things.**
+  `notion_ids` (decision-log route) or `issue_ids` (tracker route) in a thread's front-matter:
+  **absent** = nobody has considered whether this thread's decisions were logged; **`[]`** =
+  considered, and there was nothing to log; **non-empty** = it landed, and here is where.
+  `context-status`'s `THREAD OUTCOMES NEVER LOGGED` queue counts only the absent case, and only
+  for threads carrying a Decisions / Actions / Open questions / Next step heading, in
+  `threads/` and never `Archive/threads/`. The empty form is what makes the queue *drainable* —
+  without it the count has a floor no amount of work can lift, and a number that cannot reach
+  zero stops being read. Core names both keys rather than reading the backend config: it owns
+  whether the author answered, not what a Notion id means.
 - **The generated marker lives in the CONTEXT repo's `.claude/context-project.json`** — one
   canonical, committable file per context repo, never a generated copy in each project that
   uses it. The hook merges into whatever is there (unknown keys survive) and writes only on a
