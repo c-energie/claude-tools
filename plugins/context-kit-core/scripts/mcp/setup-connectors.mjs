@@ -88,6 +88,51 @@ function splitAdd(arg) {
   return i < 0 ? [String(arg), null] : [String(arg).slice(0, i), String(arg).slice(i + 1) || null];
 }
 
+// ---------------------------------------------------------------- writing context.json
+
+// EDIT THE RAW TEXT, never a parsed-and-restringified object. A context repo's context.json is
+// hand-written and hand-formatted — inline objects, a comment key above each block — and
+// JSON.stringify(cfg, null, 2) reformats all of it: every inline object explodes into a block
+// and the trailing newline is lost, so a two-line change lands as ninety and the real edit is
+// unreviewable. This tool writes to a repo whose whole point is that its history reads. The
+// diff IS the product. (Done wrong here until 2026-08-30; context-doctor.mjs got it right
+// first and its replaceOnce() is the same idea.)
+
+// Render a connections value in the prevailing inline style, dropping to one line per provider
+// only when a single line would be unreadable.
+function renderConnections(v, indent) {
+  const inline = (o) => `{ ${Object.entries(o)
+    .map(([k, x]) => `${JSON.stringify(k)}: ${typeof x === 'string' ? JSON.stringify(x) : inline(x)}`)
+    .join(', ')} }`;
+  const one = inline(v);
+  if (one.length + indent.length <= 110) return one;
+  const pad = `${indent}  `;
+  return `{\n${Object.entries(v)
+    .map(([k, x]) => `${pad}${JSON.stringify(k)}: ${typeof x === 'string' ? JSON.stringify(x) : inline(x)}`)
+    .join(',\n')}\n${indent}}`;
+}
+
+// Span of the JSON value following "connections": in raw text. Brace-matched and string-aware,
+// so a brace inside a value cannot end it early. Returns null when the key is absent or the
+// value is not an object — callers must then say what they are about to do instead of guessing.
+function connectionsSpan(raw) {
+  const key = raw.search(/"connections"\s*:/);
+  if (key < 0) return null;
+  let i = raw.indexOf(':', key) + 1;
+  while (i < raw.length && /\s/.test(raw[i])) i++;
+  if (raw[i] !== '{') return null;
+  const start = i;
+  let depth = 0, inStr = false, esc = false;
+  for (; i < raw.length; i++) {
+    const c = raw[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return { start, end: i + 1 };
+  }
+  return null;
+}
+
 function has(cmd) {
   const probe = process.platform === 'win32'
     ? spawnSync('cmd', ['/c', `${cmd} --version`], { encoding: 'utf8', windowsHide: true })
@@ -276,7 +321,14 @@ async function main() {
   catch (e) { bad(`could not parse ${contextFile}: ${e.message}`); return 1; }
 
   const slug = projectSlug(contextFile, cfg);
-  const connections = { ...(cfg.connections ?? {}) };
+  // DEEP copy, and the original captured as text before anything touches it. A spread is
+  // shallow, so once a provider's value is a map, `connections[p][owner] = name` mutates the
+  // parsed cfg as well — and the change test below then compares the object with itself, finds
+  // no difference, and writes nothing. `--add github:[owner]` against an existing map silently
+  // did nothing until 2026-08-30. It only worked while every value was a string, because
+  // assigning a string REPLACES it rather than mutating through the shared reference.
+  const connectionsBefore = JSON.stringify(cfg.connections ?? {});
+  const connections = JSON.parse(connectionsBefore);
   // Present but empty: a committed "this project declares none", not a gap to fill.
   const declaredNone = cfg.connections !== undefined && !Object.keys(cfg.connections).length;
   const interactive = process.stdin.isTTY && !checkOnly;
@@ -346,14 +398,31 @@ async function main() {
     }
 
     // Persist the block if it changed.
-    if (JSON.stringify(connections) !== JSON.stringify(cfg.connections ?? {})) {
+    if (JSON.stringify(connections) !== connectionsBefore) {
       if (checkOnly) {
         warn('connections block would change — re-run without --check to write it');
       } else {
-        cfg.connections = connections;
+        const raw = readFileSync(contextFile, 'utf8');
+        const span = connectionsSpan(raw);
         copyFileSync(contextFile, `${contextFile}.bak-connections`);
-        writeFileSync(contextFile, JSON.stringify(cfg, null, 2));
-        ok(`wrote connections to ${contextFile} (backup: .bak-connections)`);
+        if (span) {
+          // Indent of the line the key sits on, so a multi-line render lines up with its
+          // neighbours rather than announcing which tool wrote it.
+          const lineStart = raw.lastIndexOf('\n', span.start) + 1;
+          const indent = (raw.slice(lineStart).match(/^[ \t]*/) ?? [''])[0];
+          writeFileSync(contextFile,
+            raw.slice(0, span.start) + renderConnections(connections, indent) + raw.slice(span.end));
+          ok(`wrote connections to ${contextFile} (backup: .bak-connections)`);
+        } else {
+          // No connections key yet, or one this cannot locate unambiguously. Restringifying is
+          // the only option left, and it reformats the file — so say so rather than let a
+          // reviewer discover ninety lines of churn in their next diff.
+          cfg.connections = connections;
+          writeFileSync(contextFile, `${JSON.stringify(cfg, null, 2)}\n`);
+          ok(`wrote connections to ${contextFile} (backup: .bak-connections)`);
+          warn('context.json had no "connections" block to edit in place, so the whole file was');
+          warn('  reformatted. Check the diff: the connections change is the only intended one.');
+        }
         console.log('  Commit it — the context repo is what the rest of the team reads.');
       }
     }
