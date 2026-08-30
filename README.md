@@ -112,8 +112,11 @@ The full narrative checklist lives in the
    paths survive a plugin update. `mcp/setup.mjs` is the freeform variant with no `context.json`
    involved; the details are in
    [`scripts/mcp/README.md`](plugins/context-kit-core/scripts/mcp/README.md).
-4. **Gate** — declare `connections` in `context.json`; skills use only the declared
-   connection per provider. `setup-connectors.mjs` proposes and writes the block when it is
+4. **Gate** — declare `connections` in `context.json`; skills use only what it declares for a
+   provider, and `connection-gate.mjs` denies the rest on every MCP call rather than trusting
+   them to. A provider may name one connection, or several keyed by resource owner — a
+   fine-grained GitHub PAT has a single owner, so a project spanning two needs two connectors
+   (`--add github:[owner]`). `setup-connectors.mjs` proposes and writes the block when it is
    missing; `{}` means "this project declares none, deliberately" and is left alone. Optional
    hard `deny` rules in other projects' laptop settings.
 5. **Discover** — for Notion-backed projects, the `notion-discover` skill fills

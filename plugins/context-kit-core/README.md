@@ -144,8 +144,9 @@ GitHub MCP connector instead. That connector must be registered in `~/.claude.js
 config Claude Code and Cowork sandboxes read — the desktop app's
 `claude_desktop_config.json` feeds only its chat side), holding a credential that can
 actually see the repo (fine-grained PATs have a single resource owner: one token per repo
-owner). Which of several connections a project may use is declared in its `context.json`
-`connections` block — the gate `context-setup` verifies. Two platform quirks the hook
+owner, so a project spanning two owners declares two connections as an owner-keyed map —
+`setup-connectors.mjs --add github:[owner]`). Which of several connections a project may use is
+declared in its `context.json` `connections` block — the gate `context-setup` verifies. Two platform quirks the hook
 absorbs: project files can mount *after* SessionStart fires (the hook retries ~10s, and
 the payload instructs the first response to recover regardless), and sandbox filesystem
 layouts vary (marker candidates cover all known ones, with a bounded find as backstop).

@@ -30,7 +30,8 @@ settings_key() {  # $1 = file, $2 = json key
 marker_repo() {
   # A marker is either one plain "owner/repo" line, or a JSON object (context-project.json)
   # whose "contextRepo" key names the repo and whose optional "connections" map names the
-  # MCP connection per provider. Sniff the first byte rather than trusting the filename.
+  # MCP connection per provider — one name, or a map of resource owner to name where a
+  # project spans two. Mirrored here verbatim, so both shapes reach a sandbox. Sniff the first byte rather than trusting the filename.
   case "$(head -c 1 "$1" 2>/dev/null)" in
     "{") settings_key "$1" contextRepo ;;
     *)   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n' ;;
@@ -339,6 +340,7 @@ if [ -z "$CONTEXT_REMOTE" ]; then
     echo "Run: find ~/mnt /mnt . -maxdepth 5 -name 'context-project.json' -o -name '.context-repo' 2>/dev/null"
     echo "If a marker is found: a context-project.json's \"contextRepo\" key names this project's"
     echo "context repo, and its optional \"connections\" map names the MCP connection per provider"
+    echo "(a provider may name several, keyed by resource owner)"
     echo "— use only those; a plain .context-repo marker is one owner/repo line. Read that"
     echo "repo's memory.md and context.json (git if available, else the GitHub MCP"
     echo "connector), treat them as the session context, and tell the user in one line which"

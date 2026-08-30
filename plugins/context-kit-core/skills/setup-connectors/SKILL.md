@@ -12,7 +12,20 @@ makes those exist on the current machine, each backed by its own narrowly-scoped
 **Why per-project credentials.** One connection per provider per machine would authenticate as
 the whole account: every repo, every workspace. Separate named connections, each with a
 fine-grained PAT or a workspace-specific integration token, are what make
-"use ONLY the one this project declares" enforceable rather than a convention.
+"use ONLY what this project declares" enforceable rather than a convention — `connection-gate.mjs`
+denies the rest on every MCP call.
+
+**A provider may declare more than one connection**, as a map of resource owner to name:
+
+```json
+{ "github": { "corson94": "github-second-brain", "c-energie": "github-second-brain-c-energie" } }
+```
+
+A fine-grained PAT has a single resource owner, so reaching two owners needs two tokens and two
+connectors; the owner key says which reaches which. `--add github:[owner]` declares the second and
+promotes the existing string without losing it. Use this for GitHub, where multiple owners is a
+fact about how PATs work — **not** for Notion or Slack, where two connections almost always means
+two workspaces have been merged into one project by mistake, and `context-doctor` will say so.
 
 ## 1. Diagnose first
 

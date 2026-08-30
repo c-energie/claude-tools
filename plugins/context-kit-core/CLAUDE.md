@@ -121,8 +121,19 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   It never writes that repo's `include` list — it prints the edit. Owner is the authenticated
   GitHub user, never the project's owner, and never inferred from a git remote.
 - **`connections` is ENFORCED, not merely announced.** `hooks/connection-gate.mjs` runs
-  `PreToolUse` on every `mcp__*` call and denies any connector that is not the one the
-  project's `connections` declares for that provider. The policy is *derived* from
+  `PreToolUse` on every `mcp__*` call and denies any connector the project's `connections`
+  does not declare for that provider. **A provider may declare more than one** — as a map of
+  resource owner to connection name, `{ "github": { "acme": "github-acme", "acme-labs": "…" } }`
+  — because a fine-grained GitHub PAT has a single resource owner, so a project spanning two
+  owners needs two tokens and therefore two connectors. The allowlist is a set of N, not a
+  weaker rule: everything outside it is still denied and it still has exactly one author. The
+  owner key is load-bearing rather than decorative — it says which connector reaches which
+  repositories, so a caller chooses deterministically instead of discovering it as a 404 that
+  reads like "no such repo". A plain string stays valid and means what it always did; a bare
+  array is accepted but says nothing about which is which, so `context-doctor` nudges it to a
+  map. `names()` in the gate and in `setup-connectors.mjs` must stay in step, and the gate's
+  copy must be **total** — it sits in front of a fail-open catch, so a throw there would allow
+  every MCP call on the machine rather than deny one. The policy is *derived* from
   `context.json` (falling back to the marker's mirrored copy, which is what reaches a Cowork
   sandbox) — never a hand-written deny list, which enumerates the others and is stale the day
   a connection is added. It **fails open and says so on stderr** when the policy cannot be

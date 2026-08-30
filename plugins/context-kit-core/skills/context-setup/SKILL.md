@@ -14,7 +14,8 @@ the context now, and fixes gaps with the user.
 - `PROJECT_CONTEXT_REPO` in the environment.
 - The project's `.claude/settings.local.json` / `.claude/settings.json` env block.
 - A marker file — `context-project.json` (JSON: `contextRepo`, plus an optional
-  `connections` map naming the MCP connection per provider and an optional `threads`
+  `connections` map naming the MCP connection per provider — one name, or a map of resource
+  owner to name where a project spans two owners — and an optional `threads`
   routing flag, see below), or one-line `.context-repo` /
   `context-repo.txt` — in `.claude/` (where the hook generates the context repo's own marker),
   the working directory

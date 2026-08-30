@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Set up this project's MCP connections: one named connection per provider, each backed by a
-// credential scoped to just this project's repos or workspace.
+// Set up this project's MCP connections: a named connection per provider (or several, keyed by
+// resource owner), each backed by a credential scoped to just this project's repos or workspace.
 //
 //   node setup-connectors.mjs                 declare what's missing, then provision it
 //   node setup-connectors.mjs --check         diagnose only, change nothing
 //   node setup-connectors.mjs --add slack     also declare a provider not yet in the block
+//   node setup-connectors.mjs --add github:c-energie   declare a SECOND github connection,
+//                                             the one serving that resource owner
 //   node setup-connectors.mjs --context <path/to/context.json>
 //
 // The `connections` block in the project's context.json is the source of truth — e.g.
@@ -12,6 +14,16 @@
 // It names which MCP server serves each provider HERE, which is what stops a machine holding
 // several projects' connections from writing through the wrong one. If the block is missing,
 // this script proposes names and writes it.
+//
+// A PROVIDER MAY NAME MORE THAN ONE CONNECTION, as a map of resource owner -> connection:
+//   { "github": { "acme": "github-acme", "acme-labs": "github-acme-labs" } }
+// because a fine-grained GitHub PAT has a single resource owner — a project spanning two owners
+// needs two tokens, so two connectors, and before this there was nowhere to say so. The owner
+// key is the point: it says which connector reaches which repositories, so a caller picks
+// deterministically instead of discovering the answer as a 404 that reads like "no such repo".
+// The plain string stays valid and unchanged; a bare array is tolerated but says nothing about
+// which is which, so context-doctor nudges it toward the map. hooks/connection-gate.mjs enforces
+// exactly this shape — the two must stay in step, or the gate denies what this writes.
 //
 // ABSENT and EMPTY are different, and never conflated — the same distinction the repo-name
 // resolvers draw between *unconfigured* and *opted out*. No `connections` key means nobody has
@@ -49,6 +61,32 @@ const PROVIDERS = {
 const ok = (m) => console.log(`  ok    ${m}`);
 const warn = (m) => console.log(`  warn  ${m}`);
 const bad = (m) => console.log(`  FAIL  ${m}`);
+
+// A provider declares either one connection name, or a map of resource owner -> name. The map
+// exists because a fine-grained GitHub PAT has a single resource owner: a project spanning two
+// owners needs two tokens, so two connectors, and the owner key is what tells a caller which
+// connector reaches which repositories. Kept in step with hooks/connection-gate.mjs, which
+// enforces the same shape and must accept everything written here.
+const names = (v) => {
+  if (typeof v === 'string') return v ? [v] : [];
+  if (Array.isArray(v)) return v.filter((n) => typeof n === 'string' && n);
+  if (v && typeof v === 'object') return Object.values(v).filter((n) => typeof n === 'string' && n);
+  return [];
+};
+
+// [owner, name] pairs for reporting. The string form has no owner to report, hence null.
+const entriesOf = (v) => {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    return Object.entries(v).filter(([, n]) => typeof n === 'string' && n);
+  }
+  return names(v).map((n) => [null, n]);
+};
+
+// "github" -> ['github', null]; "github:c-energie" -> ['github', 'c-energie'].
+function splitAdd(arg) {
+  const i = String(arg).indexOf(':');
+  return i < 0 ? [String(arg), null] : [String(arg).slice(0, i), String(arg).slice(i + 1) || null];
+}
 
 function has(cmd) {
   const probe = process.platform === 'win32'
@@ -213,7 +251,13 @@ async function main() {
   const argv = process.argv.slice(2);
   const checkOnly = argv.includes('--check');
   const at = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : null; };
-  const extraProvider = at('--add');
+  // --add github            declare github, if it is not declared at all
+  // --add github:c-energie  declare a SECOND github connection, the one serving that owner.
+  // The owner suffix is what makes a second connection expressible: a fine-grained PAT has one
+  // resource owner, so reaching two owners needs two tokens and two connectors, and the owner
+  // is the key that tells a caller which is which.
+  const addArg = at('--add');
+  const [extraProvider, extraOwner] = addArg ? splitAdd(addArg) : [null, null];
 
   console.log('\nProject connections\n');
 
@@ -266,11 +310,39 @@ async function main() {
 
     for (const p of wanted) {
       if (!PROVIDERS[p]) { warn(`No recipe for provider "${p}" — add one to add-mcp-connector.mjs.`); continue; }
-      if (connections[p]) { ok(`${p}: ${connections[p]} (already declared)`); continue; }
-      const suggested = `${p}-${slug}`;
-      connections[p] = rl
-        ? ((await rl.question(`  Name for the ${p} connection [${suggested}]: `)).trim() || suggested)
+      const existingNames = names(connections[p]);
+      // Without an owner this is "is this provider declared at all", as before. With one it is
+      // "is THIS owner declared" — otherwise a second connection could never be added, since the
+      // provider is already present the moment the first one exists.
+      if (!extraOwner && existingNames.length) {
+        ok(`${p}: ${existingNames.join(', ')} (already declared)`); continue;
+      }
+      if (extraOwner && connections[p] && typeof connections[p] === 'object'
+          && !Array.isArray(connections[p]) && connections[p][extraOwner]) {
+        ok(`${p}: ${connections[p][extraOwner]} (already declared for ${extraOwner})`); continue;
+      }
+      // The owner of the context repo itself is the right default for the connection that was
+      // already there: it is the owner every core skill actually needs (save-thread, the
+      // bootstrap read), and the project slug is a project name, not a GitHub owner.
+      const homeOwner = (typeof cfg.contextRepo === 'string' && cfg.contextRepo.includes('/'))
+        ? cfg.contextRepo.split('/')[0]
+        : slug;
+      const suggested = extraOwner ? `${p}-${slug}-${extraOwner}` : `${p}-${slug}`;
+      const chosen = rl
+        ? ((await rl.question(`  Name for the ${p} connection${extraOwner ? ` serving ${extraOwner}` : ''} [${suggested}]: `)).trim() || suggested)
         : suggested;
+      if (!extraOwner) { connections[p] = chosen; continue; }
+      // Promote a string to the map form rather than overwriting it — the existing connection
+      // keeps serving whatever it served, and losing it here would silently revoke access.
+      if (typeof connections[p] === 'string' && connections[p]) {
+        const owner = await (rl
+          ? rl.question(`  Which owner does the existing "${connections[p]}" serve? [${homeOwner}]: `)
+          : Promise.resolve(''));
+        connections[p] = { [(owner || '').trim() || homeOwner]: connections[p] };
+      } else if (!connections[p] || typeof connections[p] !== 'object' || Array.isArray(connections[p])) {
+        connections[p] = {};
+      }
+      connections[p][extraOwner] = chosen;
     }
 
     // Persist the block if it changed.
@@ -290,13 +362,18 @@ async function main() {
     console.log('');
     const existing = configuredServers();
     const missing = [];
-    for (const [provider, server] of Object.entries(connections)) {
-      if (existing.has(server)) ok(`${provider} → ${server} (configured)`);
-      else { warn(`${provider} → ${server} (NOT configured)`); missing.push([provider, server]); }
+    for (const [provider, value] of Object.entries(connections)) {
+      for (const [owner, server] of entriesOf(value)) {
+        const label = `${provider}${owner ? ` (${owner})` : ''} → ${server}`;
+        if (existing.has(server)) ok(`${label} (configured)`);
+        else { warn(`${label} (NOT configured)`); missing.push([provider, server]); }
+      }
     }
 
     // Same-provider connections belonging to other projects: not an error, but worth naming.
-    const declared = new Set(Object.values(connections));
+    // Flattened: without this every second connector a provider declares would be reported as
+    // another project's and off-limits — precisely backwards.
+    const declared = new Set(Object.values(connections).flatMap(names));
     for (const provider of Object.keys(connections)) {
       const others = [...existing].filter((n) => n.startsWith(provider) && !declared.has(n));
       if (others.length) warn(`other ${provider} connections on this machine, off-limits here: ${others.join(', ')}`);

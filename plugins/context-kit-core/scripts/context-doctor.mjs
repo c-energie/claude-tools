@@ -82,6 +82,17 @@ const replaceOnce = (text, pattern, replacement) => {
 };
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Every connection name a provider declares, whichever of the three shapes it used: one name,
+// a list, or a map of resource owner to name. Total on any input — this feeds warnings, so a
+// malformed value must yield nothing to say rather than take the whole check down. In step with
+// names() in hooks/connection-gate.mjs and scripts/mcp/setup-connectors.mjs.
+const namesOf = (v) => {
+  if (typeof v === 'string') return v ? [v] : [];
+  if (Array.isArray(v)) return v.filter((n) => typeof n === 'string' && n);
+  if (v && typeof v === 'object') return Object.values(v).filter((n) => typeof n === 'string' && n);
+  return [];
+};
+
 // ---------------------------------------------------------------- context.json
 
 const ctxFile = join(ROOT, 'context.json');
@@ -158,6 +169,60 @@ if (ctx) {
   if (ctx.connections !== undefined
       && (typeof ctx.connections !== 'object' || ctx.connections === null || Array.isArray(ctx.connections))) {
     add('err', 'connections', '"connections" is not an object');
+  } else if (ctx.connections) {
+    // Each provider names one connection, or a map of resource owner -> connection. A value the
+    // gate cannot read is not cosmetic: connection-gate.mjs denies every call for that provider,
+    // so a session loses the connector entirely and the refusal blames the wrong thing.
+    for (const [provider, v] of Object.entries(ctx.connections)) {
+      // NAMING IS LOAD-BEARING. connection-gate.mjs classifies a connector by this block first,
+      // then by sniffing the name for a provider word. So a name carrying no provider word is
+      // gated *here* — and nowhere else: in every other project on the machine nothing can tell
+      // what it is, and it is allowed unchecked. A GitHub connector called "claude-tools" was
+      // live and ungated across every project on this machine, 2026-08-30. The gate cannot fix
+      // that (it can never know what another project's connectors are for); only a rename can,
+      // so this is the one place the problem is visible while it is still cheap.
+      for (const n of namesOf(v)) {
+        if (!n.toLowerCase().includes(provider.toLowerCase())) {
+          add('warn', 'connections',
+            `connection "${n}" does not contain "${provider}", so outside this project the gate `
+            + 'cannot classify it and allows it unchecked. Rename it to carry the provider, and '
+            + 'move the Claude configs, the stored credential and this block together.');
+        }
+      }
+      if (typeof v === 'string') {
+        if (!v) add('err', 'connections', `"${provider}" is an empty string — omit it, or name the connection`);
+        continue;
+      }
+      if (Array.isArray(v)) {
+        add('warn', 'connections',
+          `"${provider}" is a list. It works, but it does not say which connection serves which `
+          + 'owner, so a caller cannot choose and finds out by 404. Prefer a map: '
+          + `{ "owner": "${v.find((n) => typeof n === 'string') ?? 'connection-name'}" }`);
+        continue;
+      }
+      if (!v || typeof v !== 'object') {
+        add('err', 'connections', `"${provider}" is neither a connection name nor a map of owner to name`);
+        continue;
+      }
+      const pairs = Object.entries(v);
+      if (!pairs.length) {
+        add('err', 'connections',
+          `"${provider}" is an empty map, which declares nothing while looking deliberate. `
+          + 'Remove the key, or set connections to {} if this project declares none on purpose.');
+      }
+      for (const [owner, name] of pairs) {
+        if (typeof name !== 'string' || !name) {
+          add('err', 'connections', `"${provider}.${owner}" is not a connection name`);
+        }
+      }
+      // One workspace is almost always right for these; two is a judgement call, not an error.
+      if (pairs.length > 1 && provider !== 'github') {
+        add('warn', 'connections',
+          `"${provider}" declares ${pairs.length} connections. Multiple owners is a GitHub fact `
+          + '(a fine-grained PAT has one resource owner); for other providers two usually means '
+          + 'two workspaces have been merged into one project by mistake.');
+      }
+    }
   }
 }
 

@@ -38,7 +38,16 @@ Both are configuration, never a guess:
   server to use, and a `context-project.json` marker carries the same name so the very first
   action of a sandbox session already knows it. On a machine with several scoped GitHub
   connections, **any other one is off-limits for this project** — a token scoped to a different
-  owner is exactly how the wrong repo gets written.
+  owner is exactly how the wrong repo gets written. `connection-gate.mjs` enforces this rather
+  than trusting it, so reaching for another project's connector is refused, not merely discouraged.
+
+  **It may name more than one.** A fine-grained PAT has a single resource owner, so a project
+  spanning two owners declares a map of owner to connection:
+  `{ "github": { "corson94": "github-second-brain", "c-energie": "github-second-brain-c-energie" } }`.
+  Pick by the owner of the repo you are reaching for — that is what the key is for. Guessing
+  costs you a 404 that says "not found" when it means "wrong credential", the same wrong-cause
+  failure a data-source ID gives a Notion create. Where the owner is not knowable, the entry
+  matching the context repo's own owner is the one every core operation here needs.
 
 Pass `branch` explicitly (usually `main`) rather than relying on the tool's default.
 
@@ -56,9 +65,11 @@ write mode with a token you have been given** — the scripts read credentials f
 prompt, stdin or the environment precisely so a token never passes through the conversation.
 Point the user at the command; let them run it.
 
-The token wants to be **fine-grained**, scoped to this project's context repo (a GitHub PAT has
-a single resource owner, so a second owner needs a second token), Contents **read and write**,
-with an expiry.
+The token wants to be **fine-grained**, scoped to this project's context repo, Contents **read
+and write**, with an expiry. A GitHub PAT has a single resource owner, so a second owner needs a
+second token *and* a second connection —
+`setup-connectors.mjs --add github:[owner]` declares it and keeps the existing one, promoting the
+value to the owner-keyed map form rather than overwriting.
 
 Servers must be registered in **both** `~/.claude.json` (Claude Code and Cowork sandboxes read
 this) and the desktop app's `claude_desktop_config.json` (the chat app reads that). Restart the
