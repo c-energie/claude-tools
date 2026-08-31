@@ -1,14 +1,23 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "context-kit",
-  "version": "0.1.0",
-  "description": "c-energie context tooling for Claude Code / Cowork.",
+  "name": "c-energie",
+  "version": "1.0.0",
+  "description": "c-energie's Claude Code / Cowork tooling: the context-repo system and the plugins built on it.",
   "owner": { "name": "c-energie" },
 
   "_comment": [
     "A field in a plugins[] entry OVERRIDES the same field in .claude-plugin/plugin.json.",
     "Declare name / description / version ONLY in plugin.json. Keep this file to the",
-    "marketplace-specific fields: source, category, tags, strict."
+    "marketplace-specific fields: source, category, tags, strict.",
+    "",
+    "The catalog `name` is what an identifier reads as: context-kit-core@c-energie. It is",
+    "deliberately the ORG, not the repo — one catalog per GitHub org, holding every plugin",
+    "that org's people share. A separate org gets a separate catalog (net-flex/claude-tools);",
+    "same people plus a new topic gets a new plugin in this one. See README.md.",
+    "",
+    "version 1.0.0 is the marker that the pre-rename identifiers are dead: this catalog was",
+    "named `context-kit` at 0.1.0, in a repo of that name, until 2026-08-31. An enabledPlugins",
+    "entry reading X@context-kit is stale and enables nothing."
   ],
 
   "plugins": [
@@ -25,6 +34,11 @@
     {
       "name": "context-slack",
       "source": "./plugins/context-slack",
+      "category": "productivity"
+    },
+    {
+      "name": "diagrams",
+      "source": "./plugins/diagrams",
       "category": "productivity"
     }
   ]

@@ -1,6 +1,6 @@
 # context-slack
 
-The **Slack delivery layer** for [context-kit](https://github.com/c-energie/context-kit): the
+The **Slack delivery layer** for [context-kit](https://github.com/c-energie/claude-tools): the
 skills that take what a project already tracks and put it in front of people on Slack — a
 per-person "who's got what" digest to a channel, and a direct nudge about the pending queue.
 

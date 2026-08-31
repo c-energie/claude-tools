@@ -123,7 +123,12 @@ if (ctx) {
   // against a template clone only if one is actually present. A version hard-coded in the
   // plugin would itself be a fact that goes stale, which is the bug being reported.
   const stamp = ctx.template?.version ?? null;
-  const tmplDir = process.env.CONTEXT_TEMPLATE_DIR ?? join(homedir(), '.context', 'c-energie', 'context-template');
+  // Moved out of ~/.context with the marketplace on 2026-08-31 — see kitDir below for why.
+  const tmplDir = [
+    process.env.CONTEXT_TEMPLATE_DIR,
+    join(homedir(), 'c-energie', 'context-template'),
+    join(homedir(), '.context', 'c-energie', 'context-template'),
+  ].find((d) => d && existsSync(d)) ?? join(homedir(), 'c-energie', 'context-template');
   let tmplVersion = null;
   try { tmplVersion = readJson(join(tmplDir, 'context.json')).template?.version ?? null; } catch { /* reported below */ }
 
@@ -230,7 +235,20 @@ if (ctx) {
 
 // Which plugin ids actually exist. Without a marketplace this check cannot run, and saying so
 // is the point: an unverifiable id must never read as a verified one.
-const kitDir = process.env.CONTEXT_KIT_PLUGIN_DIR ?? join(homedir(), '.context', 'c-energie', 'context-kit');
+// The TOOL repos live at ~/[owner]/[repo], outside ~/.context — that root is for context repos,
+// the data. Both moved on 2026-08-31, and the marketplace was renamed from context-kit to
+// claude-tools at the same time. Every earlier path is still tried: a clone at one of them is the
+// same repo, and giving up would turn every plugin id below into an unverifiable one, which
+// reads as "checked and fine" to anyone skimming the report.
+const findRepo = (candidates, marker, fallback) =>
+  candidates.find((d) => d && existsSync(join(d, marker))) ?? fallback;
+
+const kitDir = findRepo([
+  process.env.CONTEXT_KIT_PLUGIN_DIR,
+  join(homedir(), 'c-energie', 'claude-tools'),
+  join(homedir(), '.context', 'c-energie', 'claude-tools'),
+  join(homedir(), '.context', 'c-energie', 'context-kit'),
+], join('.claude-plugin', 'marketplace.json'), join(homedir(), 'c-energie', 'claude-tools'));
 let known = null;
 try {
   const mk = readJson(join(kitDir, '.claude-plugin', 'marketplace.json'));
@@ -249,8 +267,32 @@ if (existsSync(setFile)) {
   }
 }
 
+// Catalog names that USED to identify this marketplace and no longer resolve to anything.
+// A stale id is the one failure this file exists to catch and the one the loop below would
+// otherwise skip: `X@context-kit` looks like some other marketplace's business, so it is
+// silently ignored, the plugin never loads, and nothing anywhere says why. Renaming a catalog
+// therefore means retiring its old name HERE, not just in the marketplace.json that no longer
+// answers to it. (context-kit -> c-energie, 2026-08-31.)
+const DEAD_MARKETS = { 'context-kit': 'c-energie' };
+
 if (settings) {
   const enabled = settings.enabledPlugins ?? {};
+  for (const key of Object.keys(enabled)) {
+    const [plugin, market] = String(key).split('@');
+    const successor = DEAD_MARKETS[market];
+    if (!successor) continue;
+    add('err', 'plugins',
+      `.claude/settings.json enables "${key}", but the "${market}" marketplace was renamed to "${successor}". That id resolves to nothing and enables nothing — it is silently ignored, not reported, by the plugin loader.`,
+      { file: setFile, kind: 'rename-enabled-plugin', from: key, to: `${plugin}@${successor}` });
+  }
+
+  // The same rename, on the entry that registers the catalog in the first place.
+  for (const name of Object.keys(settings.extraKnownMarketplaces ?? {})) {
+    if (!DEAD_MARKETS[name]) continue;
+    add('err', 'plugins',
+      `.claude/settings.json registers the marketplace under its old name "${name}" (now "${DEAD_MARKETS[name]}"). The repo it points at was renamed too; GitHub redirects the clone, so this fails as "no such plugin" rather than "no such repo".`);
+  }
+
   if (!known) {
     add('note', 'plugins', `could not read a marketplace at ${kitDir} — enabledPlugins ids were NOT verified`);
   } else {

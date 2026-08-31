@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resolve a WRITABLE checkout of c-energie/context-kit — the plugin's own source repo —
+# Resolve a WRITABLE checkout of c-energie/claude-tools — the plugin's own source repo —
 # and bring it up to date. Prints the absolute path on stdout (nothing else) so callers can do:
 #   ROOT="$(bash scripts/plugin-repo.sh --writable)"
 #
@@ -28,14 +28,33 @@
 # Deliberately the same shape as context-repo.sh; keep the two in step.
 set -u
 
-PLUGIN_REMOTE="c-energie/context-kit"
-# ~/.context/<owner>/<repo>, the same layout context-repo.sh clones context repos into — derived
-# from PLUGIN_REMOTE rather than spelled out, so the two cannot drift. This repo is a tool, not a
-# context repo, but it is still a c-energie repo: the path mirrors GitHub and carries no meaning
-# beyond that, and what a directory *is* gets decided by content (the marketplace.json check
-# below), never by where it sits. It was a flat ~/.context/context-kit until 2026-08-11; an
-# existing clone under that name is not migrated, just re-cloned here and left to be deleted.
-CLONE_DIR="${CONTEXT_KIT_PLUGIN_DIR:-$HOME/.context/$PLUGIN_REMOTE}"
+PLUGIN_REMOTE="c-energie/claude-tools"
+# The repo was c-energie/context-kit until 2026-08-31, when it was renamed to match the catalog
+# it now declares (name: c-energie — one catalog per GitHub ORG, not per topic). GitHub redirects
+# the old clone URL, so a checkout made before the rename still fetches and pushes fine; it just
+# has the old name in its origin. Recognise it rather than cloning a second copy beside it — the
+# legacy name is accepted for RESOLUTION only, never for cloning, so nothing new lands there.
+PLUGIN_REMOTE_LEGACY="c-energie/context-kit"
+# ~/<owner>/<repo> — the same owner/repo mirror of GitHub that context repos use, but rooted at
+# $HOME rather than at ~/.context, and that difference is the point. ~/.context is the managed
+# clone root for CONTEXT repos: data, one per project, cloned and pulled by the resolver at every
+# session start. This repo is a TOOL. Keeping a tool in the data root meant the path said nothing
+# about which kind of thing a directory held, so every walker over that tree needed a content test
+# and an opt-out marker to avoid loading the marketplace as somebody's context. Moving the tools
+# out (2026-08-31) does not retire those tests — content still decides what a directory IS — but
+# it stops the layout actively suggesting the wrong answer.
+#
+# Derived from PLUGIN_REMOTE rather than spelled out, so the two cannot drift.
+CLONE_DIR="${CONTEXT_KIT_PLUGIN_DIR:-$HOME/$PLUGIN_REMOTE}"
+# Every path this repo has been cloned to before, newest first. A clone at one of them is the
+# same repo and is used where it sits — re-cloning beside it is how one checkout silently goes
+# stale. Resolution only; nothing new is ever written to these.
+#   ~/.context/c-energie/claude-tools  after the rename, before the move out of the data root
+#   ~/.context/c-energie/context-kit   after 2026-08-11, before the rename
+#   ~/.context/context-kit             the original flat slug
+CLONE_DIRS_LEGACY="$HOME/.context/$PLUGIN_REMOTE
+$HOME/.context/$PLUGIN_REMOTE_LEGACY
+$HOME/.context/${PLUGIN_REMOTE_LEGACY#*/}"
 cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 PULL=1; WRITABLE=0; PLUGIN=""
@@ -109,7 +128,11 @@ git_net() {
 is_plugin_repo() {
   local url
   url="$(git -C "$1" remote get-url origin 2>/dev/null)" || return 1
-  case "$url" in *"$PLUGIN_REMOTE"*) return 0 ;; *) return 1 ;; esac
+  case "$url" in
+    *"$PLUGIN_REMOTE"*)        return 0 ;;
+    *"$PLUGIN_REMOTE_LEGACY"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 ROOT=""
@@ -118,6 +141,15 @@ if is_plugin_repo "$cwd"; then
 elif [ -d "$CLONE_DIR/.git" ] && is_plugin_repo "$CLONE_DIR"; then
   ROOT="$CLONE_DIR"
 else
+  while IFS= read -r legacy; do
+    [ -n "$legacy" ] || continue
+    if [ -d "$legacy/.git" ] && is_plugin_repo "$legacy"; then ROOT="$legacy"; break; fi
+  done <<EOF
+$CLONE_DIRS_LEGACY
+EOF
+fi
+
+if [ -z "$ROOT" ]; then
   mkdir -p "$(dirname "$CLONE_DIR")" 2>/dev/null || true
   if git_net 0 clone "https://github.com/$PLUGIN_REMOTE.git" "$CLONE_DIR"; then
     ROOT="$CLONE_DIR"

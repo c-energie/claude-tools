@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 The **cross-project context layer** — a context repo like any other (stamped from
-`c-energie/context-template`, loaded by the [context-kit](https://github.com/c-energie/context-kit)
+`c-energie/context-template`, loaded by the [context-kit](https://github.com/c-energie/claude-tools)
 plugin), except that its `context.json` carries an `include` list, so sessions here also load
 the memory, glossary and thread index of every included project. There is no application code,
 no build and no tests: the content is markdown and one JSON config, committed with plain git.

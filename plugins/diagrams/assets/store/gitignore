@@ -1,0 +1,3 @@
+# Built by gallery-build.mjs from index.jsonl and the sources. Self-contained and regenerated
+# in a second, so committing it only ever produces a diff nobody reads.
+gallery.html

@@ -2,16 +2,30 @@
 
 ## What this repo is
 
-The c-energie **marketplace repo**, holding the context plugins as subdirectories:
-`plugins/context-kit-core` (core layer), `plugins/context-notion` (Notion middle layer) and
-`plugins/context-slack` (Slack delivery layer, added 2026-08-07). The root carries only
+`c-energie/claude-tools` — the c-energie **marketplace repo**, holding every plugin as a
+subdirectory: `plugins/context-kit-core` (core layer), `plugins/context-notion` (Notion middle
+layer), `plugins/context-slack` (Slack delivery layer, added 2026-08-07) and `plugins/diagrams`
+(the diagram store, added 2026-08-31). The root carries only
 `.claude-plugin/marketplace.json`, `.gitattributes`, an optional `justfile` and this file —
 every plugin file, script and invariant lives inside its plugin directory, each with its own
-`CLAUDE.md`. The `justfile` is convenience only: `just` is not installed by default and
+`CLAUDE.md`.
+
+**Repo name and catalog name differ on purpose.** The repo is `claude-tools`; the catalog it
+declares is `name: "c-energie"`, so identifiers read `context-kit-core@c-energie`. The catalog is
+named for the **org** because that is what it is — a marketplace is a permission boundary (read
+on this repo, all-or-nothing across its plugins), while a plugin is a topic boundary that costs
+nothing to add. Hence the rule in README.md: *a separate GitHub org gets a separate catalog; the
+same people plus a new topic gets a new plugin here.* Both names were `context-kit` until
+2026-08-31; the catalog `version` went to `1.0.0` to mark that the old identifiers are dead. A
+stale `X@context-kit` in some repo's `enabledPlugins` is **silently ignored**, not reported, so
+it presents as a plugin that failed to load — `context-doctor` carries the retired name and
+flags it.
+
+The `justfile` is convenience only: `just` is not installed by default and
 Cowork sandboxes cannot install it, so nothing may ever depend on a recipe, and a recipe that
 grows logic of its own belongs in a `scripts/*.mjs` where `check-plugin.mjs` can see it.
-The first two moved here from repo-root / standalone-repo layouts on 2026-08-02 so that one fetch
-delivers everything (Cowork cannot fetch a second private repo, and its installer did not
+The first two plugins moved here from repo-root / standalone-repo layouts on 2026-08-02 so that
+one fetch delivers everything (Cowork cannot fetch a second private repo, and its installer did not
 surface a root-sourced plugin).
 
 ## Working on this repo

@@ -3,7 +3,7 @@
 // *** COPY of context-kit-core/scripts/bash-bin.mjs — keep the two byte-identical below this
 // banner. *** Plugins cannot reach into each other's install directories, so the copy is
 // deliberate. A fix lands in context-kit-core's copy FIRST, then here. (Same rule as
-// context-repo.sh and dates.mjs, which live in all three plugins for the same reason.)
+// context-repo.sh and dates.mjs, which live in every plugin for the same reason.)
 //
 // In short: on Windows `bash` on PATH is WSL's System32ash.exe, which has its own filesystem
 // and $HOME, so it exits 127 on a Windows path instead of failing in a way callers recognise.

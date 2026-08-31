@@ -1,0 +1,8 @@
+# The store is text on purpose — that is the whole reason SVG/HTML source is committed and PNG
+# rasters are not. Text only pays off if `git diff` is readable, so nothing here may be
+# normalised into a whole-file rewrite on a machine with different line endings.
+*.svg   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+index.jsonl text eol=lf
+*.png   binary

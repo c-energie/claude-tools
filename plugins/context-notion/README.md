@@ -1,6 +1,6 @@
 # context-notion
 
-The **Notion middle layer** for [context-kit](https://github.com/c-energie/context-kit):
+The **Notion middle layer** for [context-kit](https://github.com/c-energie/claude-tools):
 generic Notion skills — actions, decisions, open questions, and the pending queue — driven
 entirely by the *project's* configuration, so one install serves every Notion-backed project
 (a product repo and a thesis alike, each against its own workspace).

@@ -9,7 +9,7 @@ Tokens are never written into the Claude config files. They go into the OS crede
 ## Setup
 
 These scripts ship inside the context-kit plugin: `plugins/context-kit-core/scripts/mcp/`
-in the `c-energie/context-kit` marketplace checkout.
+in the `c-energie/claude-tools` marketplace checkout.
 
 The usual route is project-driven — from a project whose context repo is configured:
 

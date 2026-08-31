@@ -3,7 +3,7 @@
 ## What this repo is
 
 The **core layer** context plugin (`context-kit`), shipped from its own marketplace in
-`c-energie/context-kit`. Generic machinery only: it loads/refreshes/writes *a* project's
+`c-energie/claude-tools`. Generic machinery only: it loads/refreshes/writes *a* project's
 context repo, selected per project by `PROJECT_CONTEXT_REPO`, settings files, or a marker — with no default: unconfigured projects say so, and `none` opts a project out silently.
 Anything project- or workspace-specific belongs in a higher layer: the planned Notion
 middle-layer plugin, or the project's own context repo (created from
@@ -102,8 +102,14 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   checkout, checks and bumps **per plugin directory**, and asks before every push.
 - **Edit the source checkout, not the installed copy** — `${CLAUDE_PLUGIN_ROOT}` points at
   `~/.claude/plugins/…`, which has no push remote and is overwritten on update. Resolve with
-  `scripts/plugin-repo.sh --writable` (managed clone: `~/.context/c-energie/context-kit` — the
-  same `~/.context/<owner>/<repo>` layout context repos use; flat until 2026-08-11).
+  `scripts/plugin-repo.sh --writable` (managed clone: `~/c-energie/claude-tools`). Same
+  `[owner]/[repo]` mirror of GitHub the context repos use, but rooted at `$HOME` rather than at
+  `~/.context` — that root is the managed clone root for **context** repos, the data, and this is
+  a tool. A tool sitting in the data root made the path say nothing about which kind of thing a
+  directory held. Moving it out (2026-08-31) does not retire the content tests that decide what a
+  directory *is*; it stops the layout suggesting the wrong answer. Every earlier path is still
+  resolved and used where it sits — re-cloning beside an existing checkout is how one of them
+  silently goes stale.
 - **`include` (cross-project loads) is explicit, one-level, and read-only.** A context repo's
   `context.json` may declare `include: ["owner/repo", ...]`; the hook then loads each named
   repo's memory/glossary/thread-index alongside the repo's own, per-repo STALE/UNAVAILABLE

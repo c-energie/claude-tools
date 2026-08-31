@@ -1,21 +1,50 @@
-# context-kit (marketplace)
+# claude-tools — the c-energie plugin catalog
 
-The c-energie plugin marketplace for the **context-repo system**: per-project memory that
-Claude sessions load at start, refresh mid-session, and write back — plus delivery layers
-(Notion, Slack) driven entirely by each project's configuration.
+**c-energie's** Claude Code / Cowork tooling, shipped as one marketplace: the
+**context-repo system** (per-project memory that sessions load at start, refresh mid-session
+and write back), its Notion and Slack delivery layers, and the shared diagram store.
 
-Three plugins, all shipped from this one repo (single fetch — that is what makes installs
-work on every surface, including Cowork, which cannot fetch a second private repo):
+Every plugin ships from this one repo (single fetch — that is what makes installs work on
+every surface, including Cowork, which cannot fetch a second private repo):
 
 | Plugin | What it is |
 | --- | --- |
 | [`plugins/context-kit-core`](plugins/context-kit-core/) | Core layer: SessionStart context loading (with visible status line), the context-repo resolvers, `refresh-context`, `save-thread`, `curate-context`, connector setup |
 | [`plugins/context-notion`](plugins/context-notion/) | Notion middle layer: config-driven actions / decisions / open questions, the pending queue, tidies, meeting synthesis and the `notion/` mirror |
 | [`plugins/context-slack`](plugins/context-slack/) | Slack delivery layer: the per-person digest and the pending-queue nudge. Nothing here posts unprompted |
+| [`plugins/diagrams`](plugins/diagrams/) | Diagram store: capture a diagram Claude just drew into a per-org git store, and build a single-file gallery over one or more of them |
 
-Install: add this repo as a marketplace (`/plugin marketplace add c-energie/context-kit`, or
-Cowork's plugin UI), then install `context-kit-core@context-kit` and — as the project needs
-them — `context-notion@context-kit` and `context-slack@context-kit`.
+Install: add this repo as a marketplace (`/plugin marketplace add c-energie/claude-tools`, or
+Cowork's plugin UI), then install `context-kit-core@c-energie` and — as the project needs
+them — `context-notion@c-energie`, `context-slack@c-energie`, `diagrams@c-energie`.
+
+## One catalog per org
+
+**The catalog is named `c-energie`, not `claude-tools`** — identifiers read
+`context-kit-core@c-energie`. That is deliberate, and it is the rule for where a new plugin
+goes:
+
+> **A separate GitHub org gets a separate catalog. The same people plus a new topic gets a new
+> plugin in this one.**
+
+A marketplace is a **permission** boundary: read on this repo is what a person gets, and it is
+all-or-nothing across every plugin in it. A plugin is a **topic** boundary, and costs nothing to
+add. So `diagrams` — a new topic for the same people — is a plugin here, while `net-flex`, a
+different org with a different membership, gets its own `net-flex/claude-tools`. A repo that
+needs both lists both marketplaces in its `extraKnownMarketplaces`; no plugin is ever duplicated
+across catalogs.
+
+Two consequences worth stating outright:
+
+- **Read on this catalog covers skill code only.** It is not a grant over anything a plugin
+  *reaches* — notably the per-org diagram stores, which are separate repos with their own access,
+  named per project in `context.json` and never defaulted.
+- **`X@context-kit` is dead.** This repo was `c-energie/context-kit` and this catalog was
+  `context-kit` at `0.1.0` until 2026-08-31. GitHub redirects the old clone URL, so git keeps
+  working — but a stale `enabledPlugins` id does not, and it fails *silently*: the loader ignores
+  an unknown catalog rather than reporting it, so it looks exactly like a plugin that crashed on
+  load. Catalog `version` `1.0.0` is the marker of that cut. `context-doctor` knows the retired
+  name and flags it (`--fix` rewrites it).
 
 ## Setting up a new project, end to end
 

@@ -1,11 +1,11 @@
 ---
 name: update-plugin
-description: Change the context plugins themselves — add or edit a skill, hook or script in the c-energie/context-kit marketplace repo (context-kit-core or context-notion) — then check the manifests, bump that plugin's version, commit and push. Use whenever the user asks to add, write, create, edit, rename, fix or delete a skill, slash command or hook, or to release a plugin. Triggers like "add a skill that does X", "write me a skill for X", "edit the refresh-context skill", "change the session-start hook", "the plugin is broken", "bump and release the plugin".
+description: Change the context plugins themselves — add or edit a skill, hook or script in the c-energie/claude-tools marketplace repo (context-kit-core or context-notion) — then check the manifests, bump that plugin's version, commit and push. Use whenever the user asks to add, write, create, edit, rename, fix or delete a skill, slash command or hook, or to release a plugin. Triggers like "add a skill that does X", "write me a skill for X", "edit the refresh-context skill", "change the session-start hook", "the plugin is broken", "bump and release the plugin".
 ---
 
 # Update the context plugins
 
-Edits the plugins' **own source repo** — `c-energie/context-kit`, a marketplace holding one
+Edits the plugins' **own source repo** — `c-energie/claude-tools`, a marketplace holding one
 directory per plugin under `plugins/` — and releases the change: check, bump, commit, push.
 Step 2 reads the current roster off the checkout, so this file never names a fixed set.
 
@@ -26,8 +26,8 @@ worked and then vanish. Always go through step 1.
 ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-repo.sh" --writable)"
 ```
 
-Uses the current repo if its `origin` is `c-energie/context-kit`, otherwise the managed clone at
-`${CONTEXT_KIT_PLUGIN_DIR:-$HOME/.context/c-energie/context-kit}` (cloning if missing); un-shallows it so
+Uses the current repo if its `origin` is `c-energie/claude-tools`, otherwise the managed clone at
+`${CONTEXT_KIT_PLUGIN_DIR:-$HOME/c-energie/claude-tools}` (cloning if missing); un-shallows it so
 the push can succeed, and pulls `--ff-only --autostash`. It prints the repo root on stdout and
 exits non-zero with a reason if the repo can't be reached — if that happens, say so and stop
 rather than editing the installed copy.
@@ -43,7 +43,8 @@ Today's date: `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs" today`.
 
 If `scripts/plugin-repo.sh` is missing from the installed plugin (packaging is only documented to
 ship `skills/`, `commands/`, `agents/` and `hooks/`), fall back to
-`git clone https://github.com/c-energie/context-kit.git ~/.context/c-energie/context-kit` and work there.
+`git clone https://github.com/c-energie/claude-tools.git ~/c-energie/claude-tools` and work there.
+(Not under `~/.context` — that root is for context repos, the data; this is a tool.)
 
 ## 2. Decide which plugin the change belongs to
 
@@ -214,11 +215,17 @@ skills behave. Report the files changed, the new version(s), and the pushed comm
 
 - **This session is still running the old code.** Skill and hook changes take effect on the next
   session, after the client picks up the new version.
-- To pull it: `/plugin marketplace update context-kit` in Claude Code. In **Cowork** there is no
+- To pull it: `/plugin marketplace update c-energie` in Claude Code. In **Cowork** there is no
   `/plugin` command — update from the plugin UI.
 - Note the marketplace-name trap if an update doesn't land: a client that registers a marketplace
   by *repository* name rather than by its declared `name` produces a different `plugin@marketplace`
-  key than the one a repo's `.claude/settings.json` `enabledPlugins` block names.
+  key than the one a repo's `.claude/settings.json` `enabledPlugins` block names. Here the two
+  differ on purpose: the repo is `claude-tools`, the catalog it declares is `c-energie`.
+- **`X@context-kit` is dead.** The catalog was renamed from `context-kit` to `c-energie` on
+  2026-08-31 (and the repo from `context-kit` to `claude-tools`), and its `version` went to
+  `1.0.0` to mark exactly that. A stale id enables nothing and is *silently ignored* rather than
+  rejected, so it looks identical to a plugin that failed to load. `context-doctor` knows the
+  retired name and flags it; `--fix` rewrites it.
 
 **Not this skill:** writing up work into a project's shared *context* repo is `save-thread` and
 `curate-context` — a different repo entirely.

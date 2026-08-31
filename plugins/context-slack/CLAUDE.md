@@ -11,7 +11,7 @@ no member ID, no workspace name. A skill that needs one reads `connections.slack
 grows. **The plugin defines the purpose keys, never the channels** — a project may declare keys
 this plugin has never heard of, and an unknown key is not a config error.
 
-Lives at `plugins/context-slack` **inside the context-kit repo** (`c-energie/context-kit`), whose
+Lives at `plugins/context-slack` **inside the context-kit repo** (`c-energie/claude-tools`), whose
 `marketplace.json` lists it with a relative source. There is no marketplace.json here, and the
 version lives in `plugin.json` only.
 
