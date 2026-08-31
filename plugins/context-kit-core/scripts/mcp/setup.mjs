@@ -53,7 +53,7 @@ function runChecks() {
     else warn(`config missing: ${p}`);
   }
   if (!foundConfig) {
-    bad('Neither config exists. Open Claude Desktop once (or run Claude Code once) and re-run.');
+    bad('The host config does not exist. Open Claude Desktop once and re-run.');
     fatal = true;
   }
 

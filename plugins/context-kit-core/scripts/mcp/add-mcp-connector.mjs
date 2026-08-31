@@ -23,9 +23,12 @@
 // credential store (Windows DPAPI / macOS Keychain / libsecret) and is read back at server
 // start by mcp-launch.mjs. See secret-store.mjs.
 //
-// Writes BOTH configs Claude reads (with backups), after verifying the token:
-//   - ~/.claude.json                                      (Claude Code + Cowork sandboxes)
-//   - AppData/Roaming/Claude/claude_desktop_config.json   (desktop chat app)
+// Writes the HOST config (with a backup), after verifying the token:
+//   - AppData/Roaming/Claude/claude_desktop_config.json   (desktop chat app AND Cowork — a
+//     Cowork sandbox does not run these servers, the host runs them and bridges them in)
+// It does NOT write ~/.claude.json. That is Claude Code's user scope, where one server loads
+// in every session on the machine; Claude Code is given the server per repo instead, and the
+// exact command to do that is printed at the end.
 import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { spawnSync } from 'node:child_process';
@@ -342,7 +345,11 @@ async function main() {
     console.log(`added "${name}" to ${path} (backup: .bak-mcp)`);
   }
 
-  console.log('Now FULLY QUIT and reopen the Claude desktop app; new Claude Code sessions pick it up on start.');
+  console.log('Now FULLY QUIT and reopen the Claude desktop app — that covers the chat app and Cowork.');
+  console.log('Claude Code does NOT read that config. To give this server to ONE repo, run from that repo:');
+  console.log(`  claude mcp add-json ${name} '${JSON.stringify(entry)}' -s local`);
+  console.log('  (or commit the same entry as .mcp.json there). Adding it at -s user would load it');
+  console.log('  in every Claude Code session on this machine, which is what per-repo scope avoids.');
   for (const note of provider.afterNotes) console.log(note);
   console.log('The .bak-mcp backups still contain any old inline tokens — delete them once this works.');
   return 0;

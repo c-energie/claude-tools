@@ -129,6 +129,19 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   such repo exists locally or on GitHub; an existing one is cloned and left exactly as it is.
   It never writes that repo's `include` list — it prints the edit. Owner is the authenticated
   GitHub user, never the project's owner, and never inferred from a git remote.
+- **One registry per surface, and they are not the same file.** `claude_desktop_config.json` is
+  the **host** registry — the desktop chat app and **Cowork** both read it, because a Cowork
+  sandbox does not run these servers: the host runs them and bridges them in, which is the whole
+  reason the token never enters the sandbox. `~/.claude.json`'s top-level `mcpServers` is
+  **Claude Code's user scope**, a different thing that only looks the same: a server there loads
+  in *every* Claude Code session on the machine whatever the project declares, so a laptop with
+  seven connectors made every one of its project directories pay for all seven. So
+  `configPaths()` in `scripts/mcp/secret-store.mjs` writes the host config **only**, and Claude
+  Code is given each server per repo (`claude mcp add-json … -s local`, or a committed
+  `.mcp.json`). `detectConfigPaths()` still *reads* the user scope — a machine part-way through
+  the move has servers there, and calling a working connection missing would send someone to
+  mint a second credential. `setup-connectors.mjs` reports the gap between the two and prints
+  the command that closes it; it must never close it by writing user scope.
 - **`connections` is ENFORCED, not merely announced.** `hooks/connection-gate.mjs` runs
   `PreToolUse` on every `mcp__*` call and denies any connector the project's `connections`
   does not declare for that provider. **A provider may declare more than one** — as a map of

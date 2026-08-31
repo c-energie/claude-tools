@@ -14,15 +14,32 @@ const HOME = homedir();
 
 // ---------------------------------------------------------------- config paths
 
-// Both files Claude reads on this machine. Claude Code and Cowork sandboxes use ~/.claude.json;
-// the desktop chat app uses a per-platform application support directory.
+// The HOST registry: the one config the desktop app reads. It serves the desktop chat app AND
+// Cowork — a Cowork sandbox does not run these servers itself, the host runs them and bridges
+// them in, which is the whole reason the token never enters the sandbox.
+//
+// `~/.claude.json` is deliberately NOT here. That is Claude CODE's user scope, and a server
+// registered there loads in every Claude Code session on the machine regardless of the project:
+// this one carries seven servers across fifty-nine project directories, so every session paid
+// for all seven no matter which one connection it was entitled to use. Claude Code takes its
+// servers per repo instead — `claude mcp add-json <name> '<json>' -s local` from the project
+// directory, or a committed `.mcp.json` — so a session carries only what its own project
+// declares. Nothing about Cowork changes: it reads the desktop config, not this one.
 export function configPaths() {
   const desktop = {
     win32: join(process.env.APPDATA ?? join(HOME, 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json'),
     darwin: join(HOME, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
   }[PLATFORM] ?? join(process.env.XDG_CONFIG_HOME ?? join(HOME, '.config'), 'Claude', 'claude_desktop_config.json');
 
-  return [join(HOME, '.claude.json'), desktop];
+  return [desktop];
+}
+
+// Where a server may ALREADY be registered, for detection only — never written. Claude Code's
+// user scope stays on this list: a machine part-way through the move still has servers there,
+// and reporting a configured connection as missing would send someone to provision a second
+// credential for a connector that already works.
+export function detectConfigPaths() {
+  return [...configPaths(), join(HOME, '.claude.json')];
 }
 
 // ---------------------------------------------------------------- secret store

@@ -42,6 +42,7 @@ import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bashBin, bashPath } from '../bash-bin.mjs';
 import { homedir } from 'node:os';
+import { configPaths, detectConfigPaths } from './secret-store.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNTIME = join(homedir(), '.mcp');
@@ -253,25 +254,46 @@ function projectSlug(contextFile, cfg) {
 
 // ---------------------------------------------------------------- machine state
 
-function claudeConfigPaths() {
-  const home = homedir();
-  const desktop = process.platform === 'win32'
-    ? join(process.env.APPDATA ?? join(home, 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json')
-    : process.platform === 'darwin'
-      ? join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
-      : join(process.env.XDG_CONFIG_HOME ?? join(home, '.config'), 'Claude', 'claude_desktop_config.json');
-  return [join(home, '.claude.json'), desktop];
-}
-
-function configuredServers() {
+// Registered on the HOST: the desktop config, which serves the desktop chat app and Cowork.
+// Claude Code's user scope is read too, because a machine part-way through the move to
+// per-repo scoping still has servers there.
+function hostServers() {
   const names = new Set();
-  for (const p of claudeConfigPaths()) {
+  for (const p of detectConfigPaths()) {
     if (!existsSync(p)) continue;
-    try {
-      for (const k of Object.keys(readJson(p).mcpServers ?? {})) names.add(k);
-    } catch { /* a config we cannot parse is not evidence of absence */ }
+    try { for (const k of Object.keys(readJson(p).mcpServers ?? {})) names.add(k); }
+    catch { /* a config we cannot parse is not evidence of absence */ }
   }
   return names;
+}
+
+// What CLAUDE CODE can actually see FROM THIS DIRECTORY, which is a different question: its
+// user scope, a committed `.mcp.json` here (project scope), and this directory's own entry in
+// ~/.claude.json (local scope). Registered on the host does not imply available to a session —
+// that gap is the whole point of scoping servers per repo, and it has to be reported, not
+// assumed either way.
+function codeScopedServers() {
+  const names = new Set();
+  const add = (obj) => { for (const k of Object.keys(obj ?? {})) names.add(k); };
+  const code = join(homedir(), '.claude.json');
+  try { if (existsSync(code)) add(readJson(code).mcpServers); } catch { }
+  try { if (existsSync('.mcp.json')) add(readJson('.mcp.json').mcpServers); } catch { }
+  try {
+    if (existsSync(code)) {
+      const here = resolve(process.cwd());
+      for (const [dir, entry] of Object.entries(readJson(code).projects ?? {})) {
+        if (resolve(dir) === here) add(entry?.mcpServers);
+      }
+    }
+  } catch { }
+  return names;
+}
+
+// Configured AT ALL, anywhere — what "missing" means, and therefore what decides whether a
+// second credential needs minting. Reporting a locally scoped connector as missing would send
+// someone to provision one that already works.
+function configuredServers() {
+  return new Set([...hostServers(), ...codeScopedServers()]);
 }
 
 function deployRuntime() {
@@ -446,6 +468,23 @@ async function main() {
     for (const provider of Object.keys(connections)) {
       const others = [...existing].filter((n) => n.startsWith(provider) && !declared.has(n));
       if (others.length) warn(`other ${provider} connections on this machine, off-limits here: ${others.join(', ')}`);
+    }
+
+    // Registered on the host is not the same as reachable from here. The desktop config serves
+    // the desktop app and Cowork; Claude Code takes its servers per repo, so a connection this
+    // project declares still has to be exposed in this directory — once, by hand, because the
+    // alternative is user scope, where every project pays for every other project's connectors.
+    const visible = codeScopedServers();
+    const unexposed = [...new Set(Object.values(connections).flatMap(names))]
+      .filter((s) => existing.has(s) && !visible.has(s));
+    if (unexposed.length) {
+      console.log('');
+      warn(`configured on this machine but NOT visible to Claude Code here: ${unexposed.join(', ')}`);
+      console.log('  Cowork and the desktop app are unaffected — they read the host config.');
+      console.log('  To expose one to Claude Code in this directory only, copy its entry from');
+      console.log(`    ${configPaths()[0]}`);
+      console.log('  and register it here:');
+      for (const s of unexposed) console.log(`    claude mcp add-json ${s} '<the entry, as JSON>' -s local`);
     }
 
     if (!missing.length) { console.log('\nAll declared connections are configured.\n'); return 0; }

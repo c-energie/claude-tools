@@ -71,9 +71,24 @@ second token *and* a second connection —
 `setup-connectors.mjs --add github:[owner]` declares it and keeps the existing one, promoting the
 value to the owner-keyed map form rather than overwriting.
 
-Servers must be registered in **both** `~/.claude.json` (Claude Code and Cowork sandboxes read
-this) and the desktop app's `claude_desktop_config.json` (the chat app reads that). Restart the
-desktop app after a change — quitting it completely, not just closing the window.
+The server is registered **once, in the desktop app's `claude_desktop_config.json`** — the host
+registry. That one file serves the chat app *and* Cowork: a Cowork sandbox does not run the
+server, the host runs it and bridges it in, which is why the token never enters the sandbox.
+Restart the desktop app after a change — quitting it completely, not just closing the window.
+
+**Claude Code does not read that file, and is given the server per repo.** It has its own
+registry, and its *user* scope (`~/.claude.json`) loads a server in every session on the machine
+regardless of the project — which is how a laptop with seven connectors made every session pay
+for all seven. So Claude Code gets each server in the one directory entitled to it:
+
+```bash
+claude mcp add-json [name] '[the entry, copied from the host config]' -s local   # this repo only
+claude mcp list                                                                 # what this directory sees
+```
+
+`setup-connectors.mjs` prints that command for any declared connection the host has and the
+current directory cannot see. **None of this reaches Cowork**, which never read `~/.claude.json`:
+a sandbox session's connectors are exactly what the host config holds.
 
 ## Checking what the session actually exposes
 

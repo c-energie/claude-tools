@@ -130,10 +130,13 @@ The full narrative checklist lives in the
    quiet for it — including the marker search.
 3. **Connectors** — one scoped credential per provider per workspace (GitHub fine-grained PAT:
    single resource owner per token; Notion internal integration: pages must be shared with
-   it), registered as MCP servers named `<provider>-<project>` in **both** `~/.claude.json`
-   (Claude Code + Cowork sandboxes read this) and the desktop app's
-   `claude_desktop_config.json` (chat reads this). From a project whose context repo is
-   configured:
+   it), registered as MCP servers named `<provider>-<project>` in the desktop app's
+   `claude_desktop_config.json` — the **host registry**, which serves the chat app *and*
+   Cowork (the host runs the servers and bridges them into the sandbox, so the token never
+   enters it). Claude Code does not read that file: it is given each server **per repo**
+   (`claude mcp add-json [name] '[entry]' -s local`, or a committed `.mcp.json`), so a session
+   carries only the connections its own project declares rather than every connector on the
+   machine. From a project whose context repo is configured:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/mcp/setup-connectors.mjs"            # provision what's missing
    node "${CLAUDE_PLUGIN_ROOT}/scripts/mcp/setup-connectors.mjs" --check    # diagnose only
