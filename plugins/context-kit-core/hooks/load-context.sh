@@ -66,7 +66,8 @@ lookup_threads() {
   done
   for _m in "$proj/.claude/context-project.json" "$proj/context-project.json" \
             "$proj"/docs/context-project.json /mnt/project/context-project.json \
-            "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/uploads/context-project.json; do
+            "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/uploads/context-project.json \
+            "$proj"/../../.project-cache/*/docs/context-project.json; do
     [ -z "$t" ] && [ -f "$_m" ] && t="$(settings_key "$_m" threads)"
   done
   normalise_threads "$t"
@@ -84,7 +85,8 @@ lookup_repo() {  # line 1: owner/repo (or empty); line 2: the marker file it cam
             "$proj"/docs/context-project.json "$proj"/docs/.context-repo "$proj"/docs/context-repo.txt \
             /mnt/project/context-project.json /mnt/project/.context-repo /mnt/project/context-repo.txt \
             "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
-            "$HOME"/mnt/uploads/context-project.json "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
+            "$HOME"/mnt/uploads/context-project.json "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt \
+            "$proj"/../../.project-cache/*/docs/context-project.json "$proj"/../../.project-cache/*/docs/.context-repo "$proj"/../../.project-cache/*/docs/context-repo.txt; do
     if [ -f "$_m" ]; then
       r="$(marker_repo "$_m")"
       [ -n "$r" ] && { printf '%s\n%s\n' "$r" "$_m"; return; }
@@ -92,7 +94,8 @@ lookup_repo() {  # line 1: owner/repo (or empty); line 2: the marker file it cam
   done
   # Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
   # working tree, which on a laptop can be a huge repo this must not crawl at session start.
-  for _d in "$HOME/mnt" /mnt; do
+  # (.project-cache is the Windows-host Cowork area; the -d guard skips it everywhere else.)
+  for _d in "$HOME/mnt" /mnt "$proj/../../.project-cache"; do
     if [ -d "$_d" ]; then
       _found="$(find "$_d" -maxdepth 5 \( -name context-project.json -o -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
       if [ -n "$_found" ]; then
@@ -280,11 +283,11 @@ if [ -n "$CONTEXT_REMOTE" ] && [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] \
     const fs = require("fs");
     const [ctxPath, repo, out] = process.argv.slice(1);
     try {
-      const ctx = JSON.parse(fs.readFileSync(ctxPath, "utf8").replace(/^\uFEFF/, ""));
+      const ctx = JSON.parse(fs.readFileSync(ctxPath, "utf8").replace(/^﻿/, ""));
       let prev = null, marker = {};
       try {
         prev = fs.readFileSync(out, "utf8");
-        const held = JSON.parse(prev.replace(/^\uFEFF/, ""));
+        const held = JSON.parse(prev.replace(/^﻿/, ""));
         // Merge, do not replace: a marker may carry keys this hook knows nothing about.
         if (held && typeof held === "object" && !Array.isArray(held)) marker = held;
       } catch { /* absent or unparseable — rewrite it from scratch */ }
