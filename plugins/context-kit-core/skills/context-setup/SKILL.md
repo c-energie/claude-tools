@@ -11,7 +11,12 @@ the context now, and fixes gaps with the user.
 
 ## 1. How is (or isn't) the repo named? Check every channel, report what you find
 
-- `PROJECT_CONTEXT_REPO` in the environment.
+- `PROJECT_CONTEXT_REPO` in the environment. **These first two are not independent**: Claude
+  Code applies a settings `env` block to the environment hooks run in, so the value you find
+  here in a configured project came *from* the settings file. Someone who ran
+  `PROJECT_CONTEXT_REPO=none claude` expecting to suppress the load will have been overridden
+  silently — if that is the complaint, the fix is `claude --settings [file]` (its `env` beats
+  the project's), not a change to the project's settings.
 - The project's `.claude/settings.local.json` / `.claude/settings.json` env block.
 - A marker file — `context-project.json` (JSON: `contextRepo`, plus an optional
   `connections` map naming the MCP connection per provider — one name, or a map of resource

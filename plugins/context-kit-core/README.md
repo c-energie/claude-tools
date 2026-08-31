@@ -39,6 +39,28 @@ in the project's `.claude/settings.json`. The resolvers look for the name in ord
 `/mnt/project/`) — with **no default**: an unconfigured project reports itself as such instead of silently loading another project's context. The same committed settings file drives
 Claude Code whether or not the client applies the env var.
 
+**"env var first" is not "your shell first."** Claude Code applies a settings file's `env` block
+to the environment every hook and tool then runs in, so by the time the resolver reads
+`PROJECT_CONTEXT_REPO` the *settings* value is already sitting in it. In a project that
+configures its repo through `.claude/settings.json` — which is most of them — running
+`PROJECT_CONTEXT_REPO=none claude` from the shell therefore changes nothing, and changes it
+**silently**: the session loads the full context exactly as if the variable had not been set.
+Measured 2026-08-31 in `corson94/second-brain`: the shell form still produced the hook's whole
+116,365-byte payload.
+
+To override for one invocation, put the value in a settings file passed on the command line —
+`--settings` wins over the project's own:
+
+```bash
+echo '{ "env": { "PROJECT_CONTEXT_REPO": "none" } }' > ~/.claude/no-context.json
+claude --settings ~/.claude/no-context.json      # hook takes its opt-out path, emits nothing
+```
+
+Pass a **file**, not an inline `--settings '{...}'` JSON string: PowerShell strips the quotes
+before `claude` sees them and the run dies with `Invalid JSON provided to --settings`. Note this
+suppresses the context repo only — CLAUDE.md files still load. `claude --bare` skips those too,
+along with every hook, but it never reads OAuth or the keychain, so it needs `ANTHROPIC_API_KEY`.
+
 **Opting a project out.** A project that will never have a context repo sets the value to
 `none` (`off` / `false` / `no` / `-` also work) in any of those same channels:
 

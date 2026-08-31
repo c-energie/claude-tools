@@ -46,6 +46,16 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   — the hook exits 0 with no output and no marker search, and the resolvers exit 1 saying so.
   Keep the sentinel list in step across `hooks/load-context.sh`, both `context-repo.sh`
   copies and `link-context.mjs`. Never conflate it with *unconfigured*, which must stay loud.
+- **The resolver's "env var first" does NOT mean "the invoking shell first."** Claude Code applies
+  a settings file's `env` block to the environment hooks and tools run in, so the settings value
+  is already *in* `PROJECT_CONTEXT_REPO` before the resolver looks. A project that configures its
+  repo in `.claude/settings.json` has therefore pinned the variable, and `PROJECT_CONTEXT_REPO=none
+  claude` from the shell is overwritten with no warning — it fails in exactly the projects someone
+  would reach for it in. The per-invocation override is a settings file on the command line
+  (`claude --settings [file]`), whose `env` beats the project's; a file rather than inline JSON
+  because PowerShell strips the quotes off `--settings '{...}'`. Do not "fix" this by having the
+  resolver prefer some other channel: the ladder is correct, and the environment is genuinely the
+  highest-precedence *channel* — what is counter-intuitive is who last wrote to it.
 - **The hook never prompts, never hangs, never exits non-zero.** Unknown args are ignored.
   Failed refreshes serve the local copy under a STALE banner naming the reason — a silent
   stale load is the one failure mode that actively misleads.
