@@ -93,7 +93,8 @@ lookup_threads() {
   done
   for _m in "$cwd/.claude/context-project.json" "$cwd/context-project.json" \
             "$cwd"/docs/context-project.json /mnt/project/context-project.json \
-            "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/uploads/context-project.json; do
+            "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/uploads/context-project.json \
+            "$cwd"/../../.project-cache/*/docs/context-project.json; do
     [ -z "$t" ] && [ -f "$_m" ] && t="$(settings_key "$_m" threads)"
   done
   normalise_threads "$t"
@@ -110,19 +111,24 @@ done
 # Marker candidates cover every sandbox layout seen so far: .claude/ (where the hook
 # generates the context repo's own marker, next to settings.json); the working dir;
 # /mnt/project (one Cowork/claude.ai layout); ~/mnt/.projects/[uuid]/docs and ~/mnt/uploads
-# (the /sessions/... layout, where attached project files land under the session's home).
+# (the /sessions/... layout, where attached project files land under the session's home);
+# and .project-cache/[uuid]/docs two levels above the working dir — the Windows desktop-app
+# (Cowork) layout, where hooks run on the HOST, the sandbox's ~/mnt mounts do not exist, and
+# the session's attached project knowledge sits beside its outputs directory (seen 2026-08-31).
 for _m in "$cwd/.claude/context-project.json" \
           "$cwd/context-project.json" "$cwd/.context-repo" "$cwd/context-repo.txt" \
           "$cwd"/docs/context-project.json "$cwd"/docs/.context-repo "$cwd"/docs/context-repo.txt \
           /mnt/project/context-project.json /mnt/project/.context-repo /mnt/project/context-repo.txt \
           "$HOME"/mnt/.projects/*/docs/context-project.json "$HOME"/mnt/.projects/*/docs/.context-repo "$HOME"/mnt/.projects/*/docs/context-repo.txt \
-          "$HOME"/mnt/uploads/context-project.json "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt; do
+          "$HOME"/mnt/uploads/context-project.json "$HOME"/mnt/uploads/.context-repo "$HOME"/mnt/uploads/context-repo.txt \
+          "$cwd"/../../.project-cache/*/docs/context-project.json "$cwd"/../../.project-cache/*/docs/.context-repo "$cwd"/../../.project-cache/*/docs/context-repo.txt; do
   [ -z "$CONTEXT_REMOTE" ] && [ -f "$_m" ] && CONTEXT_REMOTE="$(marker_repo "$_m")"
 done
 # Last resort, sandbox layouts drift: a bounded search of the mount areas only — never the
 # working tree, which on a laptop can be a huge repo this must not crawl at session start.
+# (.project-cache is the Windows-host Cowork area; the -d guard skips it everywhere else.)
 if [ -z "$CONTEXT_REMOTE" ]; then
-  for _d in "$HOME/mnt" /mnt; do
+  for _d in "$HOME/mnt" /mnt "$cwd/../../.project-cache"; do
     if [ -z "$CONTEXT_REMOTE" ] && [ -d "$_d" ]; then
       _found="$(find "$_d" -maxdepth 5 \( -name context-project.json -o -name context-repo.txt -o -name .context-repo \) 2>/dev/null | head -n 1)"
       [ -n "$_found" ] && CONTEXT_REMOTE="$(marker_repo "$_found")"
