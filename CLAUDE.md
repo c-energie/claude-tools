@@ -23,6 +23,12 @@ stale `X@context-kit` in some repo's `enabledPlugins` is **silently ignored**, n
 it presents as a plugin that failed to load — `context-doctor` carries the retired name and
 flags it.
 
+`docs/context-root.md` is the canonical account of `~/.context`, the managed clone root for
+context repos on a laptop — the layers, why the tooling was moved out to `~/c-energie/`, and the
+whole resolution ladder. It lives here because that directory has no `.git` of its own: the
+`CLAUDE.md` sitting there is an unversioned stub carrying only the rules a session must not act
+without. Change one, change the other.
+
 The `justfile` is convenience only: `just` is not installed by default and
 Cowork sandboxes cannot install it, so nothing may ever depend on a recipe, and a recipe that
 grows logic of its own belongs in a `scripts/*.mjs` where `check-plugin.mjs` can see it.
