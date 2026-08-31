@@ -13,10 +13,12 @@ every surface, including Cowork, which cannot fetch a second private repo):
 | [`plugins/context-notion`](plugins/context-notion/) | Notion middle layer: config-driven actions / decisions / open questions, the pending queue, tidies, meeting synthesis and the `notion/` mirror |
 | [`plugins/context-slack`](plugins/context-slack/) | Slack delivery layer: the per-person digest and the pending-queue nudge. Nothing here posts unprompted |
 | [`plugins/diagrams`](plugins/diagrams/) | Diagram store: capture a diagram Claude just drew into a per-org git store, and build a single-file gallery over one or more of them |
+| [`plugins/devhub`](plugins/devhub/) | dev-hub authoring: write or fix a repo's committed `devhub.toml`, and the dev-hub plugin behind it. Outside the context stack — useful in any repo |
 
 Install: add this repo as a marketplace (`/plugin marketplace add c-energie/claude-tools`, or
 Cowork's plugin UI), then install `context-kit-core@c-energie` and — as the project needs
-them — `context-notion@c-energie`, `context-slack@c-energie`, `diagrams@c-energie`.
+them — `context-notion@c-energie`, `context-slack@c-energie`, `diagrams@c-energie`,
+`devhub@c-energie`.
 
 ## One catalog per org
 
@@ -29,8 +31,10 @@ goes:
 
 A marketplace is a **permission** boundary: read on this repo is what a person gets, and it is
 all-or-nothing across every plugin in it. A plugin is a **topic** boundary, and costs nothing to
-add. So `diagrams` — a new topic for the same people — is a plugin here, while `net-flex`, a
-different org with a different membership, gets its own `net-flex/claude-tools`. A repo that
+add. So `diagrams` and `devhub` — new topics for the same people — are plugins here, while
+`net-flex`, a different org with a different membership, gets its own `net-flex/claude-tools`.
+Note that a plugin here need not belong to the context stack at all: `devhub` reads no
+`context.json` and is useful in any repo. The catalog is the org's tooling, not one system's. A repo that
 needs both lists both marketplaces in its `extraKnownMarketplaces`; no plugin is ever duplicated
 across catalogs.
 

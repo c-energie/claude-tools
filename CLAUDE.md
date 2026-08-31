@@ -4,8 +4,10 @@
 
 `c-energie/claude-tools` — the c-energie **marketplace repo**, holding every plugin as a
 subdirectory: `plugins/context-kit-core` (core layer), `plugins/context-notion` (Notion middle
-layer), `plugins/context-slack` (Slack delivery layer, added 2026-08-07) and `plugins/diagrams`
-(the diagram store, added 2026-08-31). The root carries only
+layer), `plugins/context-slack` (Slack delivery layer, added 2026-08-07), `plugins/diagrams`
+(the diagram store) and `plugins/devhub` (dev-hub manifest authoring) — the last two added
+2026-08-31. **Not every plugin here is part of the context stack**: `devhub` reads no
+`context.json` and serves any repo at all. The catalog is the org's tooling, not one system's. The root carries only
 `.claude-plugin/marketplace.json`, `.gitattributes`, an optional `justfile` and this file —
 every plugin file, script and invariant lives inside its plugin directory, each with its own
 `CLAUDE.md`.

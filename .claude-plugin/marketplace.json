@@ -40,6 +40,11 @@
       "name": "diagrams",
       "source": "./plugins/diagrams",
       "category": "productivity"
+    },
+    {
+      "name": "devhub",
+      "source": "./plugins/devhub",
+      "category": "productivity"
     }
   ]
 }
