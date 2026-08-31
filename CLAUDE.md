@@ -60,3 +60,17 @@ surface a root-sourced plugin).
   writable checkout, picks the right plugin, checks and bumps per plugin, and asks before pushing.
 - `*.sh` stay LF (root `.gitattributes`); no angle brackets in any front-matter value; hooks
   exit 0 on every path.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `c-energie/claude-tools`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, label string = role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
