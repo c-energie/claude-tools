@@ -112,11 +112,13 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   silently goes stale.
 - **`include` (cross-project loads) is explicit, one-level, and read-only.** A context repo's
   `context.json` may declare `include: ["owner/repo", ...]`; the hook then loads each named
-  repo's memory/glossary/thread-index alongside the repo's own, per-repo STALE/UNAVAILABLE
-  banners included. Never discover includes from the filesystem, never recurse into an
-  included repo's own list, and never write into an included repo. Entries are repo names
-  only — the contract stays route-agnostic for the sandbox/API route. The sentinel filter in
-  the hook's include parser mirrors `is_optout()` — keep them in step.
+  repo's memory alongside the repo's own — and its glossary and threads only as POINTERS (term
+  names, six newest by title), so an included repo is never loaded more eagerly than the repo
+  the session is in — per-repo STALE/UNAVAILABLE banners included. Never discover includes
+  from the filesystem, never recurse into an included repo's own list, and never write into an
+  included repo. Entries are repo names only — the contract stays route-agnostic for the
+  sandbox/API route. The sentinel filter in the hook's include parser mirrors `is_optout()`
+  — keep them in step.
 - **The two session launchers are twins, not copies.** `Start-ContextSession.ps1` and
   `start-context-session.sh` are the same menu written for two shells, so `check-plugin.mjs`'s
   drift rule (which compares byte-for-byte) deliberately does not cover them — only they can

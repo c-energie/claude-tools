@@ -382,11 +382,76 @@ if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
   emit "→ Context repo: $CONTEXT_REMOTE — loading via ${GITHUB_CONN:-the GitHub connector} in the first response (git has no credentials in this environment)"
 fi
 
+# Lists the newest threads in a directory, with titles. Shared by the project layer, the
+# per-repo layer and each included repo, so the title-extraction awk exists once: it was
+# duplicated the moment a second thread location appeared, and a title parser that drifts
+# between two copies would print the literal front-matter fence in one of them with nobody
+# noticing which.
+#   list_threads DIR DISPLAY_PREFIX MAX
+list_threads() {
+  _d="$1"; _pfx="$2"; _max="${3:-6}"
+  find "$_d" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' ! -name '*-asst-*' -print 2>/dev/null     | sort | tail -n "$_max"     | while IFS= read -r f; do
+        title="$(awk '
+          NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+          fm == 1 && /^---[[:space:]]*$/ { fm = 0; next }
+          fm == 1 && /^title:[[:space:]]/ { sub(/^title:[[:space:]]*/, ""); print; exit }
+          fm == 0 && /^#+[[:space:]]/ { sub(/^#+[[:space:]]*/, ""); print; exit }
+        ' "$f" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
+        [ -z "$title" ] && title="$(basename "$f" .md)"
+        echo "   - ${_pfx}$(basename "$f") — ${title}"
+      done
+}
+
+# Names the terms a glossary defines, without loading their definitions. The name is what makes
+# the file findable — "is X defined here?" is answered by the list, and the entry itself is only
+# needed once the answer is yes — and the list costs a tenth of the text: net-flex/context's
+# generated 71-term glossary is 39 KB whole and under 4 KB as names. Below SMALL_GLOSSARY the
+# pointer would cost more than the file it points at, so the file wins and is loaded entire;
+# that threshold is the point of the function, not a special case bolted onto it.
+#
+# Two glossary shapes are in the wild and both are matched: "### Term — Status" headings (the
+# form a Notion mirror generates) and the template's "**Term** — definition" paragraphs. A file
+# in neither shape is reported as unread rather than silently summarised to nothing: a term list
+# that quietly omits terms is worse than none, because it reads as complete.
+#   glossary_terms FILE LABEL MAX
+_gloss_scan() {  # FILE SED_EXPR -> one term per line, trailing space and blanks dropped
+  sed -n -e "$2" "$1" 2>/dev/null | sed -e 's/[[:space:]]*$//' | grep -v '^[[:space:]]*$'
+}
+glossary_terms() {
+  _g="$1"; _lbl="$2"; _max="${3:-120}"
+  _sz="$(wc -c < "$_g" 2>/dev/null | tr -d ' ')"
+  if [ "${_sz:-0}" -le "${SMALL_GLOSSARY:-4096}" ] 2>/dev/null; then
+    echo "----- $_lbl -----"
+    cat "$_g"
+    echo "----- end $_lbl -----"
+    return
+  fi
+  # Strictly ONE shape per file, tried in order, because mixing them is what goes wrong: a
+  # heading-shaped glossary also opens with prose like "**Status** reads: ..." and that bold
+  # lead would enter the list as a term the file does not define. h3/h4 first (the terms,
+  # wherever sections take h2), then the template's "**Term** — definition" paragraphs, then
+  # h2 for a glossary with no sections at all.
+  _terms="$(_gloss_scan "$_g" 's/^#\{3,4\}[[:space:]]\{1,\}//p')"
+  [ -z "$_terms" ] && _terms="$(_gloss_scan "$_g" 's/^\*\*\([^*]\{1,\}\)\*\*.*$/\1/p')"
+  [ -z "$_terms" ] && _terms="$(_gloss_scan "$_g" 's/^##[[:space:]]\{1,\}//p')"
+  if [ -z "$_terms" ]; then
+    echo "$_lbl is $_sz bytes and is NOT loaded here; its shape was not recognised, so no term list could be built. Read the file before relying on any project vocabulary."
+    return
+  fi
+  _n="$(printf '%s\n' "$_terms" | grep -c . )"
+  echo "$_lbl defines these $_n terms (the definitions are NOT loaded here, $_sz bytes). Read the"
+  echo "file before using one of them in a sense of your own; do not answer from silence:"
+  printf '%s\n' "$_terms" | head -n "$_max" | sed -e 's/^/   - /'
+  [ "${_n:-0}" -gt "$_max" ] 2>/dev/null && echo "   (+$((_n - _max)) more — this list is truncated, so read glossary.md rather than concluding a term is absent)"
+}
+
 # ----------------------------------------------------------- included context repos
 # The cross-project layer: a context repo whose context.json declares
 #   "include": ["owner/repo", ...]
-# also gets each named repo's memory.md, glossary.md and threads/INDEX.md loaded — read-only,
-# and ONE level only (an included repo's own include list is ignored, by construction: only
+# also gets each named repo's memory.md loaded read-only, plus POINTERS to its glossary (term
+# names, no definitions) and its threads (the six newest, by title) — the same shape the primary
+# repo's own layer uses, since an included repo cannot be the one that gets loaded more eagerly.
+# ONE level only (an included repo's own include list is ignored, by construction: only
 # the primary repo's context.json is ever read). The list is explicit and committed; nothing
 # is ever discovered from the filesystem. An *accidental* cross-project load is the failure
 # mode this plugin exists to prevent, so the deliberate one must be spelled out in config.
@@ -462,17 +527,40 @@ if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"include"' "$ROOT/c
             echo "Showing the local copy${INC_AGE:+ — its most recent commit is dated $INC_AGE}."
             echo
           fi
-          for _incf in memory.md glossary.md threads/INDEX.md; do
-            if [ -f "$INC_ROOT/$_incf" ]; then
-              echo "----- $inc · $_incf -----"
-              cat "$INC_ROOT/$_incf"
-              echo "----- end $inc · $_incf -----"
-            else
-              echo "($inc has no $_incf)"
-            fi
-            echo
-          done
-          echo "Depth on demand, still read-only: full threads/, meetings/ and any notion/ mirror under $INC_ROOT."
+          # memory.md whole; glossary and threads as POINTERS. The primary repo has always
+          # worked that way — its glossary is one line and its threads are the six newest — and
+          # an included repo is by construction the secondary one, so loading it *more* eagerly
+          # than the repo the session is actually in was backwards. It was also the largest
+          # single item in the payload: net-flex/context's glossary alone put 39 KB into every
+          # session that included it, before a word of the primary context had been read.
+          #
+          # memory.md stays whole for the reason the primary layer keeps it whole: a fact nobody
+          # is told about is not lazy, it is lost. A glossary and a thread index are different in
+          # kind — each is a *list of names*, so the names alone say what is in there, which is
+          # what a pointer has to do to be safe.
+          if [ -f "$INC_ROOT/memory.md" ]; then
+            echo "----- $inc · memory.md -----"
+            cat "$INC_ROOT/memory.md"
+            echo "----- end $inc · memory.md -----"
+          else
+            echo "($inc has no memory.md)"
+          fi
+          echo
+          if [ -f "$INC_ROOT/glossary.md" ]; then
+            glossary_terms "$INC_ROOT/glossary.md" "$inc · glossary.md" 120
+          else
+            echo "($inc has no glossary.md)"
+          fi
+          echo
+          if [ -d "$INC_ROOT/threads" ]; then
+            echo "$inc working threads (one topic per file; newest last):"
+            list_threads "$INC_ROOT/threads" "threads/" 6
+            [ -f "$INC_ROOT/threads/INDEX.md" ] && echo "   (full list: threads/INDEX.md under $INC_ROOT, NOT loaded here)"
+          else
+            echo "($inc has no threads/)"
+          fi
+          echo
+          echo "Depth on demand, still read-only, under $INC_ROOT: the whole of glossary.md and threads/INDEX.md summarised above, plus full threads/, meetings/ and any notion/ mirror."
         fi
         echo
       } >> "$INC_TMP"
@@ -481,24 +569,6 @@ if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"include"' "$ROOT/c
     done
   fi
 fi
-# Lists the newest threads in a directory, with titles. Shared by the project layer and the
-# per-repo layer so the title-extraction awk exists once: it was duplicated the moment a second
-# thread location appeared, and a title parser that drifts between two copies would print the
-# literal front-matter fence in one of them with nobody noticing which.
-#   list_threads DIR DISPLAY_PREFIX MAX
-list_threads() {
-  _d="$1"; _pfx="$2"; _max="${3:-6}"
-  find "$_d" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' ! -name '*-asst-*' -print 2>/dev/null     | sort | tail -n "$_max"     | while IFS= read -r f; do
-        title="$(awk '
-          NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
-          fm == 1 && /^---[[:space:]]*$/ { fm = 0; next }
-          fm == 1 && /^title:[[:space:]]/ { sub(/^title:[[:space:]]*/, ""); print; exit }
-          fm == 0 && /^#+[[:space:]]/ { sub(/^#+[[:space:]]*/, ""); print; exit }
-        ' "$f" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//')"
-        [ -z "$title" ] && title="$(basename "$f" .md)"
-        echo "   - ${_pfx}$(basename "$f") — ${title}"
-      done
-}
 
 # Per-repo threads: .claude/threads/ in the WORKING directory, a different layer from the
 # project's context repo. A code repo's narrative travels with its own clone and is readable by

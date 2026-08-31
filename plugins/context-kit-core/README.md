@@ -263,8 +263,9 @@ A context repo may declare, in its `context.json`:
 "include": ["owner/repo-a", "owner/repo-b"]
 ```
 
-Sessions on that repo then also load each included repo's `memory.md`, `glossary.md` and
-`threads/INDEX.md` — **read-only**, after the repo's own context, each pulled under the same
+Sessions on that repo then also load each included repo's `memory.md` in full, plus **pointers**
+to its `glossary.md` (the term names, not the definitions) and its `threads/` (the six newest,
+by title) — **read-only**, after the repo's own context, each pulled under the same
 ff-only/timeout/credential rules with its own per-repo STALE or UNAVAILABLE banner.
 `refresh-context` re-pulls them too. The contract, all load-bearing:
 
@@ -272,6 +273,12 @@ ff-only/timeout/credential rules with its own per-repo STALE or UNAVAILABLE bann
   filesystem — an *accidental* cross-project load is the failure mode this plugin exists to
   prevent, so the deliberate one must be spelled out.
 - **One level.** An included repo's own `include` list is ignored.
+- **Pointers, not the whole repo.** `memory.md` is loaded entire, because a fact nobody is told
+  about is not lazy, it is lost. A glossary and a thread index are different in kind — each is a
+  *list of names*, so the names alone say what is in there, which is all a pointer has to do to
+  be safe. Included context is then loaded no more eagerly than the repo the session is actually
+  in, whose own glossary and threads have always been pointers. A glossary under `SMALL_GLOSSARY`
+  bytes (default 4096) is loaded whole instead: below that the pointer costs more than the file.
 - **Read-only.** Nothing in a combined session writes into an included repo — not git, not
   its structured-state backend, not its `pending/`. A combined repo that wants to route
   items outward keeps its own outbox folder (by convention `handoff/`, which the payload
