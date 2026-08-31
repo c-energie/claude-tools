@@ -76,6 +76,10 @@ registry. That one file serves the chat app *and* Cowork: a Cowork sandbox does 
 server, the host runs it and bridges it in, which is why the token never enters the sandbox.
 Restart the desktop app after a change — quitting it completely, not just closing the window.
 
+Confirmed 2026-08-31: with all seven servers removed from `~/.claude.json` and left in the host
+config alone, Cowork still lists them under Settings → Connectors. Claude Code's user scope is
+not a second registry Cowork falls back to; it never read it.
+
 **Claude Code does not read that file, and is given the server per repo.** It has its own
 registry, and its *user* scope (`~/.claude.json`) loads a server in every session on the machine
 regardless of the project — which is how a laptop with seven connectors made every session pay
