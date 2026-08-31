@@ -38,7 +38,10 @@ surface a root-sourced plugin).
   `node plugins/context-kit-core/scripts/check-plugin.mjs plugins/<name>` before any commit, and
   `node plugins/context-kit-core/scripts/bump-version.mjs plugins/<name> patch|minor|major` once
   per release. Versions live in each plugin's `plugin.json` only — never in a `marketplace.json`
-  `plugins[]` entry, where they silently override.
+  `plugins[]` entry, where they silently override. Every error `check-plugin.mjs` catches is a
+  **silent** failure — the plugin installs cleanly and the skill simply never appears — so exit 1
+  means fix before committing. **Pull before bumping**: two sessions bumping the same plugin
+  produce two commits claiming one version, and only one of them ships.
 - **`marketplace.json` names every plugin with a relative source** (`./plugins/<name>`). Keep
   it to source / category / tags; hand-verify it after edits (no root-level linter).
 - **Some scripts exist as deliberate copies** — a skill can only reference
@@ -58,8 +61,29 @@ surface a root-sourced plugin).
   context-kit-core alone, and had drifted while they were duplicated.
 - **`update-plugin` (context-kit-core) is the route for changing any of this** — it resolves the
   writable checkout, picks the right plugin, checks and bumps per plugin, and asks before pushing.
-- `*.sh` stay LF (root `.gitattributes`); no angle brackets in any front-matter value; hooks
-  exit 0 on every path.
+- **`plugin-repo.sh` only ever considers `$cwd`**, never its subdirectories, so a session started
+  anywhere that is not itself the marketplace resolves to the managed clone instead. That is how a
+  second, drifting checkout came about before 2026-08-11.
+
+### Skill authoring rules that fail silently if broken
+
+Each one installs cleanly and then simply does not work, which is why they are written down
+rather than left to be noticed.
+
+- Directory name and front-matter `name` **must match**.
+- **No angle brackets in any front-matter value** — the ingester reads them as a tag and drops the
+  field. Use `[placeholder]` or `{placeholder}`; body text is fine.
+- `description` is what makes a skill auto-trigger: what it does *plus* natural trigger phrases,
+  one line. End the body with a **"Not this skill:"** line routing to the neighbours that own the
+  adjacent jobs.
+- Anything that **writes outside the session** (git push, Slack post, a commit to a shared store)
+  is `disable-model-invocation: true` or carries an explicit ask-before-push gate.
+- `user-invocable: false` for reference-only skills (`context-access`, `notion-config`,
+  `slack-config`, `diagrams-config`) — background knowledge, not a task to run.
+- Reference scripts by full `${CLAUDE_PLUGIN_ROOT}/…` paths, within the skill's **own** plugin.
+- Anything that must come out identically every time (date maths, buckets, mirror rendering,
+  index schemas) belongs in a `scripts/*.mjs`, not in prose.
+- `*.sh` stay LF (root `.gitattributes`, checked by the linter); hooks exit 0 on every path.
 
 ## Agent skills
 

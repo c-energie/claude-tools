@@ -19,6 +19,7 @@ node scripts/check-plugin.mjs .          # lint manifests/skills/hooks; exit 1 o
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
 bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
+bash hooks/load-context.sh --refresh     # exactly what refresh-context runs, against $PWD
 bash scripts/plugin-repo.sh --writable   # resolve THIS repo's checkout (root), push-ready
 bash scripts/plugin-repo.sh --plugin context-kit-core   # ...or one plugin's own directory
 node scripts/list-plugins.mjs "$ROOT" --brief   # the plugin roster, read from the checkout — never hand-written

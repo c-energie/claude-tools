@@ -54,6 +54,9 @@ via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_REPO`).
 - **Follow `schemas` exactly, including odd property names** (trailing spaces exist — never
   trim). Every date property needs both `date:Name:start` and `date:Name:is_datetime` = 0.
   Owners/dates/statuses go in properties, never in a title.
+- **`databases` and `pageParents` hold different Notion IDs** — data source vs database — and are
+  not interchangeable. A create handed a data source ID 404s claiming the database is not shared
+  with the integration, which names the wrong cause entirely and sends you to the wrong fix.
 - **Skills that write to the context repo ask before committing/pushing**; `process-pending`
   is `disable-model-invocation: true`.
 - Version in `plugin.json` only; no angle brackets in front-matter values; `*.sh` stay LF.
