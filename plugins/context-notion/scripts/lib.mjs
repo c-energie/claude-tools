@@ -53,12 +53,30 @@ if (!notion) {
   console.error(`note: ${parsed.path} declares no Notion backend (state.backend = ${JSON.stringify(state?.backend ?? null)}) — running with an empty roster and default settings.`);
 }
 
+/** The roster, normalised to the canonical array of `{ name, notionUserId, ... }`.
+ *  Older context.json files carry it as a `{ "Name": "notion-user-id" }` map instead, and every
+ *  caller reaches for `.find` — an object arrived as `roster.find is not a function` and took
+ *  pending-parse down mid-validation, which is the one thing the queue exists to survive. A
+ *  shape this layer can read is not a fact about any one project, so it is normalised here
+ *  rather than each caller guessing. `name` is forced to a string because `p.name.toLowerCase()`
+ *  is on the hot path and an entry without one crashed the same way. */
+const asRoster = (raw) => {
+  const named = (name, rest) => ({ ...rest, name: String(name ?? '') });
+  if (Array.isArray(raw)) return raw.filter(Boolean).map((p) => named(p?.name, p));
+  if (raw && typeof raw === 'object') {
+    return Object.entries(raw).map(([name, v]) => (v && typeof v === 'object')
+      ? named(v.name ?? name, v)
+      : named(name, { notionUserId: v == null ? null : String(v) }));
+  }
+  return [];
+};
+
 /** The project's state.notion block: databases, schemas, people, defaults. Null-proof:
  *  an explicit `"people": null` in a stub context.json must not defeat the guards. */
 export const config = {
   databases: notion?.databases ?? {},
   schemas: notion?.schemas ?? {},
-  people: notion?.people ?? [],
+  people: asRoster(notion?.people),
   defaults: { dueSoonDays: 7, ...(notion?.defaults ?? {}) },
 };
 
