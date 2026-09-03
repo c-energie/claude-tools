@@ -236,7 +236,9 @@ ${problems.length ? `<ul class="notes">${problems.map((p) => `<li>${esc(p)}</li>
 `;
 
 writeFileSync(out, html, 'utf8');
-console.log(`built ${out}`);
+// A plain Windows path (C:\...) is not a URI and most terminals won't make it clickable;
+// the file:// form is what actually opens when clicked.
+console.log(`built ${pathToFileURL(out).href}`);
 console.log(`  ${rows.length} diagram(s) from ${stores.length} store(s): ${stores.join(', ')}`);
 console.log(`  ${Math.round(Buffer.byteLength(html) / 1024)} KB, self-contained — open it with file://, no server`);
 for (const p of problems) console.log(`  note: ${p}`);
