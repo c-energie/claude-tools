@@ -29,7 +29,8 @@
 // deliberately or not at all.
 
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
-import { join, resolve, relative, dirname } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readIndex, readTaxonomy, resolveStore, rasterFor } from './diagram-store.mjs';
 
 const argv = process.argv.slice(2);
@@ -89,10 +90,13 @@ for (const dir of stores) {
       // inside another one brings its own <style> and rewrites the gallery around it. They are
       // listed and linked instead, which is honest about what the single file can hold.
       svg: e.format === 'svg' ? body : null,
-      href: relative(dirname(out), abs).split('\\').join('/'),
+      // Absolute file:// URLs, not paths relative to the gallery: some viewers (IDE HTML
+      // previews in particular) load the built page without giving it the document's own
+      // location as a base URL, so a relative href resolves against nothing and goes nowhere.
+      href: pathToFileURL(abs).href,
       raster: (() => {
         const png = rasterFor(dir, e.path);
-        return png ? relative(dirname(out), join(dir, png)).split('\\').join('/') : null;
+        return png ? pathToFileURL(join(dir, png)).href : null;
       })(),
       bytes: statSync(abs).size,
       missing: false,
