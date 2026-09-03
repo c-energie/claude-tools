@@ -240,5 +240,5 @@ writeFileSync(out, html, 'utf8');
 // the file:// form is what actually opens when clicked.
 console.log(`built ${pathToFileURL(out).href}`);
 console.log(`  ${rows.length} diagram(s) from ${stores.length} store(s): ${stores.join(', ')}`);
-console.log(`  ${Math.round(Buffer.byteLength(html) / 1024)} KB, self-contained — open it with file://, no server`);
+console.log(`  ${Math.round(Buffer.byteLength(html) / 1024)} KB, self-contained`);
 for (const p of problems) console.log(`  note: ${p}`);
