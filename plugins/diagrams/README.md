@@ -32,7 +32,7 @@ is a gallery quietly missing rows, which nobody notices because it still renders
 }
 ```
 
-- **`state.diagrams.repo`** — `owner/repo` of the store. Checked out at `~/.context/[owner]/[repo]`
+- **`state.diagrams.repo`** — `owner/repo` of the store. Checked out at `~/[owner]/[repo]`
   unless `state.diagrams.dir` says otherwise.
 - **`state.diagrams.org`** — optional; overrides the `org` recorded on each row, which otherwise
   is the store repo's owner.

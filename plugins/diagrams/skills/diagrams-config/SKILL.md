@@ -30,9 +30,10 @@ already hold the path) and prints the store repo, its checkout, the org and the 
 ```
 
 - **`state.diagrams.repo`** — `owner/repo` of the store. Required.
-- **`state.diagrams.dir`** — optional explicit checkout path. Otherwise
-  `~/.context/[owner]/[repo]`, the same layout the context repos use. Sitting under that root
-  says nothing about who may read it: a store is a separate repo with its own access.
+- **`state.diagrams.dir`** — optional explicit checkout path. Otherwise `~/[owner]/[repo]`, its
+  own root — deliberately not `~/.context`, which is reserved for context repos. A store is a
+  separate repo with its own access, and a separate root keeps context-repo tooling (the
+  session-start hook, `context-repo.sh`) from ever resolving a store by accident.
 - **`state.diagrams.org`** — optional override for the `org` recorded on each row. Defaults to
   the store repo's owner, which is right almost always.
 

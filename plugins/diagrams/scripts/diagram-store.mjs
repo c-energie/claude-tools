@@ -101,11 +101,12 @@ export function resolveStore({ config = null, mustExist = true } = {}) {
     throw new Error(`state.diagrams.repo is "${repo}" — expected owner/repo`);
   }
 
-  // Same ~/.context/<owner>/<repo> layout the context repos use. A store is a repo of its own
-  // with its own access; sitting under the same root says nothing about who may read it.
+  // Own root, not ~/.context: that root is for context repos specifically, and a store living
+  // there would say nothing false, but would invite the same tooling that resolves context repos
+  // to resolve stores too, blurring a boundary that is deliberately separate.
   const dir = d.dir
     ?? process.env.DIAGRAM_STORE_DIR
-    ?? join(homedir(), '.context', ...repo.split('/'));
+    ?? join(homedir(), ...repo.split('/'));
 
   if (mustExist && !existsSync(join(dir, '.git'))) {
     throw new Error(

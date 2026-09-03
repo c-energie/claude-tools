@@ -2,7 +2,7 @@
 // Build the diagram gallery: N stores in, ONE self-contained HTML file out.
 //
 //   node gallery-build.mjs                                   # this project's store
-//   node gallery-build.mjs ~/.context/c-energie/diagrams ~/.context/net-flex/diagrams
+//   node gallery-build.mjs ~/c-energie/diagrams ~/net-flex/diagrams
 //   node gallery-build.mjs --out ~/Desktop/diagrams.html
 //
 //   --out PATH     where to write (default: gallery.html beside the first store)
