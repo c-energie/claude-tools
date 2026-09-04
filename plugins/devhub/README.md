@@ -11,6 +11,7 @@ is its own plugin rather than a skill inside the context stack.
 | Skill | What it does |
 | --- | --- |
 | `devhub-feature` | Write or fix a repo's `devhub.toml` — and the dev-hub plugin behind it, when the options have to be computed at the moment someone looks |
+| `devhub-catalogue` | Add the repo you are standing in to a followed `catalogue.toml`, so `devhub` clones it, runs its recipe, and shows its features anywhere at all |
 
 ## Why a plugin and not `~/.claude/skills/`
 
@@ -27,7 +28,7 @@ It lived in one person's `~/.claude/skills/` until 2026-08-31, which meant three
 Same rule that put `diagrams` here: a marketplace is a permission boundary, a plugin is a topic
 boundary. Same people, new topic — a new plugin in the existing catalog.
 
-## What the skill is actually for
+## What `devhub-feature` is actually for
 
 `devhub.toml` is small, and the way it goes wrong is that it **parses cleanly and then refuses to
 run**. The skill is five judgements, three of which have a specific failure of that kind:
@@ -46,15 +47,32 @@ run**. The skill is five judgements, three of which have a specific failure of t
 
 `references/schema.md` and `references/plugin.md` carry every key and the `describe`/`run` contract.
 
+## What `devhub-catalogue` is actually for
+
+A `devhub.toml` renders nothing until the repo is **catalogued** — declared in a
+`[repos."owner/repo"]` entry in a followed catalogue's `catalogue.toml`. There is no `devhub`
+subcommand that adds one; it's a manual edit to a shared, committed file, so the skill's
+judgement is mostly about not landing that edit in the wrong place or pushing it too eagerly:
+
+- **which catalogue owns this repo** — a machine can follow more than one, and a repo may be
+  declared by exactly one of them; `owner/.github` is the common convention, not a rule to assume
+- **commit and push are two separate confirmations** — a local commit is easy to undo, a push
+  reaches every teammate's machine on their next `devhub sync`
+
+`references/catalogue-schema.md` carries every catalogue-level and per-repo key.
+
 ## Layout
 
 ```
 plugins/devhub/
   skills/devhub-feature/
     SKILL.md
-    references/schema.md    every key, every mode, every parameter kind
-    references/plugin.md    the describe/run contract, and a skeleton to copy
+    references/schema.md              every key, every mode, every parameter kind
+    references/plugin.md              the describe/run contract, and a skeleton to copy
+  skills/devhub-catalogue/
+    SKILL.md
+    references/catalogue-schema.md    every catalogue.toml key
 ```
 
 No scripts: `devhub` is its own CLI, installed separately (`uv tool install dev-hub`), and
-`devhub validate --manifest` is the check. Nothing here duplicates it.
+`devhub validate` (with or without `--manifest`) is the check. Nothing here duplicates it.

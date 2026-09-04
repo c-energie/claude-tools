@@ -18,8 +18,9 @@ refuses to run. Do not skip to writing the file.
 It writes files in **one repo**. It does not add that repo to a catalogue, edit any
 catalogue, commit anything, or install dev-hub. A repo's features only appear if the repo
 is **catalogued by a catalogue this machine follows** *and* cloned — check with
-`devhub features <owner/repo>` before concluding your manifest is broken. A repo that
-moved to another org's catalogue shows nothing until `devhub follow <that/catalogue>`.
+`devhub features <owner/repo>` before concluding your manifest is broken. If it says the
+repo isn't in the catalogue, that's `devhub-catalogue`'s job, not a manifest bug. A repo
+that moved to another org's catalogue shows nothing until `devhub follow <that/catalogue>`.
 
 ## 1. Static or plugin?
 
@@ -169,6 +170,7 @@ you find yourself wanting to, you want a plugin, where the repo's own code decid
 
 **Not this skill:** wiring a project to its context repo, or changing the context plugins
 themselves, is `context-kit-core`'s `context-setup` and `update-plugin`. Declaring which
-credentials a repo uses is the `secrets-declare` skill. This one only writes the `devhub.toml`
-(and its plugin) of the repo you are standing in — it never commits, and never touches a
-catalogue.
+credentials a repo uses is the `secrets-declare` skill. Adding this repo to a catalogue so
+`devhub` clones it and shows these features at all is `devhub-catalogue`. This one only writes
+the `devhub.toml` (and its plugin) of the repo you are standing in — it never commits, and
+never touches a catalogue.
