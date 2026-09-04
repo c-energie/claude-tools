@@ -31,7 +31,7 @@ plausibly could, ask rather than guess — a repo landing in the wrong catalogue
 harder-to-undo mistake, since moving it later needs a matching removal in the old one.
 
 Also check the repo isn't **already** declared, in this catalogue or another followed one —
-`devhub features owner/repo` erroring "not in the catalogue" is the normal trigger for this
+`devhub features <owner/repo>` erroring "not in the catalogue" is the normal trigger for this
 skill, but confirm by reading the file rather than assuming the error means it's absent
 everywhere.
 
@@ -54,12 +54,14 @@ validate` enforces, for whatever a header comment leaves unsaid.
 
 ## 4. Write the entry
 
-Minimum: `description`. Add `toolchain` when it's inferable from the repo you're standing in —
-`uv.lock`/`pyproject.toml` → `uv`, `pnpm-lock.yaml` → `pnpm`, `package-lock.json` → `npm`, none
-of those → `none`; different toolchains in different subdirectories → `toolchain = "mixed"` with
-a `[repos."owner/repo".subdirs]` table. Leave `tags`, `secrets`, `manual_steps` and
-`extras`/`groups` out unless there's a concrete reason to set them — see
-`references/catalogue-schema.md` for what each means. Match the file's existing style:
+Minimum: `description`. `toolchain` is optional — `devhub` auto-detects it on clone
+(`uv.lock`/`pyproject.toml` → `uv`, `pnpm-lock.yaml` → `pnpm`, `package-lock.json` → `npm`,
+none of those → `none`) — so only set it explicitly if auto-detection would guess wrong, or the
+repo mixes toolchains across subdirectories, which auto-detect can't express: `toolchain =
+"mixed"` with a `[repos."owner/repo".subdirs]` table naming each subdir's toolchain. Leave
+`tags`, `secrets`, `manual_steps` and `extras`/`groups` out unless there's a concrete reason to
+set them — see `references/catalogue-schema.md` for what each means. Match the file's existing
+style:
 description tone, quoting, and where new entries are inserted (usually appended to the relevant
 `# ----` section, not alphabetically forced if the file isn't already strict about it).
 
@@ -70,7 +72,7 @@ devhub validate <path-to-catalogue.toml>
 ```
 
 No `--manifest` flag here — that validates a repo's own `devhub.toml`, a different file from a
-different command (step 4 of `devhub-feature`). Unknown keys are a parse error and every problem
+different command (step 6 of `devhub-feature`). Unknown keys are a parse error and every problem
 is reported at once; fix all of them before committing.
 
 ## 6. Commit — ask first
@@ -79,14 +81,16 @@ This is a shared, committed file every machine pulls. Show the diff, then ask be
 
 ```
 git -C <catalogue-clone> add catalogue.toml
-git -C <catalogue-clone> commit -m "catalogue: add owner/repo"
+git -C <catalogue-clone> commit -m "catalogue: add <owner/repo>"
 ```
 
 ## 7. Push — ask again, separately
 
-Pushing is a second confirmation, distinct from committing: it lands on every teammate's machine
-on their next `devhub sync`, where a local-only commit does not. Offer to stop after the commit
-if the user wants to look first — nothing downstream needs the push done immediately.
+**Stop after the commit and wait for an explicit yes before pushing.** This is a second,
+distinct confirmation from step 6's — do not treat the earlier commit approval as covering it,
+and do not push in the same turn as the commit. A push lands on every teammate's machine on
+their next `devhub sync`, where a local-only commit does not; nothing downstream needs it done
+immediately, so there is no reason to rush it.
 
 ```
 git -C <catalogue-clone> push
@@ -98,7 +102,7 @@ git -C <catalogue-clone> push
 devhub sync                        # pulls the catalogue; exits 1 if ANY catalogued repo is
                                     # dirty/behind — that's normal cross-org noise, not a
                                     # signal this step failed
-devhub features owner/repo         # confirms the repo is now visible, and that its
+devhub features <owner/repo>       # confirms the repo is now visible, and that its
                                     # devhub.toml (if any) parsed
 ```
 

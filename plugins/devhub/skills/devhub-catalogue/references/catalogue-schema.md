@@ -15,7 +15,7 @@ reports "no access" cleanly rather than failing.
 |---|---|---|
 | `schema` | yes | `1` |
 | `min_tool_version` | no | the org's floor for `devhub` itself. A machine below it refuses to run rather than mis-parsing an unknown key. Bump only when a catalogue feature genuinely needs a newer build. |
-| `[org]` | no | facts about the *machine*, not any one repo — `name`, `secret_sync`, `roster`, `context`, `context_kit`, `theme`. Declared once across every catalogue a machine follows and inherited by the others; a second catalogue followed alongside one that already declares `[org]` should not repeat it. |
+| `[org]` | no | facts about the *machine*, not any one repo — `name`, `secret_sync`, `roster`, `context`, `context_kit`, `theme`, `features`. Declared once across every catalogue a machine follows and inherited by the others; a second catalogue followed alongside one that already declares `[org]` should not repeat it. |
 | `[profiles]` | no | named convenience groupings of `owner/repo` strings, shown by the tool. Not access control. |
 | `[repos."owner/repo"]` | no, any number | one per catalogued repo — see below |
 
@@ -30,6 +30,7 @@ reports "no access" cleanly rather than failing.
 | `secrets` | no | `true` if the repo is listed in the org's secret-roster (see the `secrets-declare` skill) |
 | `manual_steps` | no | list of stable strings, one per manual setup step. Rewording an existing string **deliberately re-opens** that step as undone on every machine once step-tracking lands — don't edit one casually |
 | `subdirs` | `mixed` only | a nested `[repos."owner/repo".subdirs]` table, subdirectory name → toolchain, for a repo whose parts need different toolchains |
+| `features` | no | `false` hides this repo's `devhub.toml` features everywhere, even if the file itself is valid. Same key also works at `[org]` level, hiding features org-wide. A followed catalogue's veto always wins — it cannot be contradicted by the repo's own manifest. See `devhub-feature`'s `references/schema.md` for the full veto behaviour. |
 
 ## Rules
 

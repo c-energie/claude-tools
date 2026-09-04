@@ -1,6 +1,6 @@
 {
   "name": "devhub",
-  "description": "Author a repo's dev-hub features: write or fix its committed devhub.toml so the repo's tooling shows up as buttons in dev-hub — in that repo's drawer or on the hub's Project tab — and write the plugin behind it when the options have to be computed at the moment someone looks. Knows the traps that produce a manifest which parses cleanly and then refuses to run.",
-  "version": "0.2.0",
+  "description": "Author a repo's dev-hub features: write or fix its committed devhub.toml so the repo's tooling shows up as buttons in dev-hub — in that repo's drawer or on the hub's Project tab — and write the plugin behind it when the options have to be computed at the moment someone looks. Also catalogues a repo into a followed catalogue.toml so devhub clones it and shows those features at all, committing and pushing to that shared repo with explicit confirmation at each step. Knows the traps that produce a manifest which parses cleanly and then refuses to run.",
+  "version": "0.2.1",
   "author": { "name": "c-energie" }
 }
