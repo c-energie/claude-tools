@@ -35,7 +35,7 @@
 // the time it was gathered so that "resolved to a thread" and "resolved to a thread because the
 // list was stale" stay distinguishable.
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 // In step with hooks/load-context.sh, context-repo.sh and context-kit-core's link-context.mjs.
@@ -1015,6 +1015,155 @@ export function planThreads(batch, { taxonomy, resolvedRepo } = {}) {
   return { saves, parked, shortlisted, refused };
 }
 
+// ---------------------------------------------------------------- the handoff queue
+//
+// `handoff/` means OUTPUT BOUND FOR A CONTEXT REPO SOMEBODY ELSE OWNS. That is the whole of it,
+// in one sentence, and it is narrower than what the folder started as: you cannot hand off to
+// yourself, so once a session can write its own personal targets directly, parking one would gate
+// a person on their own approval.
+//
+// The queue is a SILENT BACKLOG by nature, which sets the two failure modes this has to sit
+// between. Drain automatically without showing what was drained, and a run executes work it never
+// proposed. Never drain, and the queue grows until the gate stops meaning anything. So: personal
+// targets drain automatically, shared ones are listed and left, and EVERYTHING drained appears in
+// the approval table under a carried-over section — which is rendered even when it is empty,
+// because "the queue is empty" should be something seen rather than assumed.
+
+// Additive. `issue` is new — triage's majority destination previously had no way to be queued at
+// all. The four earlier kinds are unchanged, so items already sitting in a queue keep parsing.
+export const HANDOFF_KINDS = ['action', 'decision', 'open-question', 'thread-seed', 'issue'];
+
+const OWNER_REPO = /^[^/\s]+\/[^/\s]+$/;
+
+/**
+ * Parse one handoff item. Front matter is a flat `key: value` block between `---` fences — the
+ * same shape the rest of this repo family uses, and deliberately not a YAML implementation.
+ */
+export function parseHandoffItem(text, file = '(unnamed)') {
+  const errors = [];
+  const m = String(text ?? '').match(/^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!m) return { file, errors: ['no YAML front-matter block'], ok: false };
+
+  const fm = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (kv) fm[kv[1]] = kv[2].trim().replace(/^["']|["']$/g, '');
+  }
+  const body = m[2].trim();
+
+  const kind = fm.kind ?? null;
+  if (!kind) errors.push('no "kind" in front-matter');
+  else if (!HANDOFF_KINDS.includes(kind)) errors.push(`kind "${kind}" is not one of ${HANDOFF_KINDS.join(' | ')}`);
+
+  const project = fm.project ?? null;
+  if (!project) errors.push('no "project" in front-matter — the target context repo has to be recorded, not inferred');
+  else if (!OWNER_REPO.test(project)) errors.push(`project "${project}" is not an owner/repo name`);
+
+  // REQUIRED for kind: issue, OPTIONAL otherwise. An issue's target repository is a fact that
+  // must be recorded rather than read out of the prose — the whole point of the field. For the
+  // other kinds, absent means the target is decided by the kind and the target context repo,
+  // exactly as it was before this field existed, which is what keeps old items parsing.
+  const repo = fm.repo ?? null;
+  if (kind === 'issue' && !repo) errors.push('kind: issue requires a "repo" field naming the target repository — an issue\'s destination is not inferred from the text');
+  if (repo && !OWNER_REPO.test(repo)) errors.push(`repo "${repo}" is not an owner/repo name`);
+
+  // The documented silent failure: an ingester reads an angle bracket in a front-matter value as
+  // a tag and drops the field without saying so.
+  for (const [k, v] of Object.entries(fm)) {
+    if (/[<>]/.test(v)) errors.push(`front-matter "${k}" contains an angle bracket — an ingester reads it as a tag and drops the field silently. Use [placeholder].`);
+  }
+
+  const dated = String(file).match(/^(\d{4}-\d{2}-\d{2})/);
+  return {
+    ok: errors.length === 0, file, errors,
+    title: fm.title ?? String(file).replace(/\.md$/, ''),
+    project, kind, repo,
+    date: fm.date ?? (dated ? dated[1] : null),
+    body,
+  };
+}
+
+/**
+ * Decide what happens to one item.
+ *
+ * TARGET RESOLUTION DECIDES THE DRAIN, and visibility is read from the SAME `organisations` flag
+ * the shortlist rules use, so the two can never disagree:
+ *
+ *   selfRepo   — the item's target is this very repo. You cannot hand off to yourself: written.
+ *   personal   — drains automatically. Parking one would gate a person on their own approval.
+ *   shared     — LISTED AND LEFT. The gate sits exactly where another person's repository is.
+ *   unresolved — listed with that reason. A stale item must not land somewhere arbitrary.
+ */
+export function classifyHandoff(item, { organisations = [], selfRepo = null, unreachable = [] } = {}) {
+  if (!item.ok) return { ...item, action: 'list', reason: `does not parse: ${item.errors.join('; ')}` };
+
+  const target = item.repo ?? item.project;
+  if (unreachable.includes(target)) {
+    return { ...item, action: 'list', reason: `${target} could not be reached with the current credential — a credential problem, not a routing one` };
+  }
+
+  if (item.project === selfRepo) {
+    return { ...item, action: 'drain', visibility: 'personal', reason: 'the target is this repo itself — you cannot hand off to yourself, so it is written rather than parked' };
+  }
+
+  const owner = String(item.project ?? '').split('/')[0];
+  const org = organisations.find((o) => o.owner === owner) ?? null;
+  if (!org) {
+    return { ...item, action: 'list', reason: `no declared organisation owns "${owner}", so this item's target context repo cannot be resolved. Listed rather than guessed at — a stale item must not land somewhere arbitrary.` };
+  }
+  if (org.visibility === 'shared') {
+    return { ...item, action: 'list', visibility: 'shared', reason: `${item.project} is in an organisation flagged shared — the gate sits exactly here, so this is listed and left for a person` };
+  }
+  return { ...item, action: 'drain', visibility: org.visibility, reason: `${item.project} is personal, so this drains automatically rather than gating you on your own approval` };
+}
+
+/** Read and classify a whole queue directory. */
+export function readHandoffQueue(dir, opts = {}) {
+  let files = [];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.md') && !['README.md', 'INDEX.md'].includes(f)).sort();
+  } catch { return { applicable: false, total: 0, drain: [], list: [] }; }
+
+  const items = files.map((f) => classifyHandoff(parseHandoffItem(readFileSync(join(dir, f), 'utf8'), f), opts));
+  return {
+    applicable: true,
+    total: items.length,
+    drain: items.filter((i) => i.action === 'drain'),
+    list: items.filter((i) => i.action === 'list'),
+  };
+}
+
+/**
+ * The carried-over section, ALWAYS rendered — with a zero count when nothing was carried over
+ * rather than being omitted. A run that writes something it did not show is the failure this
+ * prevents, and an omitted section makes "nothing was carried over" indistinguishable from
+ * "the section was not printed".
+ */
+export function renderCarriedOver(queue, { drained = null } = {}) {
+  const lines = [];
+  if (!queue.applicable) {
+    lines.push('  carried over (0) — this repo has no handoff/ queue.');
+    return lines.join('\n');
+  }
+  const done = drained ?? queue.drain;
+  lines.push(`  carried over (${done.length}) — drained from handoff/ at the start of this run:`);
+  if (!done.length) lines.push('    (nothing) — the queue held no item bound for a repo this session owns.');
+  for (const i of done) {
+    lines.push(`    ${i.kind.padEnd(13)} ${i.title}`);
+    lines.push(`      -> ${i.repo ?? i.project}   (${i.file}${i.date ? `, ${i.date}` : ''})`);
+  }
+  if (queue.list.length) {
+    lines.push('');
+    lines.push(`  waiting for a person (${queue.list.length}) — listed every run, so a stalled item stays visible:`);
+    for (const i of queue.list) lines.push(`    ${i.title}\n      ${i.reason}`);
+  }
+  lines.push('');
+  lines.push(`  handoff/ backlog: ${queue.total} item(s). An item moves to handoff/done/ ONLY after its`);
+  lines.push('  write succeeds — a failure leaves it exactly where it was, is named in the summary,');
+  lines.push('  and the run continues. A half-drained queue is recovered by re-running.');
+  return lines.join('\n');
+}
+
 /** Which sensitive terms a piece of text hits. Case-insensitive SUBSTRING matching. */
 export function sensitiveHits(text, terms) {
   const hay = String(text ?? '').toLowerCase();
@@ -1051,6 +1200,7 @@ function main(argv) {
   console.error('       triage-notes.mjs github  [checkout] --batch [evaluated.json] [--body-dir d] [--unreachable owner/repo,...]');
   console.error('       triage-notes.mjs notion  [checkout] --batch [evaluated.json] [--no-connector]');
   console.error('       triage-notes.mjs threads [checkout] --batch [evaluated.json]');
+  console.error('       triage-notes.mjs handoff [checkout] [--unreachable owner/repo,...] [--json]');
     process.exit(2);
   }
 
@@ -1378,6 +1528,34 @@ function main(argv) {
     console.log(`  validation and the index. Pass it the material and let it write — a second`);
     console.log(`  implementation would drift, and an invented topic tag is exactly what validation`);
     console.log(`  exists to catch. Advance Last triaged after each save; a failure keeps its marker.`);
+    return;
+  }
+
+  if (cmd === 'handoff') {
+    if (cfg.status !== 'configured') {
+      console.error(`triage-notes — ${cfg.status}`); console.error(`  ${cfg.says}`); process.exit(1);
+    }
+    const selfRepo = readJson(cfg.file).contextRepo ?? null;
+    const unreachableArg = flagValue(argv, 'unreachable');
+    const queue = readHandoffQueue(join(root, 'handoff'), {
+      organisations: cfg.notes.organisations,
+      selfRepo,
+      unreachable: unreachableArg ? unreachableArg.split(',').map((s) => s.trim()).filter(Boolean) : [],
+    });
+
+    if (asJson) { console.log(JSON.stringify(queue, null, 2)); return; }
+
+    // Reported at the START of every run, INCLUDING ZERO, so an empty queue is a thing that was
+    // seen rather than assumed.
+    console.log(`triage-notes — handoff backlog: ${queue.total} item(s)`);
+    if (!queue.applicable) { console.log('  (this repo has no handoff/ directory)'); return; }
+    console.log('');
+    console.log(renderCarriedOver(queue));
+    if (queue.drain.length) {
+      console.log('\n  Drain these BEFORE selection, so carried-over work and newly proposed work are');
+      console.log('  approved together in one table. Then `git mv` each into handoff/done/ — only');
+      console.log('  after its write succeeded.');
+    }
     return;
   }
 

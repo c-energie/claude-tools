@@ -26,6 +26,7 @@ node scripts/triage-notes.mjs propose "$ROOT" --batch b.json --classify   # tabl
 node scripts/triage-notes.mjs github  "$ROOT" --batch evaluated.json      # plan gh issue create, runs nothing
 node scripts/triage-notes.mjs notion  "$ROOT" --batch evaluated.json      # format context-notion skill args
 node scripts/triage-notes.mjs threads "$ROOT" --batch evaluated.json      # assemble save-thread material
+node scripts/triage-notes.mjs handoff "$ROOT"                             # the queue: drain-now vs list-only
 node --test scripts/triage-notes.test.mjs                          # from the plugin directory
 node ../context-kit-core/scripts/check-plugin.mjs .                # before any commit
 ```
@@ -142,6 +143,25 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
 - **A thread bound for another context repo is PARKED, never written.** A thread file is a commit
   into that repository, and it goes through that project's own session — which is where
   `taxonomy.yml` validation lives. That boundary is what keeps the validation meaningful.
+- **`handoff/` means output bound for a context repo SOMEBODY ELSE OWNS**, and nothing else. You
+  cannot hand off to yourself, so an item whose target this session can write is drained rather
+  than parked. Personal targets drain automatically; SHARED ones are listed and left, which is
+  where the gate belongs. Visibility is read from the same `organisations` flag the shortlist
+  rules use, so the two can never disagree.
+- **The carried-over section is ALWAYS rendered, with a count, even when it is zero.** A run that
+  writes something it did not show is the failure this prevents, and an omitted section makes
+  "nothing was carried over" indistinguishable from "not printed". The backlog count is reported
+  at the start of every run, including zero, so an empty queue is something seen not assumed.
+- **An item moves to `handoff/done/` only after its write SUCCEEDS.** A failure leaves it exactly
+  where it was and the run continues; a half-drained queue is recovered by re-running.
+- **Handoff contract changes are ADDITIVE.** `kind` gained `issue`; `repo:` is required for that
+  kind and optional otherwise, so items written in the older four-kind format still parse.
+- **NEVER commit a real handoff item as a test fixture.** Everything under `plugins/` travels
+  with every clone that installs the plugin, and each machine's plugin cache is another copy, so
+  a real item would move one person's and one org's content into another org's shipped artefact.
+  Real items need no rescuing either: they are committed in their own repo and `git show` recovers
+  them after a drain. Same rule, same reason, as keeping working notes out of a tool repo's own
+  `.claude/threads/`. Fixtures are hand-written to match the shape.
 - **`Last triaged` and `Shortlisted` are DATETIMES, not dates.** A run that fails half way is
   resumed by re-running, and only a timestamp separates notes already written from notes not yet
   reached; date granularity would re-propose everything written earlier the same day. Notion has

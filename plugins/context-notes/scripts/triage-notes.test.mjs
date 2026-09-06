@@ -20,6 +20,7 @@ import {
   issueBody, planIssue, planIssues, applyReachability, destinationRepos, TITLE_MAX,
   planNotionRow, planNotionRows, provenance, NOTION_DESTINATIONS,
   parseTaxonomy, checkTags, planThread, planThreads, THREAD_STATUSES,
+  parseHandoffItem, classifyHandoff, readHandoffQueue, renderCarriedOver, HANDOFF_KINDS,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -1166,4 +1167,221 @@ test('a thread with no contributing notes is refused rather than saved empty', (
   const p = planThread({ title: 'x', topics: ['ip'], rows: [] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
   assert.equal(p.ok, false);
   assert.match(p.reason, /no contributing notes/);
+});
+
+// ---------------------------------------------------------------- the handoff queue
+//
+// FIXTURES ARE HAND-WRITTEN TO MATCH THE SHAPE, NEVER COPIES OF REAL ITEMS. This is a rule, not a
+// preference. Everything under plugins/ travels with every clone that installs the plugin, and
+// the plugin cache on each of those machines is another copy — so a real item committed here
+// would move one person's and one org's content into another org's shipped artefact. Real items
+// also need no rescuing: they are committed in their own repo, and `git show` recovers any of
+// them after a drain. Same rule, same reason, as keeping working notes out of a tool repo's own
+// .claude/threads/.
+
+const ORGS_H = [
+  { owner: 'corson94', visibility: 'personal' },
+  { owner: 'c-energie', visibility: 'personal' },
+  { owner: 'net-flex', visibility: 'shared' },
+];
+
+const item = (fm, body = 'The item itself, with enough context that the receiving session needs nothing from here.') =>
+  `---\n${Object.entries(fm).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n${body}\n`;
+
+test('kind: issue with a repo field parses', () => {
+  const p = parseHandoffItem(item({
+    title: 'Add a dry-run flag', project: 'net-flex/context', kind: 'issue',
+    repo: 'net-flex/website', date: '2026-09-05',
+  }), '2026-09-05-dry-run.md');
+  assert.equal(p.ok, true, p.errors.join('; '));
+  assert.equal(p.kind, 'issue');
+  assert.equal(p.repo, 'net-flex/website');
+});
+
+test('kind: issue WITHOUT a repo field is rejected, naming the missing field', () => {
+  const p = parseHandoffItem(item({ title: 'x', project: 'net-flex/context', kind: 'issue', date: '2026-09-05' }), 'x.md');
+  assert.equal(p.ok, false);
+  assert.ok(p.errors.some((e) => /requires a "repo" field/.test(e)));
+  assert.ok(p.errors.some((e) => /not inferred from the text/.test(e)));
+});
+
+test('an item in the OLD four-kind format with no repo: parses unchanged', () => {
+  // The compatibility case: repurposing the contract must not strand items already in a queue.
+  for (const kind of ['action', 'decision', 'open-question', 'thread-seed']) {
+    const p = parseHandoffItem(item({
+      title: 'A pre-existing item', project: 'corson94/thesis-context', kind, date: '2026-08-20',
+    }), '2026-08-20-something.md');
+    assert.equal(p.ok, true, `${kind}: ${p.errors.join('; ')}`);
+    assert.equal(p.repo, null, 'absent repo: is normal for these kinds');
+    assert.equal(p.date, '2026-08-20');
+  }
+});
+
+test('the date falls back to the filename when front-matter omits it', () => {
+  const p = parseHandoffItem(item({ title: 'x', project: 'corson94/thesis-context', kind: 'action' }), '2026-08-13-topic.md');
+  assert.equal(p.date, '2026-08-13');
+});
+
+test('an unknown kind, a missing project and a bad repo name are each named', () => {
+  const p = parseHandoffItem(item({ title: 'x', kind: 'slack-message', repo: 'not-an-owner-repo' }), 'x.md');
+  assert.equal(p.ok, false);
+  assert.ok(p.errors.some((e) => /kind "slack-message" is not one of/.test(e)));
+  assert.ok(p.errors.some((e) => /no "project"/.test(e)));
+  assert.ok(p.errors.some((e) => /repo "not-an-owner-repo" is not an owner\/repo name/.test(e)));
+});
+
+test('an angle bracket in a front-matter value is reported — the ingester drops it silently', () => {
+  const p = parseHandoffItem(item({ title: 'Replace <placeholder>', project: 'corson94/thesis-context', kind: 'action' }), 'x.md');
+  assert.equal(p.ok, false);
+  assert.ok(p.errors.some((e) => /angle bracket/.test(e) && /silently/.test(e)));
+});
+
+test('a file with no front-matter block is rejected rather than half-read', () => {
+  assert.equal(parseHandoffItem('just some prose', 'x.md').ok, false);
+});
+
+// ---------------------------------------------------------------- drain vs list
+
+const parsed = (fm) => parseHandoffItem(item(fm), '2026-09-05-x.md');
+
+test('an item bound for a PERSONAL context repo drains automatically', () => {
+  const c = classifyHandoff(parsed({ title: 'x', project: 'corson94/thesis-context', kind: 'action' }),
+    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  assert.equal(c.action, 'drain');
+  assert.equal(c.visibility, 'personal');
+  assert.match(c.reason, /gating you on your own approval/);
+});
+
+test('the SAME item bound for a SHARED context repo is listed and left', () => {
+  const c = classifyHandoff(parsed({ title: 'x', project: 'net-flex/context', kind: 'action' }),
+    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  assert.equal(c.action, 'list');
+  assert.equal(c.visibility, 'shared');
+  assert.match(c.reason, /the gate sits exactly here/);
+});
+
+test('an item targeting THIS repo is written — you cannot hand off to yourself', () => {
+  const c = classifyHandoff(parsed({ title: 'x', project: 'corson94/second-brain', kind: 'action' }),
+    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  assert.equal(c.action, 'drain');
+  assert.match(c.reason, /cannot hand off to yourself/);
+});
+
+test('an item whose target repo cannot be resolved is LISTED, never defaulted', () => {
+  const c = classifyHandoff(parsed({ title: 'x', project: 'some-other-org/context', kind: 'action' }),
+    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  assert.equal(c.action, 'list');
+  assert.match(c.reason, /cannot be resolved/);
+  assert.match(c.reason, /must not land somewhere arbitrary/);
+});
+
+test('an item whose repo: is unreachable is listed with that reason', () => {
+  const c = classifyHandoff(
+    parsed({ title: 'x', project: 'corson94/thesis-context', kind: 'issue', repo: 'corson94/private-thing' }),
+    { organisations: ORGS_H, selfRepo: 'corson94/second-brain', unreachable: ['corson94/private-thing'] });
+  assert.equal(c.action, 'list');
+  assert.match(c.reason, /credential problem, not a routing one/);
+});
+
+test('an unparseable item is listed with its parse errors, never drained', () => {
+  const c = classifyHandoff(parseHandoffItem('no front matter', 'x.md'), { organisations: ORGS_H });
+  assert.equal(c.action, 'list');
+  assert.match(c.reason, /does not parse/);
+});
+
+test('visibility comes from the SAME organisations flag the shortlist rules use', () => {
+  // Read the same way from the same place, so the two can never disagree about an owner.
+  const shared = classifyHandoff(parsed({ title: 'x', project: 'net-flex/context', kind: 'action' }),
+    { organisations: NOTES.organisations, selfRepo: 'corson94/second-brain' });
+  assert.equal(shared.visibility, 'shared');
+  const personal = classifyHandoff(parsed({ title: 'x', project: 'c-energie/dev-hub', kind: 'action' }),
+    { organisations: NOTES.organisations, selfRepo: 'corson94/second-brain' });
+  assert.equal(personal.visibility, 'personal');
+});
+
+// ---------------------------------------------------------------- the queue and the section
+
+const queueDir = (files) => {
+  const dir = mkdtempSync(join(tmpdir(), 'handoff-'));
+  for (const [name, fm] of Object.entries(files)) writeFileSync(join(dir, name), item(fm));
+  writeFileSync(join(dir, 'README.md'), '# handoff\n');
+  writeFileSync(join(dir, 'INDEX.md'), '# index\n');
+  return dir;
+};
+
+test('README.md and INDEX.md are not items', () => {
+  const dir = queueDir({ '2026-09-05-a.md': { title: 'a', project: 'corson94/thesis-context', kind: 'action' } });
+  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  assert.equal(q.total, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a queue splits into drain-now and list-only', () => {
+  const dir = queueDir({
+    '2026-09-01-mine.md': { title: 'mine', project: 'corson94/thesis-context', kind: 'action' },
+    '2026-09-02-theirs.md': { title: 'theirs', project: 'net-flex/context', kind: 'decision' },
+    '2026-09-03-issue.md': { title: 'an issue', project: 'corson94/thesis-context', kind: 'issue', repo: 'corson94/serl-mock' },
+  });
+  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  assert.equal(q.total, 3);
+  assert.deepEqual(q.drain.map((i) => i.title).sort(), ['an issue', 'mine']);
+  assert.deepEqual(q.list.map((i) => i.title), ['theirs']);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('the carried-over section renders WITH A COUNT when items were drained', () => {
+  const dir = queueDir({ '2026-09-01-mine.md': { title: 'mine', project: 'corson94/thesis-context', kind: 'action' } });
+  const out = renderCarriedOver(readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' }));
+  assert.match(out, /carried over \(1\)/);
+  assert.match(out, /mine/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('it renders with a ZERO count rather than being omitted', () => {
+  // An omitted section makes "nothing was carried over" indistinguishable from "not printed".
+  const dir = queueDir({ '2026-09-02-theirs.md': { title: 'theirs', project: 'net-flex/context', kind: 'action' } });
+  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  const out = renderCarriedOver(q);
+  assert.match(out, /carried over \(0\)/);
+  assert.match(out, /\(nothing\)/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('an empty queue still renders a zero section and a zero backlog', () => {
+  const dir = queueDir({});
+  const out = renderCarriedOver(readHandoffQueue(dir, { organisations: ORGS_H }));
+  assert.match(out, /carried over \(0\)/);
+  assert.match(out, /backlog: 0 item\(s\)/, 'an empty queue should be something seen, not assumed');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('shared items are listed EVERY run, so a stalled one stays visible', () => {
+  const dir = queueDir({ '2026-08-20-old.md': { title: 'an old shared item', project: 'net-flex/context', kind: 'action' } });
+  const out = renderCarriedOver(readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' }));
+  assert.match(out, /waiting for a person \(1\)/);
+  assert.match(out, /an old shared item/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a repo with no handoff/ directory reports zero rather than erroring', () => {
+  const q = readHandoffQueue(join(tmpdir(), 'definitely-not-a-queue-dir-xyz'), { organisations: ORGS_H });
+  assert.equal(q.applicable, false);
+  assert.equal(q.total, 0);
+  assert.match(renderCarriedOver(q), /carried over \(0\)/);
+});
+
+test('re-running over a half-drained queue produces no duplicate work', () => {
+  const dir = queueDir({
+    '2026-09-01-one.md': { title: 'one', project: 'corson94/thesis-context', kind: 'action' },
+    '2026-09-02-two.md': { title: 'two', project: 'corson94/thesis-context', kind: 'action' },
+  });
+  const opts = { organisations: ORGS_H, selfRepo: 'corson94/second-brain' };
+  assert.equal(readHandoffQueue(dir, opts).drain.length, 2);
+
+  // "one" was written, so it moved to done/. "two" failed, so it stayed exactly where it was.
+  rmSync(join(dir, '2026-09-01-one.md'));
+  const second = readHandoffQueue(dir, opts);
+  assert.deepEqual(second.drain.map((i) => i.title), ['two'],
+    'only the item whose write did not succeed comes round again');
+  rmSync(dir, { recursive: true, force: true });
 });

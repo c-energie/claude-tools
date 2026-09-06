@@ -32,6 +32,10 @@ const OPTIONS = ['json', 'fix', 'include', 'today'];
 const OPTOUT = ['none', 'off', 'false', 'no', '-', 'disabled'];
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const PENDING_STALE_DAYS = 30;
+// Shorter than the pending queue's, because a handoff item is addressed to a PERSON in another
+// project rather than to a tool: it is only drained when somebody opens that project's session,
+// so it goes stale by nobody doing anything rather than by a run failing.
+const HANDOFF_STALE_DAYS = 14;
 const MEMORY_STALE_DAYS = 90;
 
 const die = (m) => { console.error(`context-doctor.mjs: ${m}`); process.exit(2); };
@@ -473,6 +477,31 @@ try {
     }
   }
 } catch { /* no pending/ is fine */ }
+
+// The handoff queue is a SILENT BACKLOG: an item sits there until somebody opens the target
+// project's own session, and nothing announces that it has been waiting. Reporting its age here
+// is what turns it into a backlog somebody has seen — the same job this check does for every
+// other drift that never announces itself. Report only: whether an item is still worth draining
+// is a judgement about its content, which nothing here can make.
+try {
+  for (const f of readdirSync(join(ROOT, 'handoff')).filter((f) => f.endsWith('.md') && !['README.md', 'INDEX.md'].includes(f))) {
+    const text = readFileSync(join(ROOT, 'handoff', f), 'utf8');
+    const fm = text.match(/^﻿?---\r?\n([\s\S]*?)\r?\n---/);
+    const dated = (fm?.[1].match(/^date:\s*(\d{4}-\d{2}-\d{2})/m) ?? f.match(/^(\d{4}-\d{2}-\d{2})/))?.[1] ?? null;
+    const age = dated
+      ? daysSince(dated)
+      : Math.round((Date.parse(`${today}T00:00:00Z`) - statSync(join(ROOT, 'handoff', f)).mtimeMs) / 86400000);
+    if (age > HANDOFF_STALE_DAYS) {
+      add('warn', 'handoff', `handoff/${f} has been waiting ${age} days — it is addressed to another project and is only drained when somebody opens that project's session. triage-notes reports the backlog every run; context-notion:weekly-review is the cadence for the shared ones.`);
+    }
+    // kind: issue REQUIRES a repo: field. Without it the item names no destination, and a drainer
+    // would have to infer one from the prose — which is the guess this field exists to prevent.
+    const kind = fm?.[1].match(/^kind:\s*(\S+)/m)?.[1] ?? null;
+    if (kind === 'issue' && !/^repo:\s*\S/m.test(fm?.[1] ?? '')) {
+      add('err', 'handoff', `handoff/${f} is kind: issue with no "repo:" field — it names no destination repository, and a drainer must not infer one from the text`);
+    }
+  }
+} catch { /* no handoff/ is fine — most context repos have none */ }
 
 // ---------------------------------------------------------------- includes (report only)
 

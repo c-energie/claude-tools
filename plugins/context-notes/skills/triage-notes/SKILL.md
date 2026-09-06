@@ -339,7 +339,48 @@ becomes a front-matter value — an angle bracket there is read as a tag and the
 If `save-thread`, the template, `taxonomy.yml` or the status enum needs changing, that is a change
 to **`context-kit-core`**, made there.
 
-## 12. The two datetime markers
+## 12. Drain the handoff queue — first, before selection
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" handoff "$ROOT"
+```
+
+**Run this at the start, before selection**, so carried-over work and newly proposed work are
+approved together in one table.
+
+`handoff/` means **output bound for a context repo somebody else owns**. That is the whole of it.
+You cannot hand off to yourself, so an item whose target this session can write is drained rather
+than parked — parking one would gate the user on their own approval.
+
+| target | what happens |
+| --- | --- |
+| this repo itself | written — you cannot hand off to yourself |
+| an org flagged `personal` | **drained automatically** |
+| an org flagged `shared` | **listed and left.** The gate sits exactly where another person's repository is |
+| an org that resolves to nothing | listed with that reason, never guessed at |
+| an unreachable repository | listed — a credential problem, not a routing one |
+
+Visibility is read from the **same** `organisations` flag the shortlist rules use, so the two can
+never disagree.
+
+**Report the backlog count at the start of every run, including zero.** An empty queue should be
+something the user saw, not something they assumed.
+
+**Always show the carried-over section, even when it is empty.** A run that writes something it
+did not show is the failure this prevents, and an omitted section makes "nothing was carried over"
+indistinguishable from "not printed". Shared items are listed **every** run, so a stalled one stays
+visible rather than being forgotten.
+
+**Move an item to `handoff/done/` only after its write succeeds.** A failed write leaves the item
+exactly where it was, is named in the run summary, and **the run continues** — one broken item does
+not block a batch, and a half-drained queue is recovered by re-running.
+
+Triage's own shared-target output is parked in `handoff/` in this same format — one queue, not two.
+`kind` is `action | decision | open-question | thread-seed | issue`, and **`repo:` is required for
+`kind: issue`** (an issue's destination is recorded, never inferred from the prose) and optional
+otherwise, which is what keeps older items parsing unchanged.
+
+## 13. The two datetime markers
 
 `Last triaged` and `Shortlisted` on each topic row are **datetimes, not dates**, and must stay
 that way. A run that fails half way is resumed by re-running it, and only a timestamp separates

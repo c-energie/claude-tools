@@ -37,6 +37,12 @@ than reporting a full run.
    Notion. **First, deliberately:** workspace guests write to the queue instead of to Notion, so
    anything they logged this week is invisible to items 2–4 until this has run. Skip only if the
    queue is empty (the skill says so in a line). *Always run this.*
+1b. **the `handoff/` drain** (`triage-notes`, context-notes) — items bound for a context repo
+   SOMEBODY ELSE OWNS. A triage run drains the personal ones automatically and lists the shared
+   ones, but only when a triage run happens; this is the cadence that catches them when one
+   does not. The shared items are exactly the ones nobody drains by accident, because acting on
+   them means opening another project's session. `context-status` (item 0b) has already
+   counted them — this is where they get looked at. Skip only if that count was zero.
 2. **`check-watchlist`** — review the "watch until it opens" items that are due; roll their
    next-check date on, or convert to a real action when something has opened. *Always run this.*
 3. **`update-action` (the triage pass)** — walk everything open in the actions database: overdue,
