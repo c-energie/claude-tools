@@ -756,6 +756,111 @@ export function applyReachability(batch, unreachable) {
 export const destinationRepos = (batch) =>
   [...new Set(batch.rows.filter((r) => r.destination === 'issue' && r.target).map((r) => r.target))].sort();
 
+// ---------------------------------------------------------------- Notion rows
+//
+// TRIAGE DOES NOT WRITE NOTION ROWS. Three of the six destinations are Notion rows, and each of
+// those databases already has a skill that writes it, each owning its own property traps: the
+// trailing space in the open questions `Type ` property, the `Watching` status on actions that
+// means a reminder rather than a task, and the data source id / database id distinction whose
+// error message blames sharing permissions. A second implementation of those traps would drift,
+// and the Notion schema would then be asserted in three places instead of one.
+//
+// So this file holds NO NOTION PROPERTY NAMES AT ALL. It formats arguments; the model calls
+// `context-notion:add-action`, `:add-open-question` or `:log-decision`. A schema change stays a
+// one-file change in context-notion.
+//
+// Those skills read the RESOLVED repo's `state.notion`, which is what stops a run in one project
+// writing into another project's databases — a stronger guarantee than anything this could
+// enforce on its own.
+
+export const NOTION_DESTINATIONS = {
+  action: { skill: 'context-notion:add-action', pendingType: 'action' },
+  'open-question': { skill: 'context-notion:add-open-question', pendingType: 'open-question' },
+  decision: { skill: 'context-notion:log-decision', pendingType: 'decision' },
+};
+
+/** The provenance line every written row carries, so where the idea came from survives. */
+export const provenance = ({ topic, capturedAt, topicUrl }) =>
+  `From a note under "${topic}" in the Mind Palace, captured ${capturedAt ?? 'on an unrecorded date'}`
+  + `${topicUrl ? ` — ${topicUrl}` : ''}.`;
+
+const looksLikeQuestion = (s) => /\?\s*$/.test(String(s ?? '').trim());
+
+/**
+ * The arguments for one approved Notion row. Returns `{ok: false, reason}` rather than an
+ * argument set with a hole in it.
+ *
+ * NOTHING IS INVENTED. An owner, a due date and a rationale are carried through from the note or
+ * they are absent — never guessed. A note that routed to an action without an identifiable owner
+ * has already been shortlisted; this refuses it again rather than assigning somebody work by
+ * inference.
+ */
+export function planNotionRow(row) {
+  const dest = NOTION_DESTINATIONS[row.destination];
+  if (!dest) return { ok: false, reason: `destination ${row.destination} is not a Notion row` };
+
+  const prov = provenance({ topic: row.topic, capturedAt: row.capturedAt ?? row.date ?? null, topicUrl: row.topicUrl ?? null });
+  const base = { id: row.id, topic: row.topic, skill: dest.skill, pendingType: dest.pendingType, provenance: prov };
+
+  if (row.destination === 'action') {
+    // The person and the deadline the user actually wrote. Absent is a refusal, not a default:
+    // nobody is assigned work by inference, and a substituted date is a commitment nobody made.
+    if (!row.owner) return { ok: false, reason: 'the action has no identifiable owner — a guessed owner assigns somebody work they never agreed to', shortlist: true };
+    if (!row.due) return { ok: false, reason: 'the action has no date — a substituted deadline is a commitment nobody made', shortlist: true };
+    return { ...base, ok: true, args: { task: row.note, owner: row.owner, due: row.due, notes: prov } };
+  }
+
+  if (row.destination === 'open-question') {
+    // The database's title property IS a question, so a title that is not one reads wrong in it.
+    const q = row.question ?? row.note;
+    if (!looksLikeQuestion(q)) {
+      return { ok: false, reason: 'the open question is not phrased as a question — the database\'s title property is a question, so a statement reads wrong in it. Rephrase it, or route it elsewhere.' };
+    }
+    return { ...base, ok: true, args: { question: String(q).trim(), notes: prov } };
+  }
+
+  // decision
+  const statement = row.decision ?? null;
+  if (!statement || !String(statement).trim()) {
+    return { ok: false, reason: 'the decision row has no statement of what was decided — the topic alone makes a log nobody can read without opening every row' };
+  }
+  if (String(statement).trim() === String(row.topic).trim()) {
+    return { ok: false, reason: 'the decision statement is just the topic name — say what was decided' };
+  }
+  return {
+    ...base, ok: true,
+    args: {
+      decision: String(statement).trim(),
+      // Empty when the note gave none, NEVER filled. A decision log that acquires reasoning
+      // nobody gave is worse than one with a gap in it.
+      rationale: row.rationale ? String(row.rationale).trim() : '',
+      notes: prov,
+    },
+  };
+}
+
+/**
+ * Plan every Notion row in an approved batch.
+ *
+ * `connectorAvailable: false` turns each write into an `add-pending` item rather than dropping
+ * it. That fallback already exists for exactly this case, and it matters here more than
+ * elsewhere: the Notion connector returns EMPTY RESULTS rather than errors for a workspace guest,
+ * so a write that silently goes nowhere looks exactly like a quiet run.
+ */
+export function planNotionRows(batch, { connectorAvailable = true } = {}) {
+  const writes = [];
+  const queued = [];
+  const refused = [];
+  for (const row of batch.table) {
+    if (!NOTION_DESTINATIONS[row.destination]) continue;
+    const p = planNotionRow(row);
+    if (!p.ok) { refused.push({ id: row.id, topic: row.topic, ...p }); continue; }
+    if (connectorAvailable) writes.push(p);
+    else queued.push({ ...p, skill: 'context-notion:add-pending', queuedAs: p.pendingType, drain: 'context-notion:process-pending' });
+  }
+  return { writes, queued, refused, connectorAvailable };
+}
+
 /** Which sensitive terms a piece of text hits. Case-insensitive SUBSTRING matching. */
 export function sensitiveHits(text, terms) {
   const hay = String(text ?? '').toLowerCase();
@@ -790,6 +895,7 @@ function main(argv) {
   console.error('       triage-notes.mjs select  --pages [file.json] [--json]');
   console.error('       triage-notes.mjs propose [checkout] --batch [file.json] [--repos f] [--classify|--approve] [--expand] [--only ids]');
   console.error('       triage-notes.mjs github  [checkout] --batch [evaluated.json] [--body-dir d] [--unreachable owner/repo,...]');
+  console.error('       triage-notes.mjs notion  [checkout] --batch [evaluated.json] [--no-connector]');
     process.exit(2);
   }
 
@@ -1022,6 +1128,54 @@ function main(argv) {
     console.log(`  creation keeps its old marker, is named in the run summary with the repository and`);
     console.log(`  the gh error, and the batch CONTINUES: one bad repository does not abandon it.`);
     console.log(`  Report every created issue's URL back, so what was written can be opened.`);
+    return;
+  }
+
+  if (cmd === 'notion') {
+    if (cfg.status !== 'configured') {
+      console.error(`triage-notes — ${cfg.status}`); console.error(`  ${cfg.says}`); process.exit(1);
+    }
+    const batchFile = flagValue(argv, 'batch');
+    if (!batchFile || !existsSync(batchFile)) die('notion needs --batch [file.json] — the evaluated batch from `propose --json`');
+    let batch;
+    try { batch = readJson(batchFile); }
+    catch (e) { die(`${batchFile} is not valid JSON (${e.message})`); }
+    if (!batch.table) die(`${batchFile} does not look like an evaluated batch (no "table")`);
+
+    // Explicit, never inferred from a result: a workspace guest gets EMPTY results rather than
+    // errors, so "no rows came back" and "I could not look" are indistinguishable downstream.
+    const connectorAvailable = !flags.has('no-connector');
+    const out = planNotionRows(batch, { connectorAvailable });
+
+    if (asJson) { console.log(JSON.stringify(out, null, 2)); return; }
+
+    console.log(`triage-notes — ${out.writes.length} Notion row(s), ${out.queued.length} queued, ${out.refused.length} refused`);
+    if (!connectorAvailable) {
+      console.log(`\n  THE NOTION CONNECTOR IS UNAVAILABLE. Nothing is dropped: each row below is queued`);
+      console.log(`  with context-notion:add-pending into the context repo's pending/ folder.`);
+    }
+    for (const p of [...out.writes, ...out.queued]) {
+      console.log(`\n    row ${p.id} (${p.topic}) -> ${p.skill}${p.queuedAs ? `  [queued as ${p.queuedAs}]` : ''}`);
+      for (const [k, v] of Object.entries(p.args)) {
+        if (v === '') console.log(`      ${k}: (none given — deliberately empty, never filled)`);
+        else console.log(`      ${k}: ${String(v).replace(/\n/g, '\n        ')}`);
+      }
+    }
+    if (out.refused.length) {
+      console.log(`\n  Not written (${out.refused.length}):`);
+      for (const r of out.refused) console.log(`    row ${r.id} (${r.topic}): ${r.reason}`);
+    }
+    if (out.queued.length) {
+      console.log(`\n  ${out.queued.length} item(s) queued. Drain them with context-notion:process-pending.`);
+      console.log(`  Each keeps its OLD Last triaged marker, so a queued item is not also re-proposed.`);
+    }
+    console.log(`\n  These go through the context-notion skills, never through the Notion API from here:`);
+    console.log(`  they own the property traps (the trailing space in the open questions "Type "`);
+    console.log(`  property, the Watching status on actions, data source id vs database id), and a`);
+    console.log(`  second implementation would drift. Database ids come from the RESOLVED repo's`);
+    console.log(`  state.notion, which is what stops a run in one project writing into another's.`);
+    console.log(`\n  Advance Last triaged immediately after each successful row. A failure keeps its old`);
+    console.log(`  marker, is named in the run summary, and the batch continues.`);
     return;
   }
 

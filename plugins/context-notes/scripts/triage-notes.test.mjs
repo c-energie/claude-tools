@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +18,7 @@ import {
   collectNotes, selectNotes, sweep, parseNotionDatetime,
   evaluateBatch, renderTable, renderShortlist, renderPlan, shortlistTriggers, DESTINATIONS,
   issueBody, planIssue, planIssues, applyReachability, destinationRepos, TITLE_MAX,
+  planNotionRow, planNotionRows, provenance, NOTION_DESTINATIONS,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -848,4 +849,151 @@ test('the optional projects map validates, and is keyed by repository not by top
     'keyed by repository, so it cannot decide where a note goes — only which board an issue lands on');
   assert.ok(validate({ ...NOTES, projects: [] }).some((e) => /not an object/.test(e)));
   assert.deepEqual(validate({ ...NOTES }), [], 'and it is optional: absent is normal');
+});
+
+// ---------------------------------------------------------------- Notion rows
+//
+// What is testable here is ARGUMENT FORMATTING and the FALLBACK DECISION. The Notion write itself
+// is another skill's behaviour and is covered by that skill — which is the whole point: this file
+// holds no Notion property names, so a schema change is a one-file change in context-notion.
+
+const PROV = { capturedAt: '2026-09-05', topicUrl: 'https://notion.so/topic-IP' };
+
+const ACTION_ROW = {
+  id: '1', topic: 'IP', destination: 'action',
+  note: 'Send the flexibility-envelope argument to Dan',
+  owner: 'Jamie Corson', due: '2026-09-11', why: 'a dated commitment by a named person', ...PROV,
+};
+const QUESTION_ROW = {
+  id: '2', topic: 'notion', destination: 'open-question',
+  note: 'Do we still need the people relation on the meetings database?',
+  why: 'an unanswered question', ...PROV,
+};
+const DECISION_ROW = {
+  id: '3', topic: 'general', destination: 'decision',
+  note: 'We now write meeting summaries before the actions, not after',
+  decision: 'Meeting summaries are written before the actions, not after',
+  rationale: 'the actions were being written from memory rather than from the summary',
+  why: 'it changed how the team operates', ...PROV,
+};
+
+test('this file holds NO Notion property names — that is the design, so assert it', () => {
+  const src = readFileSync(new URL('./triage-notes.mjs', import.meta.url), 'utf8');
+  // The traps that live in context-notion and must not be re-implemented here.
+  for (const trap of ['Type ', 'Watching', 'Not started', 'pageParents', 'data_source_id']) {
+    assert.equal(src.includes(`'${trap}'`), false, `"${trap}" must not be a value in this file`);
+  }
+});
+
+test('an action carries the note, the owner and the due date exactly as the row held them', () => {
+  const p = planNotionRow(ACTION_ROW);
+  assert.equal(p.ok, true);
+  assert.equal(p.skill, 'context-notion:add-action');
+  assert.equal(p.args.task, ACTION_ROW.note);
+  assert.equal(p.args.owner, 'Jamie Corson');
+  assert.equal(p.args.due, '2026-09-11');
+});
+
+test('an action with no owner is refused rather than written with a guessed one', () => {
+  const p = planNotionRow({ ...ACTION_ROW, owner: undefined });
+  assert.equal(p.ok, false);
+  assert.equal(p.shortlist, true);
+  assert.match(p.reason, /assigns somebody work they never agreed to/);
+});
+
+test('an action with no date is refused rather than given a substituted deadline', () => {
+  const p = planNotionRow({ ...ACTION_ROW, due: null });
+  assert.equal(p.ok, false);
+  assert.match(p.reason, /a commitment nobody made/);
+});
+
+test('an open question carries a question-shaped title', () => {
+  const p = planNotionRow(QUESTION_ROW);
+  assert.equal(p.ok, true);
+  assert.equal(p.skill, 'context-notion:add-open-question');
+  assert.match(p.args.question, /\?$/);
+});
+
+test('a row whose text is not a question is rejected before an argument set is built', () => {
+  const p = planNotionRow({ ...QUESTION_ROW, note: 'The people relation may not be needed' });
+  assert.equal(p.ok, false);
+  assert.equal(p.args, undefined, 'no argument set is built at all');
+  assert.match(p.reason, /title property is a question/);
+});
+
+test('a decision carries a statement DISTINCT from the topic', () => {
+  const p = planNotionRow(DECISION_ROW);
+  assert.equal(p.ok, true);
+  assert.equal(p.skill, 'context-notion:log-decision');
+  assert.notEqual(p.args.decision, DECISION_ROW.topic);
+  assert.match(p.args.decision, /before the actions/);
+});
+
+test('a decision that is only the topic name is refused — the log has to be readable', () => {
+  const bare = planNotionRow({ ...DECISION_ROW, decision: 'general' });
+  assert.equal(bare.ok, false);
+  assert.match(bare.reason, /just the topic name/);
+  const none = planNotionRow({ ...DECISION_ROW, decision: null });
+  assert.equal(none.ok, false);
+  assert.match(none.reason, /without opening every row/);
+});
+
+test('a decision with no rationale gets an EMPTY one, never an invented one', () => {
+  const p = planNotionRow({ ...DECISION_ROW, rationale: undefined });
+  assert.equal(p.ok, true, 'a gap does not block the row');
+  assert.equal(p.args.rationale, '', 'a log that acquires reasoning nobody gave is worse than one with a gap');
+});
+
+test('every argument set carries provenance: topic, capture date and link', () => {
+  for (const row of [ACTION_ROW, QUESTION_ROW, DECISION_ROW]) {
+    const p = planNotionRow(row);
+    assert.match(p.args.notes, new RegExp(row.topic));
+    assert.match(p.args.notes, /2026-09-05/);
+    assert.match(p.args.notes, /https:\/\/notion\.so\/topic-IP/);
+  }
+});
+
+test('text needing shell quoting passes through unaltered — arguments go to a skill, not a shell', () => {
+  const nasty = 'Ask "Dan" about $BUDGET & the `envelope`; 100% of it\nsecond line';
+  const p = planNotionRow({ ...ACTION_ROW, note: nasty });
+  assert.equal(p.args.task, nasty, 'no escaping, no mangling — nothing here builds a command line');
+});
+
+// ---------------------------------------------------------------- the add-pending fallback
+
+test('with the connector unavailable each destination queues instead of writing', () => {
+  const rows = [ACTION_ROW, QUESTION_ROW, DECISION_ROW];
+  const res = [RES_THREAD('IP'), RES_THREAD('notion'), RES_THREAD('general')];
+  const batch = evaluateBatch(rows, res, NOTES);
+  const out = planNotionRows(batch, { connectorAvailable: false });
+
+  assert.equal(out.writes.length, 0, 'nothing is written');
+  assert.equal(out.queued.length, 3, 'and nothing is dropped');
+  assert.deepEqual(out.queued.map((q) => q.queuedAs).sort(), ['action', 'decision', 'open-question']);
+  for (const q of out.queued) {
+    assert.equal(q.skill, 'context-notion:add-pending');
+    assert.equal(q.drain, 'context-notion:process-pending', 'the summary has to name what drains it');
+  }
+});
+
+test('with the connector available the same batch writes and queues nothing', () => {
+  const batch = evaluateBatch([ACTION_ROW, QUESTION_ROW, DECISION_ROW],
+    [RES_THREAD('IP'), RES_THREAD('notion'), RES_THREAD('general')], NOTES);
+  const out = planNotionRows(batch, { connectorAvailable: true });
+  assert.equal(out.writes.length, 3);
+  assert.equal(out.queued.length, 0);
+});
+
+test('a non-Notion row is never planned as one', () => {
+  const p = planNotionRow({ id: '9', topic: 'dev-hub', destination: 'issue', note: 'x' });
+  assert.equal(p.ok, false);
+  assert.match(p.reason, /not a Notion row/);
+});
+
+test('a shortlisted row never reaches the Notion planner', () => {
+  // `salary` is a sensitiveTerms entry, so this shortlists in #13 before it gets here.
+  const batch = evaluateBatch([{ ...ACTION_ROW, note: 'Ask about the salary review' }], [RES_THREAD('IP')], NOTES);
+  const out = planNotionRows(batch, { connectorAvailable: true });
+  assert.equal(out.writes.length, 0);
+  assert.equal(out.queued.length, 0);
 });

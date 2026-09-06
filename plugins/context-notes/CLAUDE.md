@@ -24,6 +24,7 @@ node scripts/triage-notes.mjs resolve "$ROOT" --repos repos.json --topics "dev-h
 node scripts/triage-notes.mjs select  --pages pages.json                # new notes per topic, offline
 node scripts/triage-notes.mjs propose "$ROOT" --batch b.json --classify   # table + shortlist, writes nothing
 node scripts/triage-notes.mjs github  "$ROOT" --batch evaluated.json      # plan gh issue create, runs nothing
+node scripts/triage-notes.mjs notion  "$ROOT" --batch evaluated.json      # format context-notion skill args
 node --test scripts/triage-notes.test.mjs                          # from the plugin directory
 node ../context-kit-core/scripts/check-plugin.mjs .                # before any commit
 ```
@@ -108,6 +109,21 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
   name only, so it is not the topic map returning by another door: it cannot decide where a note
   goes, only which board an issue lands on once exact matching has already chosen the repository.
   Absent omits `--project` and says the board was skipped, which is not an error.
+- **THIS PLUGIN HOLDS NO NOTION PROPERTY NAMES, and a test asserts it.** Three destinations are
+  Notion rows, and `context-notion` already owns each database's traps — the trailing space in
+  the open questions `Type ` property, the `Watching` status on actions, data source id versus
+  database id. Triage formats arguments and the model calls `context-notion:add-action`,
+  `:add-open-question` or `:log-decision`. A second implementation would drift and the schema
+  would be asserted in three places. If one of those skills needs a new parameter, that is a
+  change to `context-notion`, made and versioned there.
+- **Nothing is invented to fill a gap.** An action without an identifiable owner or a date is
+  refused, not defaulted: a guessed owner assigns somebody work they never agreed to, and a
+  substituted deadline is a commitment nobody made. A decision with no rationale gets an EMPTY
+  one — a log that acquires reasoning nobody gave is worse than one with a gap in it.
+- **The Notion connector returns EMPTY RESULTS, not errors, for a workspace guest.** So its
+  presence is checked explicitly and named on failure, never inferred from a result, and a write
+  that cannot reach Notion is queued with `context-notion:add-pending` rather than dropped —
+  keeping its old marker, so a queued item is not also re-proposed.
 - **`Last triaged` and `Shortlisted` are DATETIMES, not dates.** A run that fails half way is
   resumed by re-running, and only a timestamp separates notes already written from notes not yet
   reached; date granularity would re-propose everything written earlier the same day. Notion has

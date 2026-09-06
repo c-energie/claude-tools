@@ -246,7 +246,61 @@ flagged `shared`. Both shortlist — the shared one goes to `handoff/` with `kin
 `repo:` field once that contract lands. A personal session does not write into work somebody else
 owns.
 
-## 10. The two datetime markers
+## 10. Write the Notion rows — through the existing skills
+
+**Triage does not write Notion rows.** Three destinations are Notion rows, and each database
+already has a skill that writes it and owns its property traps: the trailing space in the open
+questions `Type ` property, the `Watching` status on actions that means a reminder rather than a
+task, and the data source id versus database id distinction whose error blames sharing
+permissions. A second implementation of those would drift, and the schema would then be asserted
+in three places.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" notion "$ROOT" --batch evaluated.json
+```
+
+The script formats the arguments; **you call the skill**:
+
+| destination | skill |
+| --- | --- |
+| `action` | `context-notion:add-action` |
+| `open-question` | `context-notion:add-open-question` |
+| `decision` | `context-notion:log-decision` |
+
+Those skills read the **resolved** repo's `state.notion`, which is what stops a run in one project
+writing into another project's databases — a stronger guarantee than anything this plugin could
+enforce itself. Do not pass database ids; do not call the Notion API directly.
+
+**Never invent an owner, a date or a rationale.** An action carries the person and the deadline
+the user actually wrote, or the script refuses it: a guessed owner assigns somebody work they
+never agreed to, and a substituted deadline is a commitment nobody made. A decision with no
+rationale gets an **empty** one — a log that acquires reasoning nobody gave is worse than one with
+a gap in it.
+
+An open question must be **phrased as a question**: that database's title property is a question,
+so a statement reads wrong in it. A decision needs a **statement of what was decided**, not the
+topic name, or the log cannot be read without opening every row.
+
+### Check the connector first, and queue rather than drop
+
+**The Notion connector returns empty results, not errors, for a workspace guest.** So a write that
+silently goes nowhere looks exactly like a quiet run. Check the connector is present at the start
+and **name it** if it is not — never infer its absence from an empty result.
+
+If it is unavailable, re-run with `--no-connector`: every row is queued with
+`context-notion:add-pending` into the context repo's `pending/` folder rather than dropped. Report
+the queued items in the run summary and name **`context-notion:process-pending`** as the drain.
+Queued notes keep their **old** marker, so a queued item is not also re-proposed next run.
+
+### After each row
+
+Marker immediately after success; a failure keeps its old marker, is named in the run summary, and
+the batch continues.
+
+If one of these skills needs a new parameter, that is a change to **`context-notion`**, made and
+versioned there — not worked around here.
+
+## 11. The two datetime markers
 
 `Last triaged` and `Shortlisted` on each topic row are **datetimes, not dates**, and must stay
 that way. A run that fails half way is resumed by re-running it, and only a timestamp separates
