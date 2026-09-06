@@ -27,6 +27,11 @@
       "category": "productivity"
     },
     {
+      "name": "context-notes",
+      "source": "./plugins/context-notes",
+      "category": "productivity"
+    },
+    {
       "name": "context-notion",
       "source": "./plugins/context-notion",
       "category": "productivity"

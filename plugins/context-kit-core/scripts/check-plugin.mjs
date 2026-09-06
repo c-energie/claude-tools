@@ -150,12 +150,12 @@ const COPIES = [
   // Notion-specific. dates.mjs is pure UTC calendar arithmetic with nothing Notion in it, and
   // core's own skills (save-thread, curate-context, update-plugin) call it, so core is its home;
   // it was mis-declared as context-notion's until 2026-08-10.
-  { file: 'scripts/context-repo.sh',   origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams'] },
-  { file: 'scripts/dates.mjs',         origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams'] },
+  { file: 'scripts/context-repo.sh',   origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
+  { file: 'scripts/dates.mjs',         origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
   // bash-bin.mjs picks Git Bash over WSL's launcher on Windows — a platform fact with no
   // backend in it, so core owns it. It is what context-repo.sh is spawned with, and so has to
   // sit beside every copy of that script.
-  { file: 'scripts/bash-bin.mjs',      origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams'] },
+  { file: 'scripts/bash-bin.mjs',      origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
   // Notion-coupled, so context-notion is the origin: lib.mjs reads state.notion and resolves
   // people by notionUserId; pending-parse.mjs defines the queue format those rows land in.
   { file: 'scripts/lib.mjs',           origin: 'context-notion',   copies: ['context-slack'] },
