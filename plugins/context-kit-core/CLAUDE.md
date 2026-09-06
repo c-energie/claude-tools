@@ -37,6 +37,7 @@ node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not 
 node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion
 node scripts/teaching-workspace.mjs resolve --json               # which context repo, or WHY not (no network)
 node scripts/teaching-workspace.mjs roster "$ROOT"                # the teaching workspaces it DECLARES (--json)
+node scripts/teaching-workspace.mjs scaffold "$ROOT" "deep learning"   # PLAN a workspace; --yes --audience writes it
 pwsh scripts/Start-ContextSession.ps1 -DryRun    # menu over ~/.context; -Shortcut installs a Desktop launcher
 bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux (--shortcut writes .desktop/.command)
 ```
