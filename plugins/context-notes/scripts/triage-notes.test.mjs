@@ -16,6 +16,7 @@ import {
   loadConfig, validate, palaceIds, resolveTopic, resolveTopics, sensitiveHits,
   OPTOUT, REPOS_STALE_HOURS,
   collectNotes, selectNotes, sweep, parseNotionDatetime,
+  evaluateBatch, renderTable, renderShortlist, renderPlan, shortlistTriggers, DESTINATIONS,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -34,7 +35,8 @@ const NOTES = {
   },
   _mindPalaceNote: 'another comment key',
   organisations: ORGS,
-  sensitiveTerms: ['salary', 'non-disclosure', 'cap table'],
+  // A trimmed version of the real fourteen-term list in net-flex/context.
+  sensitiveTerms: ['salary', 'non-disclosure', 'cap table', 'investor', 'moat'],
 };
 
 // The repositories that actually exist, as of the list this was written against.
@@ -485,4 +487,220 @@ test('parseNotionDatetime falls back to the leading date, and returns null for n
   assert.equal(parseNotionDatetime('2026-09-05').toISOString(), '2026-09-05T00:00:00.000Z');
   assert.equal(parseNotionDatetime(null), null);
   assert.equal(parseNotionDatetime('not a date at all'), null);
+});
+
+// ---------------------------------------------------------------- the shortlist and the table
+//
+// Everything under test here is the SCRIPT's half — rule evaluation and rendering. The
+// classification itself is judgement, and is exercised by running the skill with --classify
+// against the real Mind Palace, which is safe precisely because nothing writes.
+
+const RES = (topic, outcome, extra = {}) => ({ topic, outcome, repo: null, thread: null, visibility: null, candidates: [], ...extra });
+const RES_REPO = (topic, repo, visibility) => RES(topic, 'repo', { repo, visibility, owner: repo.split('/')[0] });
+const RES_THREAD = (topic) => RES(topic, 'thread', { thread: 'net-flex/context' });
+const RES_AMBIG = (topic) => RES(topic, 'ambiguous', {
+  candidates: [
+    { repo: 'c-energie/secret-roster', owner: 'c-energie', visibility: 'personal' },
+    { repo: 'net-flex/secret-roster', owner: 'net-flex', visibility: 'shared' },
+  ],
+});
+
+// A row that fires NOTHING, so each trigger below can be shown firing on its own.
+const CLEAN = {
+  id: '1', topic: 'dev-hub', note: 'Add a --dry-run flag to the catalogue writer',
+  destination: 'issue', target: 'c-energie/dev-hub', why: 'closes when the PR merges, and the repository is named',
+};
+const CLEAN_RES = [RES_REPO('dev-hub', 'c-energie/dev-hub', 'personal')];
+
+test('the clean control row fires no shortlist trigger at all', () => {
+  const b = evaluateBatch([CLEAN], CLEAN_RES, NOTES);
+  assert.deepEqual(b.errors, []);
+  assert.equal(b.shortlist.length, 0);
+  assert.equal(b.table.length, 1);
+});
+
+test('trigger 1 of 5: an ambiguous topic resolution shortlists on its own', () => {
+  const row = { ...CLEAN, topic: 'secret-roster', destination: 'thread', target: null, why: 'reasoning a later reader needs' };
+  const b = evaluateBatch([row], [RES_AMBIG('secret-roster')], NOTES);
+  assert.deepEqual(b.rows[0].triggers, ['ambiguousTopic']);
+  assert.equal(b.table.length, 0);
+});
+
+test('an ambiguous topic names both organisations and never targets either', () => {
+  const row = { ...CLEAN, topic: 'secret-roster', destination: 'thread', target: null, why: 'reasoning a later reader needs' };
+  const b = evaluateBatch([row], [RES_AMBIG('secret-roster')], NOTES);
+  const expanded = renderShortlist(b);
+  assert.match(expanded, /c-energie\/secret-roster \(personal\)/);
+  assert.match(expanded, /net-flex\/secret-roster \(shared\)/);
+  assert.equal(b.rows[0].target, null, 'resolves to NEITHER, so nothing is targeted');
+  assert.equal(renderTable(b).includes('secret-roster'), false, 'and it is absent from the main table');
+});
+
+test('trigger 2 of 5: an issue whose repository cannot be named shortlists on its own', () => {
+  const row = { ...CLEAN, topic: 'dev-hub', destination: 'issue', target: null, why: 'sounds like code work' };
+  // Target is null and the topic resolves to a repo, so the fallback fills it — force the
+  // unnameable case with a topic that resolves to nothing at all.
+  const b = evaluateBatch([{ ...row, topic: 'unknown-topic' }], [], NOTES);
+  assert.deepEqual(b.rows[0].triggers, ['unnameableRepo']);
+  assert.match(renderShortlist(b), /whichever repository seemed closest/);
+});
+
+test('trigger 3 of 5: a sensitiveTerms hit shortlists on its own', () => {
+  const row = { ...CLEAN, note: 'Check the cap table before Thursday' };
+  const b = evaluateBatch([row], CLEAN_RES, NOTES);
+  assert.deepEqual(b.rows[0].triggers, ['sensitiveTerm']);
+});
+
+test('a sensitiveTerms hit beats a clean classification — the check cannot be reasoned around', () => {
+  // The topic resolves cleanly to a repository and the classification is confident and correct.
+  // The term still wins, because it is a policy set in config and not a judgement made at run time.
+  const row = { ...CLEAN, note: 'Add a --dry-run flag; also the salary review is due' };
+  const b = evaluateBatch([row], CLEAN_RES, NOTES);
+  assert.equal(b.rows[0].shortlisted, true);
+  assert.deepEqual(b.rows[0].triggers, ['sensitiveTerm']);
+  assert.equal(b.table.length, 0, 'a clean classification does not rescue it');
+});
+
+test('trigger 4 of 5: a shared destination shortlists, and the same row under personal does not', () => {
+  const shared = evaluateBatch(
+    [{ ...CLEAN, topic: 'website', target: 'net-flex/website', why: 'closes when the PR merges' }],
+    [RES_REPO('website', 'net-flex/website', 'shared')], NOTES);
+  assert.deepEqual(shared.rows[0].triggers, ['sharedDestination']);
+
+  const personal = evaluateBatch([CLEAN], CLEAN_RES, NOTES);
+  assert.deepEqual(personal.rows[0].triggers, [], 'the identical shape under a personal org is not shortlisted');
+});
+
+test('trigger 5 of 5: a note that would be written directly shortlists on its own', () => {
+  const b = evaluateBatch([{ ...CLEAN, wouldWriteDirectly: true }], CLEAN_RES, NOTES);
+  assert.deepEqual(b.rows[0].triggers, ['wouldWriteDirectly']);
+});
+
+test('a note hitting two triggers appears ONCE with both reasons named', () => {
+  const row = { ...CLEAN, topic: 'website', target: 'net-flex/website', note: 'ship the investor page' };
+  const b = evaluateBatch([row], [RES_REPO('website', 'net-flex/website', 'shared')], NOTES);
+  assert.equal(b.shortlist.length, 1, 'once, not twice');
+  assert.deepEqual(b.rows[0].triggers.sort(), ['sensitiveTerm', 'sharedDestination']);
+  assert.equal(b.rows[0].shortlistReasons.length, 2, 'half a reason is not why it stopped');
+});
+
+test('the triggers are rules, not a score — nothing carries a confidence number', () => {
+  const b = evaluateBatch([CLEAN], CLEAN_RES, NOTES);
+  const json = JSON.stringify(b);
+  assert.equal(/confidence|score|threshold/i.test(json), false,
+    'a threshold that feels tunable and is not would be worse than no number at all');
+});
+
+// ---------------------------------------------------------------- the gated issue branch
+
+test('a topic resolving to thread produces no issue row anywhere in the batch', () => {
+  const row = { ...CLEAN, topic: 'IP', target: null, destination: 'issue', why: 'reads like code work' };
+  const b = evaluateBatch([row], [RES_THREAD('IP')], NOTES);
+  assert.ok(b.errors.some((e) => /resolved to thread/.test(e)),
+    'the issue branch does not apply, and saying so is better than routing it nowhere');
+  assert.equal(b.rows.filter((r) => r.destination === 'issue' && !r.shortlisted).length, 0);
+});
+
+test('under a thread topic the test starts at the action branch instead', () => {
+  const row = { id: '1', topic: 'IP', note: 'Jamie to send the envelope argument by Friday', destination: 'action', target: null, why: 'a dated commitment by a named person, and not code' };
+  const b = evaluateBatch([row], [RES_THREAD('IP')], NOTES);
+  assert.deepEqual(b.errors, []);
+  assert.equal(b.table.length, 1);
+  assert.equal(b.table[0].destination, 'action');
+});
+
+// ---------------------------------------------------------------- rendering
+
+test('rendering refuses a row with an empty or missing why', () => {
+  const empty = evaluateBatch([{ ...CLEAN, why: '   ' }], CLEAN_RES, NOTES);
+  assert.ok(empty.errors.some((e) => /"why" is empty/.test(e)));
+  const missing = evaluateBatch([{ ...CLEAN, why: undefined }], CLEAN_RES, NOTES);
+  assert.ok(missing.errors.some((e) => /"why" is empty/.test(e)));
+  assert.match(renderTable(missing), /REFUSED/);
+});
+
+test('rendering refuses a destination outside the six', () => {
+  const b = evaluateBatch([{ ...CLEAN, destination: 'slack' }], CLEAN_RES, NOTES);
+  assert.ok(b.errors.some((e) => /not one of/.test(e)));
+});
+
+test('every row carries topic, note, destination, target and why', () => {
+  const out = renderTable(evaluateBatch([CLEAN], CLEAN_RES, NOTES));
+  for (const h of ['topic', 'note', 'destination', 'target', 'why']) assert.match(out, new RegExp(h));
+  assert.match(out, /dev-hub/);
+  assert.match(out, /closes when the PR merges/);
+});
+
+test('an overrule renders BOTH the resolved value and the overrule, and states its reason', () => {
+  const row = { ...CLEAN, target: 'c-energie/doc-writer', why: 'the note names doc-writer explicitly, not the topic repo' };
+  const b = evaluateBatch([row], CLEAN_RES, NOTES);
+  assert.equal(b.rows[0].overruled, true);
+  const out = renderTable(b);
+  assert.match(out, /c-energie\/dev-hub -> c-energie\/doc-writer/, 'an overrule is a visible claim');
+  assert.match(out, /OVERRULED/);
+  assert.match(out, /names doc-writer explicitly/);
+});
+
+test('shortlisted rows are absent from the table and counted in the undecided line', () => {
+  const b = evaluateBatch([CLEAN, { ...CLEAN, id: '2', note: 'the cap table needs updating' }], CLEAN_RES, NOTES);
+  const out = renderTable(b);
+  assert.equal(out.includes('cap table'), false, 'the table stays the thing that gets read');
+  assert.match(out, /still undecided \(1\)/);
+  assert.match(renderShortlist(b), /cap table/, 'and the expanded form lists it with its reasons');
+});
+
+test('the expanded shortlist says it need not be decided now, and why the count matters', () => {
+  const b = evaluateBatch([{ ...CLEAN, note: 'the cap table needs updating' }], CLEAN_RES, NOTES);
+  const out = renderShortlist(b);
+  assert.match(out, /Shortlisted datetime/, 'so it does not resurface every run');
+  assert.match(out, /NOT asked to decide/, 'hesitation must not be converted into a bad routing');
+  assert.match(out, /only grows/, 'a growing count is evidence the routing test is wrong');
+});
+
+test('an amendment re-renders that row only, and the rest of the batch is untouched', () => {
+  const rows = [CLEAN, { ...CLEAN, id: '2', topic: 'news-watch', note: 'second note', target: null }, { ...CLEAN, id: '3', note: 'third note' }];
+  const res = [...CLEAN_RES, RES_THREAD('news-watch')];
+  const before = evaluateBatch(rows, res, NOTES);
+
+  const amended = rows.map((r) => (r.id === '3' ? { ...r, destination: 'thread', target: null, why: 'reasoning a later reader needs, after all' } : r));
+  const after = evaluateBatch(amended, res, NOTES);
+
+  const only = renderTable(after, { only: ['3'] });
+  assert.match(only, /third note/);
+  assert.equal(only.includes('Add a --dry-run flag to the catalogue writer\n'), false);
+
+  // Everything not amended came out identical.
+  const strip = (b) => b.rows.filter((r) => r.id !== '3').map((r) => JSON.stringify(r));
+  assert.deepEqual(strip(after), strip(before));
+});
+
+test('the whole sweep is ONE table with topic as a column, so a cross-cutting note is visible', () => {
+  const rows = [
+    { id: '1', topic: 'dev-hub', note: 'the catalogue needs a dry run', destination: 'issue', target: 'c-energie/dev-hub', why: 'closes on merge' },
+    { id: '2', topic: 'notion', note: 'the catalogue needs a dry run', destination: 'thread', target: null, why: 'reasoning a later reader needs' },
+  ];
+  const out = renderTable(evaluateBatch(rows, [...CLEAN_RES, RES_THREAD('notion')], NOTES));
+  assert.equal((out.match(/the catalogue needs a dry run/g) ?? []).length, 2,
+    'three bullets under three topics have to be seeable as one issue');
+});
+
+test('the approved plan groups by destination and is printed before anything is written', () => {
+  const rows = [
+    CLEAN,
+    { id: '2', topic: 'IP', note: 'Jamie to write it up by Friday', destination: 'action', target: null, why: 'a dated commitment by a named person' },
+    { id: '3', topic: 'IP', note: 'why the envelope is the moat', destination: 'thread', target: null, why: 'reasoning a later reader needs' },
+  ];
+  const b = evaluateBatch(rows, [...CLEAN_RES, RES_THREAD('IP')], NOTES);
+  const plan = renderPlan(b);
+  assert.match(plan, /APPROVED PLAN/);
+  assert.match(plan, /issue \(1\)/);
+  assert.match(plan, /action \(1\)/);
+  // `moat` is a sensitive term, so row 3 shortlisted rather than reaching the plan.
+  assert.match(plan, /1 shortlisted/);
+});
+
+test('exactly one destination per note — a row is one row', () => {
+  const b = evaluateBatch([CLEAN], CLEAN_RES, NOTES);
+  assert.equal(b.rows.length, 1);
+  assert.equal(typeof b.rows[0].destination, 'string', 'not a list: the table stays flat and there is no partial-failure story');
 });

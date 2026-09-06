@@ -113,7 +113,88 @@ What the script guarantees, and why you should not second-guess it:
   how many topics were swept. An empty table with no explanation leaves someone unable to tell
   "nothing to do" from "it did not work".
 
-## 6. The two datetime markers
+## 6. Route each note — the six-destination test
+
+This is **the only judgement step in a run**, and it is a fixed ordered test, not open-ended
+thinking. Work down it and **stop at the first destination that fits**. A note is never argued
+into two places at once, and two runs over the same note reach the same answer.
+
+1. It closes when a pull request merges **and the repository can be named** → **`issue`**
+2. It is a commitment by a **named person with a date**, and is not code → **`action`**
+3. It is an **unanswered question** → **`open-question`**
+4. It **changed how the team operates** → **`decision`**
+5. It is **reasoning a future reader needs** → **`thread`**
+6. Otherwise → **`bin`**
+
+**Step 1 is gated on the topic's resolution.** A topic that resolved to `thread` or `ambiguous`
+has no repository, so **skip step 1 entirely** and start at step 2. For most topics this is
+therefore a five-destination test. This is what stops a note under a repository-less topic being
+argued into an issue that has nowhere to go, and the script refuses a row that ignores it.
+
+**`bin` means no derived artefact.** The note keeps living on its topic page, which is where it
+was always going to live. Triage never deletes or edits a captured note, so binning is safe
+rather than destructive — and it is what stops a note being left unaccounted for at the end.
+
+**Exactly one destination per note.** A note carrying both rationale and a commitment gets one
+row. That is a known limitation, stated here so it reads as one rather than as a bug.
+
+Every row needs `id`, `topic`, `note`, `destination`, `target` and **`why`**. `why` is required
+and the script refuses a row without it: a table showing only the verdict hides the reasoning,
+and the reasoning is exactly where routing goes wrong — the destination often looks right while
+the reason for it is wrong, and that is the case a reviewer can only catch if it is on screen.
+
+## 7. Propose the batch
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" propose "$ROOT" \
+  --batch batch.json --repos repos.json --classify --expand
+```
+
+The script evaluates the shortlist, renders the table and refuses unreviewable rows. It **writes
+nothing** — the whole routing test, the shortlist and the amendment loop can be exercised against
+the real Mind Palace with no possibility of a bad write. `--classify` is the read-only mode: it
+prints the table and offers no approval.
+
+**The shortlist is code, and it overrides your classification.** Five triggers, and they
+accumulate — a note hitting several appears once with every reason named:
+
+| trigger | why it is not yours to decide |
+| --- | --- |
+| the topic resolved `ambiguous` | the organisations differ in visibility; picking one crosses that boundary on a guess |
+| an `issue` whose repository cannot be named | a vague note must not land in whichever repository seemed closest |
+| a `sensitiveTerms` hit | policy set in config, so the check cannot be reasoned around |
+| a destination in a `shared` organisation | work somebody else owns always gets a second look |
+| it would otherwise be written directly | the bias runs one way, toward the shortlist |
+
+**These are rules, not a score.** Do not report a confidence number, do not ask for one, and do
+not argue a row off the shortlist — a second opinion from the source that already committed to an
+answer is not a second opinion. If a shortlisted row is genuinely fine, that is the user's call
+to make, not yours to pre-empt.
+
+Shortlisted notes are kept out of the table and counted as "still undecided (n)", expandable on
+request. They are stamped with a `Shortlisted` datetime so they do not resurface every run, and
+**the user is not made to decide them before the run ends** — hesitation must not be converted
+into a bad routing. Report the count every run: a count that only grows is evidence the routing
+test is wrong, not evidence the user is behind.
+
+## 8. Amend, then approve once
+
+The user corrects rows **in plain language**. Apply the corrections to the batch JSON yourself and
+re-render only what changed:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" propose "$ROOT" --batch batch.json --repos repos.json --only 3,7
+```
+
+Re-printing the whole batch after a one-row correction is how a reviewer stops reading it.
+
+**No proposal file is written.** The batch lives in the conversation: a file would add a write, a
+read and a stale-copy failure mode to something small enough to read on screen.
+
+**One approval covers the batch** — twelve notes is one decision. On approval, print the plan back
+with `--approve` so what was agreed is on the record before anything is written.
+
+## 9. The two datetime markers
 
 `Last triaged` and `Shortlisted` on each topic row are **datetimes, not dates**, and must stay
 that way. A run that fails half way is resumed by re-running it, and only a timestamp separates

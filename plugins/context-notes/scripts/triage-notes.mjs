@@ -414,6 +414,206 @@ export function sweep(selections) {
   };
 }
 
+// ---------------------------------------------------------------- the shortlist and the table
+//
+// THE ROUTING TEST IS PROSE IN THE SKILL, evaluated by the model, in a fixed order, stopping at
+// the first destination that fits. It is the only judgement step in a run. THE SHORTLIST IS CODE,
+// evaluated here, and it runs AFTER classification and OVERRIDES it.
+//
+// That split is the point. A note that must not be routed automatically — an ambiguous topic, an
+// unnameable repository, a sensitive term, a destination somebody else owns — cannot be caught by
+// asking the model how confident it feels, because that is a second opinion from the source that
+// already committed to an answer. So the triggers are RULES, not a score: no confidence number is
+// requested, stored or thresholded, and there is no threshold to tune. The bias runs one way,
+// toward the shortlist, never toward a direct write.
+
+// In the order the skill states them. `bin` means no derived artefact: the note keeps living on
+// its topic page, which is where it was always going to live. Triage never deletes or edits a
+// captured note, so binning is safe rather than destructive.
+export const DESTINATIONS = ['issue', 'action', 'open-question', 'decision', 'thread', 'bin'];
+
+export const SHORTLIST_REASONS = {
+  ambiguousTopic: 'the topic name matches a repository in more than one declared organisation, and they differ in visibility — picking one would cross that boundary on a guess',
+  unnameableRepo: 'classified as an issue but no repository could be named — a vague note must not land in whichever repository seemed closest',
+  sensitiveTerm: 'the note text hits a sensitiveTerms entry, which forces the shortlist however confidently it was classified',
+  sharedDestination: 'the destination is in an organisation flagged shared, so work somebody else owns gets a second look',
+  wouldWriteDirectly: 'it would otherwise have been written directly without a second look',
+};
+
+/**
+ * Which shortlist triggers a classified row fires. Triggers ACCUMULATE — a note hitting several
+ * appears once with every reason named, because half a reason is not why it stopped.
+ *
+ * @param row       {topic, note, destination, target, why}
+ * @param topicRes  the topic's resolution from resolveTopic()
+ * @param notes     the validated state.notes block
+ */
+export function shortlistTriggers(row, topicRes, notes) {
+  const fired = [];
+
+  if (topicRes?.outcome === 'ambiguous') fired.push('ambiguousTopic');
+
+  // An issue with nowhere to go. Only checked on the issue branch: every other destination is
+  // named by the topic's own context repo and cannot be unnameable.
+  if (row.destination === 'issue' && !row.target) fired.push('unnameableRepo');
+
+  if (sensitiveHits(row.note, notes?.sensitiveTerms).length) fired.push('sensitiveTerm');
+
+  // Visibility is the ORGANISATION's, so this is read off the resolution rather than off the
+  // target string — there is no per-repository flag that could disagree with it.
+  const visibility = row.visibility ?? topicRes?.visibility ?? null;
+  if (visibility === 'shared') fired.push('sharedDestination');
+
+  if (row.wouldWriteDirectly) fired.push('wouldWriteDirectly');
+
+  return fired;
+}
+
+/**
+ * Evaluate a whole classified batch: attach triggers, split shortlisted from the table, and
+ * refuse a row that cannot be reviewed.
+ *
+ * `why` is REQUIRED. A table showing only topic, note and destination hides the reason, which is
+ * exactly where routing goes wrong — the destination often looks right while the reason for it is
+ * wrong, and that is the case a reviewer can only catch if the reason is on screen. So a row
+ * without one is not proposed at all.
+ */
+export function evaluateBatch(rows, resolutions, notes) {
+  const byTopic = new Map((resolutions ?? []).map((r) => [r.topic, r]));
+  const errors = [];
+  const evaluated = [];
+
+  rows.forEach((row, i) => {
+    const at = `row ${i + 1} (${row.topic ?? 'no topic'})`;
+    if (!row.destination || !DESTINATIONS.includes(row.destination)) {
+      errors.push(`${at}: destination ${JSON.stringify(row.destination ?? null)} is not one of ${DESTINATIONS.join(', ')}`);
+    }
+    if (typeof row.why !== 'string' || !row.why.trim()) {
+      errors.push(`${at}: "why" is empty — a row cannot be proposed without a stated reason, because the reason is the part a reviewer can actually check`);
+    }
+    const res = byTopic.get(row.topic) ?? null;
+
+    // The issue branch is GATED ON THE TOPIC'S RESOLUTION. A topic that resolved to a thread has
+    // no repository, so the test starts at "is this a dated commitment by a named person" and the
+    // six-destination test is really a five-destination one. A note under such a topic must never
+    // be argued into an issue with nowhere to go.
+    if (row.destination === 'issue' && res && res.outcome !== 'repo') {
+      errors.push(`${at}: classified as an issue, but topic "${row.topic}" resolved to ${res.outcome}, so the issue branch does not apply to it. Re-run the test starting at the action branch.`);
+    }
+
+    const target = row.target ?? (res?.outcome === 'repo' ? res.repo : null);
+    const resolvedTarget = res?.outcome === 'repo' ? res.repo
+      : res?.outcome === 'thread' ? (res.thread ?? null)
+      : null;
+    const triggers = shortlistTriggers({ ...row, target }, res, notes);
+
+    evaluated.push({
+      ...row,
+      target,
+      resolvedTarget,
+      // An overrule is a VISIBLE CLAIM: the resolved value and the overrule are shown together,
+      // so a reviewer can see that a claim was made rather than infer it from a value they would
+      // have had to already know.
+      overruled: Boolean(target && resolvedTarget && target !== resolvedTarget),
+      topicOutcome: res?.outcome ?? null,
+      triggers,
+      shortlisted: triggers.length > 0,
+      shortlistReasons: triggers.map((t) => SHORTLIST_REASONS[t]),
+      candidates: res?.outcome === 'ambiguous' ? res.candidates : undefined,
+    });
+  });
+
+  return {
+    errors,
+    rows: evaluated,
+    table: evaluated.filter((r) => !r.shortlisted),
+    shortlist: evaluated.filter((r) => r.shortlisted),
+  };
+}
+
+const clip = (s, n) => {
+  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+  return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
+};
+
+/**
+ * One table for the WHOLE SWEEP with topic as a column, so three bullets under three topics can
+ * be seen as one issue. Rendering lives here rather than in a prompt so that the column set, the
+ * ordering and the required `why` are enforced in one place.
+ */
+export function renderTable(batch, { only = null, width = 52 } = {}) {
+  const lines = [];
+  if (batch.errors.length) {
+    lines.push('REFUSED — these rows cannot be proposed:');
+    for (const e of batch.errors) lines.push(`  ! ${e}`);
+    lines.push('');
+  }
+
+  // An amendment re-prints ONLY the changed rows: re-reading the whole batch to find one
+  // correction is how a reviewer stops reading it.
+  const shown = only ? batch.table.filter((r) => only.includes(r.id)) : batch.table;
+
+  if (!shown.length) lines.push(only ? '(no matching rows)' : '(nothing to propose — every row is shortlisted)');
+  else {
+    const col = (r) => [
+      r.topic,
+      clip(r.note, width),
+      r.destination,
+      r.overruled ? `${r.resolvedTarget ?? '(none)'} -> ${r.target}` : (r.target ?? '—'),
+      clip(r.why, width + 20),
+    ];
+    const head = ['topic', 'note', 'destination', 'target', 'why'];
+    const rowsOut = shown.map(col);
+    const w = head.map((h, i) => Math.max(h.length, ...rowsOut.map((r) => String(r[i]).length)));
+    const line = (cells) => `  ${cells.map((c, i) => String(c).padEnd(w[i])).join('  ')}`.trimEnd();
+    lines.push(line(head));
+    lines.push(`  ${w.map((n) => '-'.repeat(n)).join('  ')}`);
+    for (const r of rowsOut) lines.push(line(r));
+    for (const r of shown.filter((x) => x.overruled)) {
+      lines.push(`  ! ${r.topic}: the classifier OVERRULED the topic's resolved destination. Stated reason: ${r.why}`);
+    }
+  }
+
+  // Shortlisted rows are kept OUT of the table and counted, so the table stays the thing that
+  // gets read. Expandable on demand: available without being in the way.
+  if (batch.shortlist.length) {
+    lines.push('');
+    lines.push(`  still undecided (${batch.shortlist.length}) — shortlisted, not routed. Ask to expand to see them.`);
+  }
+  return lines.join('\n');
+}
+
+/** The expanded shortlist: one entry per note with every reason it stopped. */
+export function renderShortlist(batch) {
+  if (!batch.shortlist.length) return '  nothing shortlisted.';
+  const lines = [`  still undecided (${batch.shortlist.length}):`];
+  for (const r of batch.shortlist) {
+    lines.push(`\n  ${r.topic} — ${clip(r.note, 100)}`);
+    lines.push(`    would have been: ${r.destination}${r.target ? ` -> ${r.target}` : ''}`);
+    for (const reason of r.shortlistReasons) lines.push(`    - ${reason}`);
+    if (r.candidates) lines.push(`      candidates: ${r.candidates.map((c) => `${c.repo} (${c.visibility})`).join(' and ')}`);
+  }
+  // Hesitation must not be converted into a bad routing, so nothing here has to be decided now.
+  lines.push('\n  These are stamped with a Shortlisted datetime and left. You are NOT asked to decide');
+  lines.push('  them before the run ends — and the count is reported every run, because a count that');
+  lines.push('  only grows is evidence the routing test is wrong rather than evidence you are behind.');
+  return lines.join('\n');
+}
+
+/** The approved batch, printed back as the plan the write issues consume. */
+export function renderPlan(batch) {
+  const lines = [`  APPROVED PLAN — ${batch.table.length} write(s), ${batch.shortlist.length} shortlisted`];
+  const byDest = new Map();
+  for (const r of batch.table) byDest.set(r.destination, [...(byDest.get(r.destination) ?? []), r]);
+  for (const d of DESTINATIONS) {
+    const rows = byDest.get(d);
+    if (!rows?.length) continue;
+    lines.push(`\n  ${d} (${rows.length}):`);
+    for (const r of rows) lines.push(`    ${r.topic}: ${clip(r.note, 90)}${r.target ? `  -> ${r.target}` : ''}`);
+  }
+  return lines.join('\n');
+}
+
 /** Which sensitive terms a piece of text hits. Case-insensitive SUBSTRING matching. */
 export function sensitiveHits(text, terms) {
   const hay = String(text ?? '').toLowerCase();
@@ -423,7 +623,7 @@ export function sensitiveHits(text, terms) {
 // ---------------------------------------------------------------- CLI
 
 const die = (m) => { console.error(`triage-notes.mjs: ${m}`); process.exit(2); };
-const VALUED = ['repos', 'topics', 'now', 'pages'];
+const VALUED = ['repos', 'topics', 'now', 'pages', 'batch', 'only'];
 const flagValue = (argv, name) => {
   const eq = argv.find((a) => a.startsWith(`--${name}=`));
   if (eq) return eq.slice(name.length + 3);
@@ -446,6 +646,7 @@ function main(argv) {
     console.error('usage: triage-notes.mjs config [checkout] [--json]');
     console.error('       triage-notes.mjs resolve [checkout] --repos [file.json] [--topics a,b,c] [--json] [--now ISO]');
   console.error('       triage-notes.mjs select  --pages [file.json] [--json]');
+  console.error('       triage-notes.mjs propose [checkout] --batch [file.json] [--repos f] [--classify|--approve] [--expand] [--only ids]');
     process.exit(2);
   }
 
@@ -552,6 +753,69 @@ function main(argv) {
     console.log(`  and carries the note's own timestamp — not the run's start time. A write that`);
     console.log(`  fails keeps its old marker, so the note is proposed again next run rather than`);
     console.log(`  lost, and resuming a half-finished run is just re-running this skill.`);
+    return;
+  }
+
+  if (cmd === 'propose') {
+    // Takes the model's classified rows and evaluates the script's half: the shortlist rules and
+    // the table. WRITES NOTHING — the whole routing test, the shortlist and the amendment loop
+    // can be exercised against the real Mind Palace with no possibility of a bad write.
+    if (cfg.status !== 'configured') {
+      console.error(`triage-notes — ${cfg.status}`);
+      console.error(`  ${cfg.says}`); if (cfg.fix) console.error(`  ${cfg.fix}`);
+      process.exit(1);
+    }
+    const batchFile = flagValue(argv, 'batch');
+    if (!batchFile) die('propose needs --batch [file.json]: {"rows":[{"id":"1","topic":"...","note":"...","destination":"issue|action|open-question|decision|thread|bin","target":"owner/repo","why":"..."}]}');
+    if (!existsSync(batchFile)) die(`no such batch: ${batchFile}`);
+    let batchIn;
+    try { batchIn = readJson(batchFile); }
+    catch (e) { die(`${batchFile} is not valid JSON (${e.message})`); }
+    const rows = (batchIn.rows ?? batchIn).map((r, i) => ({ id: r.id ?? String(i + 1), ...r }));
+
+    // Topic resolutions come from the same matcher #11 uses, so the issue branch is gated on the
+    // same answer the roster would give rather than on a second, drifting one.
+    const reposFile = flagValue(argv, 'repos');
+    let resolutions = batchIn.resolutions ?? [];
+    if (reposFile) {
+      if (!existsSync(reposFile)) die(`no such repository list: ${reposFile}`);
+      const repoList = readJson(reposFile);
+      const ctxRepo = readJson(cfg.file).contextRepo ?? null;
+      const topics = [...new Set(rows.map((r) => r.topic))];
+      resolutions = resolveTopics(topics, repoList, cfg.notes,
+        { contextRepo: ctxRepo, now: flagValue(argv, 'now') ?? new Date().toISOString() }).topics;
+    }
+
+    const batch = evaluateBatch(rows, resolutions, cfg.notes);
+    const onlyArg = flagValue(argv, 'only');
+    const only = onlyArg ? onlyArg.split(',').map((s) => s.trim()).filter(Boolean) : null;
+
+    if (asJson) { console.log(JSON.stringify(batch, null, 2)); process.exit(batch.errors.length ? 1 : 0); }
+
+    console.log(`triage-notes — ${batch.table.length} proposed, ${batch.shortlist.length} shortlisted`);
+    console.log(only ? `  (re-printing ${only.length} amended row(s) only — the rest of the batch is unchanged)\n` : '');
+    console.log(renderTable(batch, { only }));
+    if (flags.has('expand')) { console.log(''); console.log(renderShortlist(batch)); }
+
+    if (batch.errors.length) { console.log('\n  Fix the refused rows above before approving.'); process.exit(1); }
+
+    if (flags.has('classify')) {
+      // The read-only mode: table, no approval offered, no plan. This is the acceptance check
+      // against the live Mind Palace, and it is safe precisely because nothing writes.
+      console.log('\n  --classify: read-only. No approval offered and nothing will be written.');
+      return;
+    }
+    if (flags.has('approve')) {
+      console.log('');
+      console.log(renderPlan(batch));
+      console.log('\n  Nothing is written by this command. The write issues consume this plan.');
+      return;
+    }
+    console.log('\n  Correct any row in plain language — amending does not need a syntax. Re-run with');
+    console.log('  --only [ids] after applying corrections to re-print just those rows.');
+    console.log('  ONE approval covers the whole batch: twelve notes is one decision.');
+    console.log('  Exactly one destination per note — a note carrying both rationale and a commitment');
+    console.log('  gets one row, which is a known limitation and not a bug.');
     return;
   }
 

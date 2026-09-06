@@ -22,6 +22,7 @@ node scripts/triage-notes.mjs config "$ROOT"                       # load + vali
 node scripts/triage-notes.mjs config "$ROOT" --json
 node scripts/triage-notes.mjs resolve "$ROOT" --repos repos.json --topics "dev-hub,IP"
 node scripts/triage-notes.mjs select  --pages pages.json                # new notes per topic, offline
+node scripts/triage-notes.mjs propose "$ROOT" --batch b.json --classify   # table + shortlist, writes nothing
 node --test scripts/triage-notes.test.mjs                          # from the plugin directory
 node ../context-kit-core/scripts/check-plugin.mjs .                # before any commit
 ```
@@ -77,6 +78,19 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
   model's job at the start of a run; matching is this script's, offline and testable. The list
   carries the time it was gathered, so "resolved to a thread" and "resolved to a thread because
   the list was stale" stay distinguishable.
+- **The routing test is prose (the model judges); the shortlist is code (the script decides),**
+  and the shortlist runs AFTER classification and OVERRIDES it. That split is the point: a note
+  that must not be routed automatically cannot be caught by asking the model how confident it
+  feels, because that is a second opinion from the source that already committed to an answer.
+  The five triggers are RULES, not a score — no confidence number is requested, stored or
+  thresholded, and there is no threshold to tune. The bias runs one way, toward the shortlist.
+- **`why` is required on every proposed row.** A table showing only the verdict hides the
+  reasoning, and the reasoning is where routing goes wrong: the destination often looks right
+  while the reason for it is wrong, and only a reviewer who can see the reason catches it.
+- **The issue branch is gated on the topic's resolution.** A topic that resolved to `thread` or
+  `ambiguous` skips step one entirely, so the six-destination test is a five-destination test for
+  most topics. Without the gate, a note under a repository-less topic gets argued into an issue
+  with nowhere to go.
 - **`Last triaged` and `Shortlisted` are DATETIMES, not dates.** A run that fails half way is
   resumed by re-running, and only a timestamp separates notes already written from notes not yet
   reached; date granularity would re-propose everything written earlier the same day. Notion has
