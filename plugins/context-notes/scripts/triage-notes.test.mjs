@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import {
   loadConfig, validate, palaceIds, resolveTopic, resolveTopics, sensitiveHits,
   OPTOUT, REPOS_STALE_HOURS,
+  collectNotes, selectNotes, sweep, parseNotionDatetime,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -272,4 +273,216 @@ test('a short term matching inside a longer unrelated word is the SPECIFIED beha
 test('no terms means no hits, and an empty list is not an error', () => {
   assert.deepEqual(sensitiveHits('anything at all', []), []);
   assert.deepEqual(validate({ ...NOTES, sensitiveTerms: [] }), []);
+});
+
+// ---------------------------------------------------------------- note selection
+//
+// Fixtures are Mind Palace page shapes: dated `heading_2` sections with note blocks under them,
+// and a `heading_3` starting "What this means" introducing the summariser's own output. A
+// fixture that stops matching after a Notion API change is RE-CAPTURED, never edited to pass.
+
+const rt = (text) => [{ plain_text: text }];
+const heading = (date) => ({ type: 'heading_2', heading_2: { rich_text: rt(date) } });
+const delta = (text = 'What this means') => ({ type: 'heading_3', heading_3: { rich_text: rt(text) } });
+const bullet = (text, created) => ({
+  type: 'bulleted_list_item', created_time: created,
+  bulleted_list_item: { rich_text: rt(text) },
+});
+const para = (text, created) => ({ type: 'paragraph', created_time: created, paragraph: { rich_text: rt(text) } });
+
+const MARKER = '2026-09-03T12:00:00.000Z';
+
+test('a note newer than the marker is selected and an older one is not', () => {
+  const page = [heading('2026-09-03'), bullet('older', '2026-09-03T09:00:00.000Z'), bullet('newer', '2026-09-03T15:00:00.000Z')];
+  assert.deepEqual(collectNotes(page, new Date(MARKER)).map((n) => n.text), ['newer']);
+});
+
+test('a note at exactly the marker instant is already seen — the marker is a watermark', () => {
+  const page = [heading('2026-09-03'), bullet('exactly at the marker', MARKER), bullet('one ms later', '2026-09-03T12:00:00.001Z')];
+  assert.deepEqual(
+    collectNotes(page, new Date(MARKER)).map((n) => n.text),
+    ['one ms later'],
+    'strictly greater than, so the boundary note is not re-proposed',
+  );
+});
+
+test('two notes on the SAME DAY either side of the marker are separated — why this is a datetime', () => {
+  // A date-only marker cannot do this, and this is exactly the mid-batch resume case: the run
+  // wrote the 09:00 note, failed, and must not re-propose it when re-run the same afternoon.
+  const page = [heading('2026-09-03'), bullet('written before the failure', '2026-09-03T09:00:00.000Z'), bullet('not yet reached', '2026-09-03T14:00:00.000Z')];
+  assert.deepEqual(collectNotes(page, new Date(MARKER)).map((n) => n.text), ['not yet reached']);
+  // The same page under a date-granularity marker would yield both, which is the bug.
+  assert.equal(collectNotes(page, new Date('2026-09-03T00:00:00.000Z')).length, 2,
+    'demonstrating what a date marker would have done');
+});
+
+test('a block with no created_time is dated from the heading above it', () => {
+  const page = [heading('2026-09-05'), bullet('undated but under a newer heading', undefined)];
+  const notes = collectNotes(page, new Date(MARKER));
+  assert.deepEqual(notes.map((n) => n.text), ['undated but under a newer heading']);
+  assert.equal(notes[0].date, '2026-09-05');
+  assert.equal(notes[0].createdTime, null);
+});
+
+test('an undated block under a heading at or before the marker date is excluded', () => {
+  assert.deepEqual(collectNotes([heading('2026-09-01'), bullet('old and undated', undefined)], new Date(MARKER)), []);
+  // "At" as well as before: the heading-date comparison is <=, matching the exact one.
+  assert.deepEqual(collectNotes([heading('2026-09-03'), bullet('same day, undated', undefined)], new Date(MARKER)), []);
+});
+
+test('the heading fallback over-selects at day granularity rather than losing a note to a timezone edge', () => {
+  // 23:30 UTC on the marker day would be "tomorrow" in some zones. With no created_time the only
+  // honest comparison is by date, and the rule prefers proposing twice to losing one.
+  assert.equal(collectNotes([heading('2026-09-04'), bullet('the day after the marker, undated', undefined)], new Date(MARKER)).length, 1);
+});
+
+test('blocks under What this means are never notes — the summariser output is not triaged', () => {
+  const page = [
+    heading('2026-09-05'), bullet('a real note', '2026-09-05T10:00:00.000Z'),
+    delta(), bullet('summary output', '2026-09-05T10:05:00.000Z'), para('more summary', '2026-09-05T10:05:00.000Z'),
+  ];
+  assert.deepEqual(collectNotes(page, new Date(MARKER)).map((n) => n.text), ['a real note']);
+});
+
+test('a later dated heading REOPENS the note section beneath a summary', () => {
+  const page = [
+    heading('2026-09-04'), bullet('note one', '2026-09-04T10:00:00.000Z'),
+    delta(), bullet('summary output', '2026-09-04T10:05:00.000Z'),
+    heading('2026-09-05'), bullet('note two, typed after the summary', '2026-09-05T09:00:00.000Z'),
+  ];
+  assert.deepEqual(collectNotes(page, new Date(MARKER)).map((n) => n.text),
+    ['note one', 'note two, typed after the summary']);
+});
+
+test('a heading_3 that is not What this means does not close the note section', () => {
+  const page = [heading('2026-09-05'), delta('Some other heading'), bullet('still a note', '2026-09-05T10:00:00.000Z')];
+  assert.deepEqual(collectNotes(page, new Date(MARKER)).map((n) => n.text), ['still a note']);
+});
+
+test('non-note block types between notes do not break heading tracking', () => {
+  const page = [
+    heading('2026-09-05'),
+    { type: 'divider', divider: {} },
+    { type: 'image', image: {} },
+    { type: 'to_do', created_time: '2026-09-05T10:00:00.000Z', to_do: { rich_text: rt('a to-do is not a note') } },
+    bullet('after the noise', undefined),
+  ];
+  const notes = collectNotes(page, new Date(MARKER));
+  assert.deepEqual(notes.map((n) => n.text), ['after the noise']);
+  assert.equal(notes[0].date, '2026-09-05', 'the heading is still tracked across the non-note blocks');
+});
+
+test('all three note-bearing block types are notes, and only those three', () => {
+  const page = [
+    heading('2026-09-05'),
+    bullet('bulleted', '2026-09-05T10:00:00.000Z'),
+    { type: 'numbered_list_item', created_time: '2026-09-05T10:01:00.000Z', numbered_list_item: { rich_text: rt('numbered') } },
+    para('paragraph', '2026-09-05T10:02:00.000Z'),
+    { type: 'quote', created_time: '2026-09-05T10:03:00.000Z', quote: { rich_text: rt('quoted') } },
+  ];
+  assert.deepEqual(collectNotes(page, new Date(MARKER)).map((n) => n.text), ['bulleted', 'numbered', 'paragraph']);
+});
+
+test('an empty block is not a note', () => {
+  const page = [heading('2026-09-05'), bullet('   ', '2026-09-05T10:00:00.000Z'), bullet('real', '2026-09-05T10:01:00.000Z')];
+  assert.deepEqual(collectNotes(page, new Date(MARKER)).map((n) => n.text), ['real']);
+});
+
+test('a never-triaged topic (marker null) yields every note on the page', () => {
+  const page = [heading('2026-01-01'), bullet('ancient', '2026-01-01T10:00:00.000Z'), bullet('undated', undefined)];
+  assert.equal(collectNotes(page, null).length, 2);
+});
+
+// ---------------------------------------------------------------- dedup and the sweep
+
+test('identical text repeated in one page collapses to one row, keeping the earlier', () => {
+  const page = [
+    heading('2026-09-05'),
+    bullet('Ask Dan about the CLF bid', '2026-09-05T09:00:00.000Z'),
+    bullet('ask   dan  about the CLF BID', '2026-09-05T11:00:00.000Z'),   // the same note, retyped
+  ];
+  const s = selectNotes('general', page, MARKER);
+  assert.equal(s.notes.length, 1, 'a bullet typed twice must not become two issues');
+  assert.equal(s.notes[0].createdTime, '2026-09-05T09:00:00.000Z', 'the earlier occurrence is when it was said');
+  assert.equal(s.duplicatesCollapsed, 1);
+});
+
+test('identical text under two topics stays two rows — that is the cross-cutting case', () => {
+  const page = () => [heading('2026-09-05'), bullet('the same thought', '2026-09-05T09:00:00.000Z')];
+  const a = selectNotes('IP', page(), MARKER);
+  const b = selectNotes('website', page(), MARKER);
+  assert.equal(a.notes.length + b.notes.length, 2,
+    'collapsing across pages would hide the merge the classifier exists to notice');
+});
+
+test('a Settled topic is swept like any other', () => {
+  const page = [heading('2026-09-05'), bullet('typed against a settled topic', '2026-09-05T10:00:00.000Z')];
+  const s = selectNotes('closed-topic', page, MARKER, { settled: true });
+  assert.equal(s.settled, true);
+  assert.deepEqual(s.notes.map((n) => n.text), ['typed against a settled topic'],
+    'silently ignoring it would lose work with nothing to show it happened');
+});
+
+test('a page with no new notes yields an empty result rather than an error', () => {
+  const s = selectNotes('quiet', [heading('2026-09-01'), bullet('old', '2026-09-01T10:00:00.000Z')], MARKER);
+  assert.deepEqual(s.notes, []);
+  assert.equal(s.lastTriaged, MARKER);
+});
+
+test('a whole run of empty results reports nothing new, and says what it swept', () => {
+  const quiet = [heading('2026-09-01'), bullet('old', '2026-09-01T10:00:00.000Z')];
+  const out = sweep([
+    selectNotes('a', quiet, MARKER),
+    selectNotes('b', quiet, MARKER, { settled: true }),
+    selectNotes('c', [], MARKER),
+  ]);
+  assert.equal(out.nothingNew, true);
+  assert.equal(out.newNotes, 0);
+  assert.equal(out.topicsSwept, 3, 'a silent no-op must be distinguishable from a run that did not happen');
+  assert.equal(out.settledSwept, 1);
+});
+
+test('a run with anything new does not short circuit', () => {
+  const out = sweep([
+    selectNotes('a', [heading('2026-09-05'), bullet('new', '2026-09-05T10:00:00.000Z')], MARKER),
+    selectNotes('b', [], MARKER),
+  ]);
+  assert.equal(out.nothingNew, false);
+  assert.equal(out.newNotes, 1);
+});
+
+// ---------------------------------------------------------------- the mirrored port
+//
+// This fixture is the page shape the summariser's own Python tests use. It is here so that a
+// divergence between collect_notes() in c-energie/bots and collectNotes() here shows up as a
+// failing assertion rather than as a difference nobody looks at.
+
+test('the summariser page shape yields the same notes here as it does in Python', () => {
+  const page = [
+    heading('2026-08-01'),
+    bullet('first note', '2026-08-01T09:00:00.000Z'),
+    bullet('second note', '2026-08-01T09:05:00.000Z'),
+    delta(),
+    para('a previously written summary', '2026-08-01T10:00:00.000Z'),
+    heading('2026-08-02'),
+    bullet('third note', '2026-08-02T09:00:00.000Z'),
+  ];
+  // Whole page: three notes, the summary excluded, each heading carried onto its notes.
+  assert.deepEqual(collectNotes(page, null), [
+    { date: '2026-08-01', text: 'first note', createdTime: '2026-08-01T09:00:00.000Z' },
+    { date: '2026-08-01', text: 'second note', createdTime: '2026-08-01T09:05:00.000Z' },
+    { date: '2026-08-02', text: 'third note', createdTime: '2026-08-02T09:00:00.000Z' },
+  ]);
+  // Since the first note: the other two, in page order.
+  assert.deepEqual(
+    collectNotes(page, new Date('2026-08-01T09:00:00.000Z')).map((n) => n.text),
+    ['second note', 'third note'],
+  );
+});
+
+test('parseNotionDatetime falls back to the leading date, and returns null for nonsense', () => {
+  assert.equal(parseNotionDatetime('2026-09-05T10:00:00.000Z').toISOString(), '2026-09-05T10:00:00.000Z');
+  assert.equal(parseNotionDatetime('2026-09-05').toISOString(), '2026-09-05T00:00:00.000Z');
+  assert.equal(parseNotionDatetime(null), null);
+  assert.equal(parseNotionDatetime('not a date at all'), null);
 });

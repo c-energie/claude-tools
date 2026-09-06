@@ -21,6 +21,7 @@ one rule here that cannot be relaxed.
 node scripts/triage-notes.mjs config "$ROOT"                       # load + validate, offline
 node scripts/triage-notes.mjs config "$ROOT" --json
 node scripts/triage-notes.mjs resolve "$ROOT" --repos repos.json --topics "dev-hub,IP"
+node scripts/triage-notes.mjs select  --pages pages.json                # new notes per topic, offline
 node --test scripts/triage-notes.test.mjs                          # from the plugin directory
 node ../context-kit-core/scripts/check-plugin.mjs .                # before any commit
 ```
@@ -93,6 +94,19 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
   than about four characters must be checked against `memory.md` and `glossary.md` before it goes
   in a repo's list. If the acronym gap ever matters, the fix is word-boundary matching for a
   marked subset — a change here, not in any repo's configuration.
+
+## Mirrored logic
+
+`collectNotes()` in `scripts/triage-notes.mjs` is a **port** of `collect_notes()` in
+`c-energie/bots` (`src/notebots/notes/summarise.py`), not a reimplementation. Both files carry a
+banner saying so, and `bots/CLAUDE.md` lists it alongside its other mirrored halves.
+
+The two tools read the same Mind Palace pages for different reasons — this one decides where a
+note should **go**, the summariser decides what it **means** — but they must agree on what a note
+**is**: which block types count, that `created_time` is preferred with the dated `heading_2` as
+the fallback, and that blocks under a "What this means" `heading_3` are the summariser’s own
+output and never notes. If they drift, a bullet gets triaged into an issue that was never folded
+in, or a summary gets triaged back into an issue. Change one, change the other.
 
 ## Copies
 

@@ -83,7 +83,37 @@ actually exist. Three consequences to report rather than paper over:
   organisations cannot be picked between: they differ in visibility, and guessing crosses that
   boundary.
 
-## 5. The two datetime markers
+## 5. Select what is new
+
+Fetch each topic page's block children — one MCP call per page, and this is your step — then hand
+them to the script, which does the selecting offline:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" select --pages pages.json
+```
+
+`pages.json` is `[{"topic": "...", "lastTriaged": "[ISO]|null", "settled": false, "children": [...]}]`.
+
+**Read every topic's marker once, at the start of the run.** Re-reading mid-run would let the set
+of notes under consideration shift while the user is reading the table.
+
+**Sweep settled topics too.** A note typed against a settled topic is still a note; skipping it
+would lose work with nothing to show it had happened.
+
+What the script guarantees, and why you should not second-guess it:
+
+- **Blocks under a "What this means" heading are never notes.** That is the summariser's own
+  output, and triaging it would turn a summary back into an issue. The selection logic is a port
+  of `collect_notes` in `c-energie/bots` for exactly this reason — two tools reading one page and
+  disagreeing about what a note is would be a permanent source of confusion.
+- **A duplicate bullet on one page is one note.** Typed twice does not mean two issues. Identical
+  text under *two different topics* deliberately stays two rows: that is the cross-cutting case
+  you are meant to notice and merge.
+- **Nothing new short circuits the run.** If the sweep finds nothing, say so and stop — naming
+  how many topics were swept. An empty table with no explanation leaves someone unable to tell
+  "nothing to do" from "it did not work".
+
+## 6. The two datetime markers
 
 `Last triaged` and `Shortlisted` on each topic row are **datetimes, not dates**, and must stay
 that way. A run that fails half way is resumed by re-running it, and only a timestamp separates

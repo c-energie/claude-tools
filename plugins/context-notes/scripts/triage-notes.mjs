@@ -273,6 +273,147 @@ export function resolveTopics(topics, repoList, notes, { contextRepo = null, now
   };
 }
 
+// ---------------------------------------------------------------- note selection
+//
+// *** MIRRORED LOGIC — collect_notes() in c-energie/bots
+//     src/notebots/notes/summarise.py. Keep the two in step. ***
+//
+// The summariser already has a definition of what counts as a note on a Mind Palace topic page,
+// and two tools reading the same page while disagreeing about that would be a permanent source
+// of confusion — a bullet triaged into an issue that the summariser never folded in, or a
+// summary triaged back into an issue. So this is a PORT, not a reimplementation: the loop keeps
+// the Python's structure and its order of tests so that the two read the same, and a change to
+// either is known to require a change to the other. `bots/CLAUDE.md` lists its half.
+//
+// The page structure the Worker writes and the summariser reads: dated `heading_2` sections with
+// note blocks under them, and a `heading_3` starting "What this means" introducing the
+// summariser's OWN output.
+
+export const HEADING_BLOCK = 'heading_2';
+export const DELTA_HEADING_BLOCK = 'heading_3';
+export const DELTA_HEADING_PREFIX = 'What this means';
+export const NOTE_BLOCKS = ['bulleted_list_item', 'numbered_list_item', 'paragraph'];
+
+const plainText = (rich) => (rich ?? []).map((r) => String(r?.plain_text ?? '')).join('');
+export const blockText = (block) => plainText((block?.[String(block?.type)] ?? {}).rich_text).trim();
+const isDeltaHeading = (block) => block?.type === DELTA_HEADING_BLOCK
+  && blockText(block).startsWith(DELTA_HEADING_PREFIX);
+
+/** Notion's ISO-8601, falling back to the leading date. Returns a Date, or null. */
+export function parseNotionDatetime(value) {
+  if (!value) return null;
+  const t = Date.parse(String(value));
+  if (!Number.isNaN(t)) return new Date(t);
+  const d = Date.parse(String(value).slice(0, 10));
+  return Number.isNaN(d) ? null : new Date(d);
+}
+const dayOf = (d) => (d ? d.toISOString().slice(0, 10) : null);
+
+/**
+ * The notes on a page that are newer than the marker, in page order.
+ *
+ * @param children  a page's block_children, as Notion returns them
+ * @param since     the topic's `Last triaged` value, or null for "never triaged"
+ *
+ * Dating prefers each block's own `created_time`, which is exact. Where Notion has none it falls
+ * back to the dated `heading_2` the block sits under, comparing DATES ONLY — deliberately
+ * over-selecting at day granularity rather than dropping a note to a timezone edge, since a note
+ * proposed twice costs a line and a note lost costs the note.
+ *
+ * Comparison is STRICTLY GREATER THAN. A note at exactly the marker instant is already seen,
+ * which makes the marker a watermark rather than a range boundary and removes the off-by-one
+ * when a half-finished run is resumed.
+ */
+export function collectNotes(children, since) {
+  const notes = [];
+  let currentDate = '';
+  let inDelta = false;
+  const sinceDate = dayOf(since);
+
+  for (const block of children ?? []) {
+    const kind = block?.type;
+    if (kind === HEADING_BLOCK) {
+      // A dated heading also REOPENS the note section: a "What this means" block ends where the
+      // next dated heading begins, so notes typed after a summary are notes again.
+      currentDate = blockText(block);
+      inDelta = false;
+      continue;
+    }
+    if (isDeltaHeading(block)) { inDelta = true; continue; }
+    if (inDelta || !NOTE_BLOCKS.includes(kind)) continue;
+
+    const text = blockText(block);
+    if (!text) continue;
+
+    const created = parseNotionDatetime(block?.created_time);
+    if (since !== null && since !== undefined) {
+      if (created !== null) {
+        if (created.getTime() <= since.getTime()) continue;
+      } else if (sinceDate !== null) {
+        const blockDate = dayOf(parseNotionDatetime(currentDate));
+        if (blockDate === null || blockDate <= sinceDate) continue;
+      }
+    }
+    notes.push({ date: currentDate, text, createdTime: created ? created.toISOString() : null });
+  }
+  return notes;
+}
+
+/** Whitespace-collapsed, case-folded — the key duplicate detection compares on. */
+const normaliseNote = (text) => String(text).replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * The new notes on one topic page, deduplicated WITHIN the page.
+ *
+ * A bullet typed twice on one page is one note and must not become two issues; the earliest
+ * occurrence is kept, because that is when it was actually said. Identical text under two
+ * different topics deliberately stays TWO rows — that is the cross-cutting case the flat batch
+ * exists to let the classifier notice and merge, and collapsing it here would hide it.
+ *
+ * Pure: it takes blocks and a marker and returns rows. Fetching the blocks is one MCP call per
+ * page and is the model's step, which is also what keeps this testable with no connector.
+ */
+export function selectNotes(topic, children, lastTriaged, { settled = false } = {}) {
+  const since = typeof lastTriaged === 'string' ? parseNotionDatetime(lastTriaged) : (lastTriaged ?? null);
+  const all = collectNotes(children, since);
+
+  const seen = new Map();
+  let duplicates = 0;
+  for (const n of all) {
+    const key = normaliseNote(n.text);
+    if (seen.has(key)) { duplicates += 1; continue; }
+    seen.set(key, n);
+  }
+
+  return {
+    topic,
+    // Settled topics are SWEPT, not skipped. A note typed against a settled topic is still a
+    // note, and silently ignoring it would lose work with nothing to show it had happened.
+    settled,
+    lastTriaged: since ? since.toISOString() : null,
+    notes: [...seen.values()],
+    duplicatesCollapsed: duplicates,
+  };
+}
+
+/**
+ * Roll up a whole run's per-topic selections.
+ *
+ * "Nothing new" short circuits before classification and reports how many topics were swept, so
+ * that a genuine no-op is distinguishable from a run that never happened. An empty table with no
+ * explanation leaves someone wondering which of the two they are looking at.
+ */
+export function sweep(selections) {
+  const total = selections.reduce((n, s) => n + s.notes.length, 0);
+  return {
+    topicsSwept: selections.length,
+    settledSwept: selections.filter((s) => s.settled).length,
+    newNotes: total,
+    nothingNew: total === 0,
+    selections,
+  };
+}
+
 /** Which sensitive terms a piece of text hits. Case-insensitive SUBSTRING matching. */
 export function sensitiveHits(text, terms) {
   const hay = String(text ?? '').toLowerCase();
@@ -282,7 +423,7 @@ export function sensitiveHits(text, terms) {
 // ---------------------------------------------------------------- CLI
 
 const die = (m) => { console.error(`triage-notes.mjs: ${m}`); process.exit(2); };
-const VALUED = ['repos', 'topics', 'now'];
+const VALUED = ['repos', 'topics', 'now', 'pages'];
 const flagValue = (argv, name) => {
   const eq = argv.find((a) => a.startsWith(`--${name}=`));
   if (eq) return eq.slice(name.length + 3);
@@ -304,6 +445,7 @@ function main(argv) {
   if (!cmd) {
     console.error('usage: triage-notes.mjs config [checkout] [--json]');
     console.error('       triage-notes.mjs resolve [checkout] --repos [file.json] [--topics a,b,c] [--json] [--now ISO]');
+  console.error('       triage-notes.mjs select  --pages [file.json] [--json]');
     process.exit(2);
   }
 
@@ -372,6 +514,44 @@ function main(argv) {
       if (t.caseOnly?.length) console.log(`  ${' '.repeat(w)}  ! differs only by case from ${t.caseOnly.join(', ')} — matching is exact, so this is NOT a match. Rename the topic if it was meant to be one.`);
       if (t.staleListCaveat) console.log(`  ${' '.repeat(w)}  ! ${t.staleListCaveat}`);
     }
+    return;
+  }
+
+  if (cmd === 'select') {
+    // Takes captured block JSON so it runs offline: the MCP fetch that produces it is one call
+    // per page and is the model's step, not this script's.
+    const pagesFile = flagValue(argv, 'pages');
+    if (!pagesFile) die('select needs --pages [file.json]: [{"topic":"...","lastTriaged":"[ISO]|null","settled":false,"children":[...]}]. The block_children come from one MCP call per page — the model fetches them, this matches them.');
+    if (!existsSync(pagesFile)) die(`no such pages file: ${pagesFile}`);
+    let pages;
+    try { pages = readJson(pagesFile); }
+    catch (e) { die(`${pagesFile} is not valid JSON (${e.message})`); }
+    if (!Array.isArray(pages)) die(`${pagesFile} must be an array of pages`);
+
+    const out = sweep(pages.map((p) =>
+      selectNotes(p.topic, p.children, p.lastTriaged ?? null, { settled: Boolean(p.settled) })));
+
+    if (asJson) { console.log(JSON.stringify(out, null, 2)); return; }
+
+    if (out.nothingNew) {
+      // The short circuit. Says what was looked at, so "nothing to do" is never mistaken for
+      // "nothing happened".
+      console.log(`triage-notes — nothing new.`);
+      console.log(`  Swept ${out.topicsSwept} topic(s)${out.settledSwept ? ` (${out.settledSwept} settled, swept anyway)` : ''} and found no notes past their Last triaged marker.`);
+      console.log(`  Stop here: there is no batch to classify, and no marker to move.`);
+      return;
+    }
+    console.log(`triage-notes — ${out.newNotes} new note(s) across ${out.topicsSwept} topic(s)`);
+    for (const s of out.selections) {
+      if (!s.notes.length) continue;
+      console.log(`\n  ${s.topic}${s.settled ? '  (settled — swept anyway)' : ''}   since ${s.lastTriaged ?? 'never triaged'}`);
+      for (const n of s.notes) console.log(`    [${n.date || 'undated'}] ${n.text}`);
+      if (s.duplicatesCollapsed) console.log(`    (${s.duplicatesCollapsed} identical duplicate(s) on this page collapsed into the earliest)`);
+    }
+    console.log(`\n  The marker is written PER NOTE, immediately after that note's write succeeds,`);
+    console.log(`  and carries the note's own timestamp — not the run's start time. A write that`);
+    console.log(`  fails keeps its old marker, so the note is proposed again next run rather than`);
+    console.log(`  lost, and resuming a half-finished run is just re-running this skill.`);
     return;
   }
 
