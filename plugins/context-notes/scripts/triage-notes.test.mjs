@@ -19,6 +19,7 @@ import {
   evaluateBatch, renderTable, renderShortlist, renderPlan, shortlistTriggers, DESTINATIONS,
   issueBody, planIssue, planIssues, applyReachability, destinationRepos, TITLE_MAX,
   planNotionRow, planNotionRows, provenance, NOTION_DESTINATIONS,
+  parseTaxonomy, checkTags, planThread, planThreads, THREAD_STATUSES,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -996,4 +997,173 @@ test('a shortlisted row never reaches the Notion planner', () => {
   const out = planNotionRows(batch, { connectorAvailable: true });
   assert.equal(out.writes.length, 0);
   assert.equal(out.queued.length, 0);
+});
+
+// ---------------------------------------------------------------- threads
+//
+// The testable surface is MATERIAL and ARGUMENT construction plus the taxonomy and boundary
+// checks — not the file write, which belongs to save-thread and is covered there.
+
+const TAXONOMY = parseTaxonomy(`
+version: 1
+
+topics:
+  gridflex:
+    description: The platform as a whole.
+  ip:
+    description: Intellectual property and what protects it.
+  dno:
+    description: Distribution network operators.
+
+aliases:
+  dnos: dno
+  distribution-network-operator: dno
+`);
+
+const THREAD_ROW = {
+  id: '1', topic: 'IP', destination: 'thread',
+  note: 'The window is not a moat; what would make it one is the flexibility envelope.',
+  why: 'reasoning a future reader needs', capturedAt: '2026-09-05',
+  topicUrl: 'https://notion.so/topic-IP',
+  threadTitle: 'Why the window is not a moat', topics: ['ip'],
+};
+
+test('the taxonomy parser reads the tags and the aliases and nothing else', () => {
+  assert.deepEqual([...TAXONOMY.topics].sort(), ['dno', 'gridflex', 'ip']);
+  assert.equal(TAXONOMY.aliases.get('dnos'), 'dno');
+  assert.equal(TAXONOMY.topics.has('version'), false, 'a top-level key is not a topic');
+  assert.equal(TAXONOMY.topics.has('description'), false, 'nor is a nested one');
+});
+
+test('it parses the real taxonomy.yml, not just a fixture', () => {
+  const real = parseTaxonomy(readFileSync('C:/Users/corso/.context/net-flex/context/taxonomy.yml', 'utf8'));
+  assert.ok(real.topics.size > 10, `expected a populated vocabulary, got ${real.topics.size}`);
+  assert.ok(real.topics.has('gridflex'));
+  assert.equal(real.aliases.get('dnos'), 'dno');
+});
+
+test('a tag present in the taxonomy passes', () => {
+  const p = planThread({ title: 'x', topics: ['ip'], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.ok, true);
+  assert.deepEqual(p.topics, ['ip']);
+});
+
+test('an alias resolves to its canonical tag rather than being rejected', () => {
+  const p = planThread({ title: 'x', topics: ['dnos'], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.ok, true);
+  assert.deepEqual(p.topics, ['dno'], 'rejecting an alias would orphan the rename aliases exist to allow');
+});
+
+test('a tag absent from the taxonomy SHORTLISTS and names the tag — it is never invented', () => {
+  const p = planThread({ title: 'x', topics: ['flexibility-envelope'], rows: [THREAD_ROW] },
+    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.shortlist, true);
+  assert.equal(p.ok, undefined, 'no save is planned');
+  assert.deepEqual(p.missingTags, ['flexibility-envelope']);
+  assert.match(p.reason, /pull request/, 'the user adds the tag; triage does not');
+});
+
+test('a singleton exempt from front matter passes without a tag', () => {
+  const p = planThread({ title: 'x', topics: [], rows: [THREAD_ROW] },
+    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context', singletonExempt: true });
+  assert.equal(p.ok, true);
+});
+
+test('no tag at all, and not exempt, shortlists rather than saving untagged', () => {
+  const p = planThread({ title: 'x', topics: [], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.shortlist, true);
+});
+
+test('a status outside active|settled|archived is rejected — triage adds no vocabulary', () => {
+  for (const status of ['seed', 'dropped', 'open']) {
+    const p = planThread({ title: 'x', topics: ['ip'], status, rows: [THREAD_ROW] },
+      { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+    assert.equal(p.ok, false, `${status} should be rejected`);
+    assert.match(p.reason, /not one of active \| settled \| archived/);
+  }
+  for (const status of THREAD_STATUSES) {
+    assert.equal(planThread({ title: 'x', topics: ['ip'], status, rows: [THREAD_ROW] },
+      { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' }).ok, true);
+  }
+});
+
+test('a thread bound for another context repo is PARKED, never saved', () => {
+  const p = planThread({ title: 'x', topics: ['ip'], targetRepo: 'corson94/thesis-context', rows: [THREAD_ROW] },
+    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.park, true);
+  assert.equal(p.ok, undefined);
+  assert.equal(p.target, 'corson94/thesis-context', 'and the target is named, so something waiting is visible');
+  assert.match(p.reason, /that project's own session/);
+  assert.match(p.reason, /taxonomy\.yml validation/, 'which is the reason the boundary exists');
+});
+
+test('the assembled body carries every contributing note VERBATIM plus provenance', () => {
+  const rows = [
+    THREAD_ROW,
+    { ...THREAD_ROW, id: '2', topic: 'website', note: 'The deploy preview is part of the same argument.' },
+  ];
+  const p = planThread({ title: 'One argument', topics: ['ip'], rows }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.ok, true);
+  for (const r of rows) assert.ok(p.body.includes(r.note), 'the user\'s phrasing survives');
+  assert.match(p.body, /Mind Palace/);
+  assert.match(p.body, /2026-09-05/);
+  assert.match(p.body, /https:\/\/notion\.so\/topic-IP/);
+});
+
+test('several rows sharing a thread produce ONE save and mark each row separately', () => {
+  const rows = [
+    { ...THREAD_ROW, id: '1', topic: 'IP', thread: 'moat', note: 'first strand' },
+    { ...THREAD_ROW, id: '2', topic: 'website', thread: 'moat', note: 'second strand' },
+    { ...THREAD_ROW, id: '3', topic: 'general', thread: 'moat', note: 'third strand' },
+  ];
+  const batch = evaluateBatch(rows, [RES_THREAD('IP'), RES_THREAD('website'), RES_THREAD('general')], NOTES);
+  const out = planThreads(batch, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(out.saves.length, 1, 'one thread, not one per bullet');
+  assert.deepEqual(out.saves[0].rowIds, ['1', '2', '3'], 'each contributing note is marked individually');
+  for (const s of ['first strand', 'second strand', 'third strand']) assert.ok(out.saves[0].body.includes(s));
+});
+
+test('rows under different threads stay separate — a thread is not a dumping ground', () => {
+  const rows = [
+    { ...THREAD_ROW, id: '1', thread: 'moat', note: 'a' },
+    { ...THREAD_ROW, id: '2', topic: 'notion', thread: 'meetings', note: 'b' },
+  ];
+  const batch = evaluateBatch(rows, [RES_THREAD('IP'), RES_THREAD('notion')], NOTES);
+  const out = planThreads(batch, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(out.saves.length, 2);
+});
+
+test('an ANGLE BRACKET in a note reaches the body and never a front-matter value', () => {
+  // The skill ingester reads an angle bracket in a front-matter value as a tag and drops the
+  // field SILENTLY — one of the marketplace's documented silent failures. Worth its own test
+  // rather than being folded into "special characters".
+  const note = 'Replace <placeholder> with the real id before <shipping>';
+  const p = planThread({ title: 'x', topics: ['ip'], rows: [{ ...THREAD_ROW, note }] },
+    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.ok, true);
+  assert.ok(p.body.includes(note), 'body text is fine and must not be mangled');
+  // Nothing this plugin produces is a front-matter value: it has no front-matter knowledge at all.
+  for (const v of [p.title, p.status, ...p.topics]) {
+    assert.equal(/[<>]/.test(String(v)), false, `${JSON.stringify(v)} would be dropped silently by the ingester`);
+  }
+});
+
+test('YAML-significant characters in a note are carried without corrupting anything', () => {
+  const note = '- leading dash\nkey: value\n  indented: more\n"quoted"  #hash  |pipe  >fold';
+  const p = planThread({ title: 'x', topics: ['ip'], rows: [{ ...THREAD_ROW, note }] },
+    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.ok(p.body.includes(note));
+});
+
+test('this plugin holds no thread front-matter knowledge — that is the design, so assert it', () => {
+  const src = readFileSync(new URL('./triage-notes.mjs', import.meta.url), 'utf8');
+  for (const field of ['gist:', 'audience:', 'notion_ids', 'issue_ids', 'front-matter:']) {
+    assert.equal(src.includes(`'${field}'`), false, `"${field}" belongs to save-thread, not here`);
+  }
+});
+
+test('a thread with no contributing notes is refused rather than saved empty', () => {
+  const p = planThread({ title: 'x', topics: ['ip'], rows: [] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  assert.equal(p.ok, false);
+  assert.match(p.reason, /no contributing notes/);
 });

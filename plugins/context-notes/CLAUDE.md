@@ -25,6 +25,7 @@ node scripts/triage-notes.mjs select  --pages pages.json                # new no
 node scripts/triage-notes.mjs propose "$ROOT" --batch b.json --classify   # table + shortlist, writes nothing
 node scripts/triage-notes.mjs github  "$ROOT" --batch evaluated.json      # plan gh issue create, runs nothing
 node scripts/triage-notes.mjs notion  "$ROOT" --batch evaluated.json      # format context-notion skill args
+node scripts/triage-notes.mjs threads "$ROOT" --batch evaluated.json      # assemble save-thread material
 node --test scripts/triage-notes.test.mjs                          # from the plugin directory
 node ../context-kit-core/scripts/check-plugin.mjs .                # before any commit
 ```
@@ -124,6 +125,23 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
   presence is checked explicitly and named on failure, never inferred from a result, and a write
   that cannot reach Notion is queued with `context-notion:add-pending` rather than dropped —
   keeping its old marker, so a queued item is not also re-proposed.
+- **THIS PLUGIN HOLDS NO THREAD FRONT-MATTER KNOWLEDGE EITHER, and a test asserts it.** Writing
+  a thread is not creating a markdown file: front matter from a template, `topics:` that must
+  exist in `taxonomy.yml`, a `YYYY-MM-DD-` filename the session-start hook can find, and an index
+  that stays in step. `context-kit-core:save-thread` owns all of it. Nothing triage produces ever
+  becomes a front-matter VALUE — an angle bracket there is read as a tag and the field is dropped
+  silently, which is one of the marketplace's documented silent failures.
+- **Triage introduces no new vocabulary.** Thread status stays `active | settled | archived`. A
+  `status: seed` and a `target:` field were considered for an undeveloped thread and dropped: a
+  Mind Palace topic page already IS that, with a rolling summary maintained for free. `dropped`
+  was rejected too — triage routes notes and does not manage thread lifecycle, so the value would
+  have had no writer.
+- **A tag not in `taxonomy.yml` shortlists; it is never invented inline.** An alias resolves to
+  its canonical tag, because rejecting one would orphan the rename aliases exist to allow. Adding
+  a tag is a pull request, and that friction is the point.
+- **A thread bound for another context repo is PARKED, never written.** A thread file is a commit
+  into that repository, and it goes through that project's own session — which is where
+  `taxonomy.yml` validation lives. That boundary is what keeps the validation meaningful.
 - **`Last triaged` and `Shortlisted` are DATETIMES, not dates.** A run that fails half way is
   resumed by re-running, and only a timestamp separates notes already written from notes not yet
   reached; date granularity would re-propose everything written earlier the same day. Notion has

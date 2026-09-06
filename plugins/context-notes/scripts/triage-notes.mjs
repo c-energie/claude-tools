@@ -861,6 +861,160 @@ export function planNotionRows(batch, { connectorAvailable = true } = {}) {
   return { writes, queued, refused, connectorAvailable };
 }
 
+// ---------------------------------------------------------------- threads
+//
+// TRIAGE NEVER WRITES A THREAD FILE. Writing one is not "create a markdown file": it carries
+// front matter copied from a template, its `topics:` must already exist in `taxonomy.yml`, its
+// filename must be dated `YYYY-MM-DD-` and end `.md` or the session-start hook will not find it,
+// and the thread index has to stay in step. All of that lives in `context-kit-core:save-thread`.
+// A second implementation would drift, and a thread with an invented topic tag is precisely the
+// failure taxonomy validation exists to catch.
+//
+// So this holds NO knowledge of thread front matter. It assembles material and calls the skill; a
+// template change stays a one-file change in context-kit-core.
+//
+// AND IT INTRODUCES NO NEW VOCABULARY. A `status: seed` and a `target:` field were considered for
+// a thread not yet developed enough to route, and both dropped: a Mind Palace topic page already
+// IS that, with a rolling summary maintained for free. `dropped` was rejected too — triage routes
+// notes and does not manage thread lifecycle, so the value would have had no writer.
+
+export const THREAD_STATUSES = ['active', 'settled', 'archived'];
+
+/**
+ * The tags and aliases a repo's `taxonomy.yml` declares. A deliberately small parser: this needs
+ * two flat blocks of a controlled vocabulary file, not a YAML implementation, and adding a
+ * dependency to read a list of tags would be a poor trade.
+ */
+export function parseTaxonomy(text) {
+  const topics = new Set();
+  const aliases = new Map();
+  let section = null;
+  for (const raw of String(text ?? '').split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '');
+    if (/^topics:\s*$/.test(line)) { section = 'topics'; continue; }
+    if (/^aliases:\s*$/.test(line)) { section = 'aliases'; continue; }
+    if (/^\S/.test(line) && line.trim()) { section = null; continue; }
+    const m = line.match(/^ {2}([A-Za-z0-9][A-Za-z0-9._-]*):\s*(\S*)\s*$/);
+    if (!m) continue;
+    if (section === 'topics') topics.add(m[1]);
+    else if (section === 'aliases' && m[2]) aliases.set(m[1], m[2]);
+  }
+  return { topics, aliases };
+}
+
+/**
+ * Whether a proposed tag is usable. An alias resolves to its canonical tag — that is what aliases
+ * are for, and rejecting one would orphan the rename they exist to make possible.
+ *
+ * A tag that does not exist is NOT invented. Adding one is a pull request, and the five minutes of
+ * friction is the whole point: without it a vocabulary grows three spellings of one idea, each
+ * silently returning a third of the results.
+ */
+export function checkTags(tags, taxonomy) {
+  const ok = [];
+  const missing = [];
+  for (const t of tags ?? []) {
+    if (taxonomy.topics.has(t)) ok.push(t);
+    else if (taxonomy.aliases.has(t)) ok.push(taxonomy.aliases.get(t));
+    else missing.push(t);
+  }
+  return { ok: [...new Set(ok)], missing };
+}
+
+/**
+ * Assemble one thread from the rows that belong to it.
+ *
+ * SEVERAL NOTES MAY MAP TO ONE THREAD. The batch is flat across topics precisely so three bullets
+ * under three topics can be recognised as one piece of reasoning, and the thread destination is
+ * where that shows up. Each contributing note is marked individually once the thread saves.
+ *
+ * @returns {ok:true, ...} to save, {park:true, ...} for another repo, or {shortlist:true, ...}
+ */
+export function planThread(thread, { taxonomy, resolvedRepo, singletonExempt = false } = {}) {
+  const rows = thread.rows ?? [];
+  if (!rows.length) return { ok: false, reason: 'no contributing notes' };
+
+  // A thread file is a COMMIT into a context repo, and the rule that keeps taxonomy validation
+  // meaningful is that such a commit goes through the owning project's own session. So a thread
+  // bound elsewhere is parked, never written — this session does not commit to that repository.
+  const target = thread.targetRepo ?? resolvedRepo ?? null;
+  if (target && resolvedRepo && target !== resolvedRepo) {
+    return {
+      park: true, target, title: thread.title,
+      reason: `this thread is bound for ${target}, not the resolved repo ${resolvedRepo}. A thread file is a commit into that repository, and it goes through that project's own session — which is where taxonomy.yml validation lives. Parked in handoff/ instead.`,
+      rowIds: rows.map((r) => r.id),
+    };
+  }
+
+  const status = thread.status ?? 'active';
+  if (!THREAD_STATUSES.includes(status)) {
+    return { ok: false, reason: `thread status "${status}" is not one of ${THREAD_STATUSES.join(' | ')} — triage does not introduce a new status value, and one added here would need the enum, the template and save-thread all changed to route a note` };
+  }
+
+  // Singletons are exempt from front matter entirely, as taxonomy.yml already defines. Everything
+  // in threads/ is NOT exempt, so this is the narrow case rather than an escape hatch.
+  const tagCheck = singletonExempt ? { ok: [], missing: [] } : checkTags(thread.topics, taxonomy);
+  if (tagCheck.missing.length) {
+    return {
+      shortlist: true, title: thread.title, missingTags: tagCheck.missing,
+      reason: `the tag(s) ${tagCheck.missing.map((t) => `"${t}"`).join(', ')} are not in taxonomy.yml. Adding a tag is a pull request, not something invented inline — otherwise the vocabulary grows three spellings of one idea, each silently returning a third of the results.`,
+      rowIds: rows.map((r) => r.id),
+    };
+  }
+  if (!singletonExempt && !tagCheck.ok.length) {
+    return { shortlist: true, title: thread.title, reason: 'no taxonomy tag was proposed for this thread', rowIds: rows.map((r) => r.id) };
+  }
+
+  // The note's OWN WORDS, not a paraphrase of them, plus provenance in the same shape every other
+  // destination uses. Body only: nothing here ever reaches a front-matter value, which is what
+  // keeps an angle bracket from being read as a tag and silently dropping the field.
+  const body = rows.map((r) => {
+    const prov = provenance({ topic: r.topic, capturedAt: r.capturedAt ?? r.date ?? null, topicUrl: r.topicUrl ?? null });
+    return `${r.note}\n\n_${prov}_`;
+  }).join('\n\n');
+
+  return {
+    ok: true,
+    skill: 'context-kit-core:save-thread',
+    title: thread.title,
+    repo: target,
+    status,
+    topics: tagCheck.ok,
+    rowIds: rows.map((r) => r.id),
+    body,
+  };
+}
+
+/**
+ * Group a batch's thread rows into threads and plan each one. Rows declare which thread they join
+ * via `thread` (a key) — one thread per topic of reasoning, not one thread per bullet, and not a
+ * dumping ground either.
+ */
+export function planThreads(batch, { taxonomy, resolvedRepo } = {}) {
+  const groups = new Map();
+  for (const row of batch.table) {
+    if (row.destination !== 'thread') continue;
+    const key = row.thread ?? row.threadTitle ?? row.topic;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key, title: row.threadTitle ?? row.title ?? key,
+        topics: row.topics ?? [], status: row.status, targetRepo: row.targetRepo ?? null,
+        singletonExempt: Boolean(row.singletonExempt), rows: [],
+      });
+    }
+    groups.get(key).rows.push(row);
+  }
+  const saves = []; const parked = []; const shortlisted = []; const refused = [];
+  for (const t of groups.values()) {
+    const p = planThread(t, { taxonomy, resolvedRepo, singletonExempt: t.singletonExempt });
+    if (p.ok) saves.push(p);
+    else if (p.park) parked.push(p);
+    else if (p.shortlist) shortlisted.push(p);
+    else refused.push({ title: t.title, ...p });
+  }
+  return { saves, parked, shortlisted, refused };
+}
+
 /** Which sensitive terms a piece of text hits. Case-insensitive SUBSTRING matching. */
 export function sensitiveHits(text, terms) {
   const hay = String(text ?? '').toLowerCase();
@@ -896,6 +1050,7 @@ function main(argv) {
   console.error('       triage-notes.mjs propose [checkout] --batch [file.json] [--repos f] [--classify|--approve] [--expand] [--only ids]');
   console.error('       triage-notes.mjs github  [checkout] --batch [evaluated.json] [--body-dir d] [--unreachable owner/repo,...]');
   console.error('       triage-notes.mjs notion  [checkout] --batch [evaluated.json] [--no-connector]');
+  console.error('       triage-notes.mjs threads [checkout] --batch [evaluated.json]');
     process.exit(2);
   }
 
@@ -1176,6 +1331,53 @@ function main(argv) {
     console.log(`  state.notion, which is what stops a run in one project writing into another's.`);
     console.log(`\n  Advance Last triaged immediately after each successful row. A failure keeps its old`);
     console.log(`  marker, is named in the run summary, and the batch continues.`);
+    return;
+  }
+
+  if (cmd === 'threads') {
+    if (cfg.status !== 'configured') {
+      console.error(`triage-notes — ${cfg.status}`); console.error(`  ${cfg.says}`); process.exit(1);
+    }
+    const batchFile = flagValue(argv, 'batch');
+    if (!batchFile || !existsSync(batchFile)) die('threads needs --batch [file.json] — the evaluated batch from `propose --json`');
+    let batch;
+    try { batch = readJson(batchFile); }
+    catch (e) { die(`${batchFile} is not valid JSON (${e.message})`); }
+    if (!batch.table) die(`${batchFile} does not look like an evaluated batch (no "table")`);
+
+    // The taxonomy of the RESOLVED repo. A tag is checked against the vocabulary of the repo the
+    // thread would land in, never against some other project's.
+    const taxFile = join(root, 'taxonomy.yml');
+    if (!existsSync(taxFile)) die(`no taxonomy.yml in ${root} — a thread's topics: must come from a controlled vocabulary, and there is none here to check against`);
+    const taxonomy = parseTaxonomy(readFileSync(taxFile, 'utf8'));
+    const resolvedRepo = readJson(cfg.file).contextRepo ?? null;
+
+    const out = planThreads(batch, { taxonomy, resolvedRepo });
+    if (asJson) { console.log(JSON.stringify({ ...out, taxonomyTags: taxonomy.topics.size }, null, 2)); return; }
+
+    console.log(`triage-notes — ${out.saves.length} thread(s) to save, ${out.parked.length} parked, ${out.shortlisted.length} shortlisted`);
+    console.log(`  taxonomy: ${taxonomy.topics.size} tag(s), ${taxonomy.aliases.size} alias(es) from ${taxFile}`);
+    for (const s of out.saves) {
+      console.log(`\n    "${s.title}" -> ${s.skill}   (${s.repo})`);
+      console.log(`      status  ${s.status}      topics  ${s.topics.join(', ')}`);
+      console.log(`      from rows ${s.rowIds.join(', ')} — several notes, one thread, and each row marked separately once it saves`);
+    }
+    if (out.parked.length) {
+      console.log(`\n  Parked, NOT written (${out.parked.length}):`);
+      for (const p of out.parked) console.log(`    "${p.title}" -> ${p.target}: ${p.reason}`);
+    }
+    if (out.shortlisted.length) {
+      console.log(`\n  Shortlisted (${out.shortlisted.length}):`);
+      for (const s of out.shortlisted) console.log(`    "${s.title}": ${s.reason}`);
+    }
+    if (out.refused.length) {
+      console.log(`\n  Refused (${out.refused.length}):`);
+      for (const r of out.refused) console.log(`    "${r.title}": ${r.reason}`);
+    }
+    console.log(`\n  save-thread owns the template, the front matter, the dated filename, the taxonomy`);
+    console.log(`  validation and the index. Pass it the material and let it write — a second`);
+    console.log(`  implementation would drift, and an invented topic tag is exactly what validation`);
+    console.log(`  exists to catch. Advance Last triaged after each save; a failure keeps its marker.`);
     return;
   }
 

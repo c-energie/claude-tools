@@ -300,7 +300,46 @@ the batch continues.
 If one of these skills needs a new parameter, that is a change to **`context-notion`**, made and
 versioned there — not worked around here.
 
-## 11. The two datetime markers
+## 11. Write the threads — through save-thread
+
+**Triage never writes a thread file.** Writing one is not "create a markdown file": it carries
+front matter from a template, its `topics:` must already exist in `taxonomy.yml`, its filename
+must be dated `YYYY-MM-DD-` and end `.md` or the session-start hook will not find it, and the
+index has to stay in step. `context-kit-core:save-thread` owns all of that.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" threads "$ROOT" --batch evaluated.json
+```
+
+The script assembles the material and checks the boundaries; **you call `save-thread`**.
+
+**Several notes may be one thread.** The batch is flat across topics precisely so three bullets
+under three topics can be recognised as one piece of reasoning — set the same `thread` key on each
+row. One topic of reasoning per file, though: a thread is not a dumping ground. Each contributing
+note is marked individually once the thread saves.
+
+**Tags come from `taxonomy.yml` only.** An alias resolves to its canonical tag. A tag that does not
+exist **shortlists**, naming the tag: adding one is a pull request, and that friction is the point
+— without it a vocabulary grows three spellings of one idea, each silently returning a third of
+the results. Do not invent a tag inline to get a note routed.
+
+**No new vocabulary enters through this route.** Status is `active`, `settled` or `archived`. A
+`seed` status and a `target:` field were considered and dropped: a Mind Palace topic page already
+is that, with a rolling summary maintained for free.
+
+**A thread bound for another context repo is parked, never written.** A thread file is a commit
+into that repository, and it goes through that project's own session — which is where
+`taxonomy.yml` validation lives. It becomes a `handoff/` item; report it with the target named, so
+the user knows something is waiting.
+
+The note's own words go into the **body**, with a provenance line. Nothing triage produces ever
+becomes a front-matter value — an angle bracket there is read as a tag and the field is dropped
+**silently**, which is one of the marketplace's documented silent failures.
+
+If `save-thread`, the template, `taxonomy.yml` or the status enum needs changing, that is a change
+to **`context-kit-core`**, made there.
+
+## 12. The two datetime markers
 
 `Last triaged` and `Shortlisted` on each topic row are **datetimes, not dates**, and must stay
 that way. A run that fails half way is resumed by re-running it, and only a timestamp separates
