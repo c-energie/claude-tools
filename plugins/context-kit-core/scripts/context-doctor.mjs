@@ -23,6 +23,9 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, basename } from 'node:path';
+// Imported rather than restated: the audience vocabulary is shared with a thread's front-matter,
+// and a copy here would disagree with the roster the first time one of them gained a value.
+import { AUDIENCES } from './teaching-workspace.mjs';
 
 const OPTIONS = ['json', 'fix', 'include', 'today'];
 // In step with hooks/load-context.sh, scripts/context-repo.sh and scripts/link-context.mjs.
@@ -226,6 +229,59 @@ if (ctx) {
           `"${provider}" declares ${pairs.length} connections. Multiple owners is a GitHub fact `
           + '(a fine-grained PAT has one resource owner); for other providers two usually means '
           + 'two workspaces have been merged into one project by mistake.');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------- teaching workspaces
+
+  // Three ways a `teaching` declaration goes stale without announcing itself. All three are
+  // REPORTS and none carries a `fix`: this tool only ever applies a fix whose correct value it
+  // can DERIVE, and none of these has one. A slug with no directory could mean the workspace was
+  // deleted or that the slug was mistyped, and the two repairs are opposites — creating an empty
+  // workspace, or correcting a key. Guessing would be worse than saying nothing.
+  //
+  // Reads the declaration only. It does not depend on the scaffolder having written it, and must
+  // keep working against a block somebody typed by hand.
+  if (ctx.teaching !== undefined && ctx.teaching !== null) {
+    if (typeof ctx.teaching !== 'object' || Array.isArray(ctx.teaching)) {
+      add('err', 'teaching', '"teaching" is present but is not an object — no workspace in it is declared, and teach-workspace reports none');
+    } else {
+      // `_`-prefixed keys are comments, the convention this file already uses for
+      // `_comment_include`. Skipped rather than reported, so the reasoning can live beside the
+      // block it explains.
+      for (const [slug, entry] of Object.entries(ctx.teaching).filter(([k]) => !k.startsWith('_'))) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          add('err', 'teaching', `"teaching.${slug}" is not an object — it declares neither a mission nor an audience`);
+          continue;
+        }
+        // The parent is fixed at `teaching/` deliberately: it is what keeps teach's `lessons/`
+        // from colliding with assistants/[role]/LESSONS.md, two unrelated senses of one word.
+        if (!existsSync(join(ROOT, 'teaching', slug))) {
+          add('warn', 'teaching',
+            `"teaching.${slug}" is declared but there is no teaching/${slug}/ directory. Either the `
+            + 'workspace was deleted and the declaration outlived it, or the slug is mistyped — '
+            + 'the fixes are opposite, so this is not repaired for you.');
+        }
+        if (typeof entry.mission !== 'string' || !entry.mission) {
+          add('warn', 'teaching', `"teaching.${slug}" declares no mission path`);
+        } else if (!existsSync(join(ROOT, entry.mission))) {
+          add('warn', 'teaching',
+            `"teaching.${slug}" declares mission "${entry.mission}", which does not resolve. `
+            + 'Expected while a workspace is prepared but not yet started — teach writes MISSION.md '
+            + 'at the first session — and a real defect at any point after that.');
+        }
+        // ABSENT IS ABSENT, never a default, and never a finding. A workspace that declares no
+        // audience has not been classified; reporting that as a defect would push people to
+        // supply a value to silence the check, which is exactly how a repo ends up full of
+        // audiences nobody chose. Only a value OUTSIDE the vocabulary is wrong.
+        if (entry.audience !== undefined && !AUDIENCES.includes(entry.audience)) {
+          add('warn', 'teaching',
+            `"teaching.${slug}" declares audience ${JSON.stringify(entry.audience)}, which is not one of `
+            + `${AUDIENCES.join(' / ')} — the same vocabulary a thread's front-matter uses. It is `
+            + 'rendered as written and never corrected: a typo you can see costs seconds, one this '
+            + 'swallowed would leave the workspace misclassified forever.');
+        }
       }
     }
   }

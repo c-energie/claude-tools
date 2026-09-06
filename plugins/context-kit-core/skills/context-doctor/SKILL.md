@@ -56,6 +56,19 @@ If the run reports fixable findings, **ask before applying them**:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/context-doctor.mjs" "$ROOT" --fix
 ```
 
+The three `teaching` findings are a good illustration of where that line falls, and none of them
+is fixable:
+
+- a declared slug with no `teaching/[slug]/` directory — the workspace may have been deleted, or
+  the slug may be mistyped, and those two repairs are opposites;
+- a `mission` path that does not resolve — expected while a workspace is prepared but not yet
+  started, since `teach` writes `MISSION.md` at the first session, and a real defect after that;
+- an `audience` outside `working` / `team` / `external`.
+
+An **absent** audience is not a finding at all. Absent is absent: a workspace that declares none
+has not been classified, and reporting it would push people to supply a value to silence the
+check — which is how a repo ends up full of audiences nobody chose.
+
 `--fix` writes **only JSON keys, and only where the correct value is derivable** from something
 already in the repo — a plugin id that resolves to exactly one real plugin, or a
 `PROJECT_CONTEXT_REPO` that disagrees with the `contextRepo` sitting next to it. It never
