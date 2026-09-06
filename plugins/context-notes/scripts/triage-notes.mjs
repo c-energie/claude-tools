@@ -35,7 +35,7 @@
 // the time it was gathered so that "resolved to a thread" and "resolved to a thread because the
 // list was stale" stay distinguishable.
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 // In step with hooks/load-context.sh, context-repo.sh and context-kit-core's link-context.mjs.
@@ -184,8 +184,24 @@ export function validate(notes) {
     if (typeof t !== 'string' || !t) errors.push(`state.notes.sensitiveTerms[${i}] is not a non-empty string`);
   });
 
+  // -- projects (OPTIONAL). Keyed by REPOSITORY and carrying a board name only, so it is not the
+  // topic map returning by another door: it cannot decide where a note GOES, only which board an
+  // issue lands on once exact matching has already decided the repository. Absent is normal — not
+  // every repository has a board, and a missing one omits --project rather than failing.
+  const projects = notes.projects;
+  if (projects !== undefined) {
+    if (typeof projects !== 'object' || projects === null || Array.isArray(projects)) {
+      errors.push('state.notes.projects is not an object of "owner/repo" to project name');
+    } else {
+      for (const [repo, board] of Object.entries(projects).filter(([k]) => !isComment(k))) {
+        if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) errors.push(`state.notes.projects key "${repo}" is not an owner/repo name`);
+        if (typeof board !== 'string' && typeof board !== 'number') errors.push(`state.notes.projects["${repo}"] is not a project name or number`);
+      }
+    }
+  }
+
   for (const k of realKeys(notes)) {
-    if (!['mindPalace', 'organisations', 'sensitiveTerms'].includes(k)) {
+    if (!['mindPalace', 'organisations', 'sensitiveTerms', 'projects'].includes(k)) {
       errors.push(`state.notes has an unexpected key "${k}" — prefix it with _ if it is a comment`);
     }
   }
@@ -614,6 +630,132 @@ export function renderPlan(batch) {
   return lines.join('\n');
 }
 
+// ---------------------------------------------------------------- GitHub issues
+//
+// The first destination triage can actually write, and the one that has to be got right: an issue
+// body in a shared repository is visible to the team and its history cannot be rewritten. A note
+// routed to the wrong repository is not an inconvenience, it is a disclosure. Every guard below
+// exists for that sentence.
+//
+// THE SCRIPT FORMATS, THE MODEL EXECUTES. This plans the exact `gh issue create` invocation and
+// builds the body from a fixed template; the model runs it. Shelling out to GitHub from here
+// would make the test suite depend on a network and a credential, and `gh` is already how the
+// rest of this repo's tooling authenticates.
+
+export const TITLE_MAX = 120;
+
+/**
+ * The issue body. A fixed template so that every issue triage opens has the same shape, rather
+ * than one composed ad hoc per row.
+ *
+ * The note goes in VERBATIM — the user's own phrasing, not a paraphrase of it. It is written to a
+ * body FILE rather than passed as `--body`, because note text is arbitrary user prose and shell
+ * quoting of arbitrary prose is a bug waiting for the first backtick.
+ */
+export function issueBody({ note, topic, capturedAt, topicUrl }) {
+  const lines = [String(note ?? '')];
+  lines.push('');
+  lines.push('---');
+  // Provenance, so a reader can find where the idea came from rather than guessing.
+  lines.push(`Captured as a note under **${topic}** in the Mind Palace on ${capturedAt ?? 'an unrecorded date'}`
+    + `${topicUrl ? ` — ${topicUrl}` : ''}.`);
+  lines.push('Opened by `triage-notes`. The note itself is unchanged and still lives on its topic page.');
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * The `gh issue create` invocation for one approved row, as an argv array. Returns
+ * `{ok: false, reason}` for a row that must not be written, rather than a command that would be.
+ *
+ * @param projects  {"owner/repo": "board name or number"} — optional, and absent is normal
+ */
+export function planIssue(row, { projects = {}, unreachable = [], bodyFile = null } = {}) {
+  if (row.destination !== 'issue') return { ok: false, reason: `destination is ${row.destination}, not issue` };
+
+  // A note whose repository cannot be named must never reach this step: no issue is opened on a
+  // guess. #13 shortlists it; this refuses it again, because the cost of being wrong is a write.
+  if (!row.target) return { ok: false, reason: 'no repository could be named — no issue is opened on a guess', shortlist: true };
+
+  // Shared destinations are NEVER written directly from a personal session. They shortlist, or
+  // park in handoff/ with kind: issue once that contract lands.
+  if (row.visibility === 'shared') {
+    return { ok: false, reason: `${row.target} is in an organisation flagged shared — another person sees it first, so this shortlists or goes to handoff/ rather than being written`, shortlist: true };
+  }
+
+  if (unreachable.includes(row.target)) {
+    // Named by REPOSITORY, because fine-grained tokens carry an explicit repository list and so
+    // fail per repository rather than per organisation. A token scoped too narrowly would
+    // otherwise look like a classifier problem rather than a credential one.
+    return { ok: false, reason: `${row.target} could not be reached with the current credential — widen the token that covers ${row.target.split('/')[0]}, or hand this off`, shortlist: true };
+  }
+
+  const title = String(row.title ?? '').trim();
+  if (!title) return { ok: false, reason: 'the issue title is empty — the issue list has to stay readable, so a row needs a one-line statement of the work' };
+  if (title.length > TITLE_MAX) return { ok: false, reason: `the issue title is ${title.length} characters (max ${TITLE_MAX}) — it is a title, not the note` };
+
+  const project = projects[row.target] ?? null;
+  const argv = ['issue', 'create', '--repo', row.target, '--title', title, '--body-file', bodyFile ?? `[body file for row ${row.id}]`];
+  // A repository with no project creates the issue anyway and says so. Not every repository has
+  // a board, and a missing one must not block the write.
+  if (project) argv.push('--project', String(project));
+
+  return {
+    ok: true,
+    id: row.id,
+    repo: row.target,
+    title,
+    argv,
+    project,
+    projectSkipped: project ? null : `${row.target} has no project configured in state.notes.projects, so --project was omitted and the issue is not on a board`,
+    body: issueBody({
+      note: row.note, topic: row.topic,
+      capturedAt: row.capturedAt ?? row.date ?? null, topicUrl: row.topicUrl ?? null,
+    }),
+  };
+}
+
+/**
+ * One command per approved `issue` row, in TABLE ORDER, so that a partial failure is attributable
+ * to a specific row rather than to "somewhere in the batch".
+ */
+export function planIssues(batch, opts = {}) {
+  const plans = [];
+  const refused = [];
+  for (const row of batch.table) {
+    if (row.destination !== 'issue') continue;
+    const p = planIssue(row, opts);
+    if (p.ok) plans.push(p); else refused.push({ id: row.id, topic: row.topic, ...p });
+  }
+  return { plans, refused };
+}
+
+/**
+ * Move every row bound for an unreachable repository onto the shortlist, BEFORE the batch is
+ * approved. Checked once per distinct destination repository: discovering a too-narrow token half
+ * way through a batch is how a run ends up half-written.
+ *
+ * Rows for other repositories in the same batch are untouched — one bad repository does not
+ * abandon the batch.
+ */
+export function applyReachability(batch, unreachable) {
+  const bad = new Set(unreachable ?? []);
+  const rows = batch.rows.map((r) => {
+    if (r.destination !== 'issue' || !r.target || !bad.has(r.target)) return r;
+    const reason = `${r.target} could not be reached with the current credential — the token covering ${r.target.split('/')[0]} does not list it`;
+    return {
+      ...r,
+      triggers: [...r.triggers, 'unreachableRepo'],
+      shortlistReasons: [...r.shortlistReasons, reason],
+      shortlisted: true,
+    };
+  });
+  return { ...batch, rows, table: rows.filter((r) => !r.shortlisted), shortlist: rows.filter((r) => r.shortlisted) };
+}
+
+/** The distinct destination repositories in a batch — what to check reachability against. */
+export const destinationRepos = (batch) =>
+  [...new Set(batch.rows.filter((r) => r.destination === 'issue' && r.target).map((r) => r.target))].sort();
+
 /** Which sensitive terms a piece of text hits. Case-insensitive SUBSTRING matching. */
 export function sensitiveHits(text, terms) {
   const hay = String(text ?? '').toLowerCase();
@@ -623,7 +765,7 @@ export function sensitiveHits(text, terms) {
 // ---------------------------------------------------------------- CLI
 
 const die = (m) => { console.error(`triage-notes.mjs: ${m}`); process.exit(2); };
-const VALUED = ['repos', 'topics', 'now', 'pages', 'batch', 'only'];
+const VALUED = ['repos', 'topics', 'now', 'pages', 'batch', 'only', 'unreachable', 'body-dir'];
 const flagValue = (argv, name) => {
   const eq = argv.find((a) => a.startsWith(`--${name}=`));
   if (eq) return eq.slice(name.length + 3);
@@ -647,6 +789,7 @@ function main(argv) {
     console.error('       triage-notes.mjs resolve [checkout] --repos [file.json] [--topics a,b,c] [--json] [--now ISO]');
   console.error('       triage-notes.mjs select  --pages [file.json] [--json]');
   console.error('       triage-notes.mjs propose [checkout] --batch [file.json] [--repos f] [--classify|--approve] [--expand] [--only ids]');
+  console.error('       triage-notes.mjs github  [checkout] --batch [evaluated.json] [--body-dir d] [--unreachable owner/repo,...]');
     process.exit(2);
   }
 
@@ -816,6 +959,69 @@ function main(argv) {
     console.log('  ONE approval covers the whole batch: twelve notes is one decision.');
     console.log('  Exactly one destination per note — a note carrying both rationale and a commitment');
     console.log('  gets one row, which is a known limitation and not a bug.');
+    return;
+  }
+
+  if (cmd === 'github') {
+    // Plans the `gh issue create` calls for an approved batch, and writes each body to a file so
+    // the model can pass --body-file. It does NOT run gh: the model does, one command per row, so
+    // a partial failure is attributable and the marker can be advanced per note.
+    if (cfg.status !== 'configured') {
+      console.error(`triage-notes — ${cfg.status}`); console.error(`  ${cfg.says}`); process.exit(1);
+    }
+    const batchFile = flagValue(argv, 'batch');
+    if (!batchFile || !existsSync(batchFile)) die('github needs --batch [file.json] — the evaluated batch from `propose --json`');
+    let batch;
+    try { batch = readJson(batchFile); }
+    catch (e) { die(`${batchFile} is not valid JSON (${e.message})`); }
+    if (!batch.table) die(`${batchFile} does not look like an evaluated batch (no "table") — pipe \`propose --json\` into it`);
+
+    const unreachableArg = flagValue(argv, 'unreachable');
+    const unreachable = unreachableArg ? unreachableArg.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    if (unreachable.length) batch = applyReachability(batch, unreachable);
+
+    const outDir = flagValue(argv, 'body-dir');
+    const projects = cfg.notes.projects ?? {};
+    const { plans, refused } = planIssues(batch, { projects, unreachable, bodyFile: null });
+
+    // Bodies are written to files rather than inlined: note text is arbitrary user prose, and
+    // shell quoting of arbitrary prose is a bug waiting for the first backtick.
+    for (const p of plans) {
+      if (outDir) {
+        const f = join(outDir, `issue-${p.id}.md`);
+        writeFileSync(f, p.body);
+        p.bodyFile = f;
+        p.argv[p.argv.indexOf('--body-file') + 1] = f;
+      }
+    }
+
+    if (asJson) { console.log(JSON.stringify({ repos: destinationRepos(batch), plans, refused }, null, 2)); return; }
+
+    const repos = destinationRepos(batch);
+    console.log(`triage-notes — ${plans.length} issue(s) to create across ${repos.length} repo(s)`);
+    console.log(`\n  CHECK REACHABILITY FIRST, once per repository, BEFORE approval:`);
+    for (const r of repos) console.log(`    gh repo view ${r} --json name  >/dev/null`);
+    console.log(`  Re-run with --unreachable "owner/repo,..." for any that fail. They shortlist by`);
+    console.log(`  NAME, because a fine-grained token lists repositories explicitly, so a too-narrow`);
+    console.log(`  token fails per repository — and would otherwise read as a classifier problem.`);
+
+    if (plans.length) {
+      console.log(`\n  Commands, in table order — run them one at a time and advance the marker after each:`);
+      for (const p of plans) {
+        console.log(`\n    # row ${p.id} -> ${p.repo}`);
+        console.log(`    gh ${p.argv.map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ')}`);
+        if (p.projectSkipped) console.log(`    # ${p.projectSkipped}`);
+      }
+    }
+    if (refused.length) {
+      console.log(`\n  Not written (${refused.length}):`);
+      for (const r of refused) console.log(`    row ${r.id} (${r.topic}): ${r.reason}`);
+    }
+    console.log(`\n  Advance Last triaged IMMEDIATELY after each creation, with the note's own`);
+    console.log(`  timestamp — a re-run after a failure must not open the same issue twice. A failed`);
+    console.log(`  creation keeps its old marker, is named in the run summary with the repository and`);
+    console.log(`  the gh error, and the batch CONTINUES: one bad repository does not abandon it.`);
+    console.log(`  Report every created issue's URL back, so what was written can be opened.`);
     return;
   }
 

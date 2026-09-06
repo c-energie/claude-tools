@@ -17,6 +17,7 @@ import {
   OPTOUT, REPOS_STALE_HOURS,
   collectNotes, selectNotes, sweep, parseNotionDatetime,
   evaluateBatch, renderTable, renderShortlist, renderPlan, shortlistTriggers, DESTINATIONS,
+  issueBody, planIssue, planIssues, applyReachability, destinationRepos, TITLE_MAX,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -703,4 +704,148 @@ test('exactly one destination per note — a row is one row', () => {
   const b = evaluateBatch([CLEAN], CLEAN_RES, NOTES);
   assert.equal(b.rows.length, 1);
   assert.equal(typeof b.rows[0].destination, 'string', 'not a list: the table stays flat and there is no partial-failure story');
+});
+
+// ---------------------------------------------------------------- GitHub issue creation
+//
+// The testable surface is the COMMAND PLAN and the BODY, not the execution: `gh` is invoked by
+// the model, and shelling out to GitHub in a unit test would make the suite depend on a network
+// and a credential.
+
+const PROJECTS = { 'c-energie/dev-hub': 'dev-hub board' };
+
+const ISSUE_ROW = {
+  id: '1', topic: 'dev-hub', note: 'Add a --dry-run flag to the catalogue writer',
+  destination: 'issue', target: 'c-energie/dev-hub', visibility: 'personal',
+  title: 'Add a --dry-run flag to the catalogue writer',
+  why: 'closes when a pull request merges, and the repository is named',
+  capturedAt: '2026-09-05', topicUrl: 'https://notion.so/topic-dev-hub',
+};
+
+test('the body renders the note VERBATIM, with no escaping damage', () => {
+  // Backticks, a line break and a quotation mark: the three things a --body shell argument
+  // mangles, which is why the plan uses --body-file.
+  const note = 'Use `--dry-run` before it "ships".\nSecond line, with a $VARIABLE and a \\backslash.';
+  const body = issueBody({ note, topic: 'dev-hub', capturedAt: '2026-09-05', topicUrl: 'https://notion.so/x' });
+  assert.ok(body.startsWith(note), 'the user\'s own phrasing, not a paraphrase of it');
+  assert.match(body, /\$VARIABLE/);
+  assert.match(body, /\\backslash/);
+  assert.match(body, /`--dry-run`/);
+});
+
+test('the provenance line names the topic, the capture date and the topic page link', () => {
+  const body = issueBody({ note: 'x', topic: 'dev-hub', capturedAt: '2026-09-05', topicUrl: 'https://notion.so/topic-dev-hub' });
+  assert.match(body, /dev-hub/);
+  assert.match(body, /2026-09-05/);
+  assert.match(body, /https:\/\/notion\.so\/topic-dev-hub/);
+  assert.match(body, /still lives on its topic page/, 'triage never deletes or edits a captured note');
+});
+
+test('a missing capture date says so rather than inventing one', () => {
+  assert.match(issueBody({ note: 'x', topic: 't' }), /an unrecorded date/);
+});
+
+test('an empty or whitespace-only title is rejected before a command is planned', () => {
+  for (const title of ['', '   ', undefined]) {
+    const p = planIssue({ ...ISSUE_ROW, title }, { projects: PROJECTS });
+    assert.equal(p.ok, false, `title ${JSON.stringify(title)} should be rejected`);
+    assert.match(p.reason, /title is empty/);
+  }
+});
+
+test('a title longer than the limit is rejected — it is a title, not the note', () => {
+  const p = planIssue({ ...ISSUE_ROW, title: 'x'.repeat(TITLE_MAX + 1) }, { projects: PROJECTS });
+  assert.equal(p.ok, false);
+  assert.match(p.reason, /characters \(max/);
+});
+
+test('the planned command carries --project when the repository has one', () => {
+  const p = planIssue(ISSUE_ROW, { projects: PROJECTS });
+  assert.equal(p.ok, true);
+  assert.deepEqual(p.argv.slice(0, 6), ['issue', 'create', '--repo', 'c-energie/dev-hub', '--title', ISSUE_ROW.title]);
+  assert.ok(p.argv.includes('--project'));
+  assert.equal(p.argv[p.argv.indexOf('--project') + 1], 'dev-hub board');
+  assert.equal(p.projectSkipped, null);
+  assert.ok(p.argv.includes('--body-file'), 'a body FILE, because note text is arbitrary prose');
+});
+
+test('a repository with no project creates the issue anyway and states the skip', () => {
+  const p = planIssue({ ...ISSUE_ROW, target: 'c-energie/doc-writer' }, { projects: PROJECTS });
+  assert.equal(p.ok, true, 'a missing board must not block the write');
+  assert.equal(p.argv.includes('--project'), false);
+  assert.match(p.projectSkipped, /no project configured/);
+});
+
+test('a shared destination NEVER produces a create command', () => {
+  const p = planIssue({ ...ISSUE_ROW, target: 'net-flex/website', visibility: 'shared' }, { projects: PROJECTS });
+  assert.equal(p.ok, false);
+  assert.equal(p.shortlist, true);
+  assert.match(p.reason, /flagged shared/);
+  assert.match(p.reason, /handoff/, 'shortlist or handoff, never a direct write from a personal session');
+});
+
+test('a row whose repository cannot be named never reaches a command', () => {
+  const p = planIssue({ ...ISSUE_ROW, target: null }, { projects: PROJECTS });
+  assert.equal(p.ok, false);
+  assert.equal(p.shortlist, true);
+  assert.match(p.reason, /no issue is opened on a guess/);
+});
+
+test('an unreachable repository shortlists BY NAME, so the credential to widen is obvious', () => {
+  const p = planIssue(ISSUE_ROW, { projects: PROJECTS, unreachable: ['c-energie/dev-hub'] });
+  assert.equal(p.ok, false);
+  assert.match(p.reason, /c-energie\/dev-hub could not be reached/);
+  assert.match(p.reason, /widen the token that covers c-energie/);
+});
+
+test('an unreachable repository moves ALL its rows to the shortlist and leaves others alone', () => {
+  const rows = [
+    ISSUE_ROW,
+    { ...ISSUE_ROW, id: '2', note: 'another dev-hub note' },
+    { ...ISSUE_ROW, id: '3', topic: 'doc-writer', target: 'c-energie/doc-writer', note: 'a doc-writer note' },
+  ];
+  const res = [
+    RES_REPO('dev-hub', 'c-energie/dev-hub', 'personal'),
+    RES_REPO('doc-writer', 'c-energie/doc-writer', 'personal'),
+  ];
+  const batch = applyReachability(evaluateBatch(rows, res, NOTES), ['c-energie/dev-hub']);
+  assert.deepEqual(batch.shortlist.map((r) => r.id).sort(), ['1', '2']);
+  assert.deepEqual(batch.table.map((r) => r.id), ['3'], 'one bad repository does not abandon the batch');
+  assert.ok(batch.shortlist[0].shortlistReasons.some((r) => /does not list it/.test(r)));
+});
+
+test('reachability is checked once per DISTINCT destination repository', () => {
+  const rows = [
+    ISSUE_ROW,
+    { ...ISSUE_ROW, id: '2', note: 'another dev-hub note' },
+    { ...ISSUE_ROW, id: '3', topic: 'doc-writer', target: 'c-energie/doc-writer', note: 'a doc-writer note' },
+  ];
+  const res = [RES_REPO('dev-hub', 'c-energie/dev-hub', 'personal'), RES_REPO('doc-writer', 'c-energie/doc-writer', 'personal')];
+  assert.deepEqual(destinationRepos(evaluateBatch(rows, res, NOTES)), ['c-energie/dev-hub', 'c-energie/doc-writer']);
+});
+
+test('the plan is one command per row, in table order, so a failure is attributable', () => {
+  const rows = [
+    { ...ISSUE_ROW, id: 'a' },
+    { ...ISSUE_ROW, id: 'b', note: 'second note', title: 'Second' },
+    { id: 'c', topic: 'IP', note: 'reasoning', destination: 'thread', target: null, why: 'a future reader needs it' },
+  ];
+  const res = [RES_REPO('dev-hub', 'c-energie/dev-hub', 'personal'), RES_THREAD('IP')];
+  const { plans } = planIssues(evaluateBatch(rows, res, NOTES), { projects: PROJECTS });
+  assert.deepEqual(plans.map((p) => p.id), ['a', 'b'], 'one per issue row, in order; non-issue rows are not planned here');
+});
+
+test('a non-issue row is never planned as one', () => {
+  const p = planIssue({ ...ISSUE_ROW, destination: 'action' }, { projects: PROJECTS });
+  assert.equal(p.ok, false);
+  assert.match(p.reason, /not issue/);
+});
+
+test('the optional projects map validates, and is keyed by repository not by topic', () => {
+  assert.deepEqual(validate({ ...NOTES, projects: { 'c-energie/dev-hub': 'Board', 'net-flex/website': 3 } }), []);
+  const bad = validate({ ...NOTES, projects: { 'dev-hub': 'Board' } });
+  assert.ok(bad.some((e) => /is not an owner\/repo name/.test(e)),
+    'keyed by repository, so it cannot decide where a note goes — only which board an issue lands on');
+  assert.ok(validate({ ...NOTES, projects: [] }).some((e) => /not an object/.test(e)));
+  assert.deepEqual(validate({ ...NOTES }), [], 'and it is optional: absent is normal');
 });

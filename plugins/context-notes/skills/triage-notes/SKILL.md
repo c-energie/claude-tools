@@ -194,7 +194,59 @@ read and a stale-copy failure mode to something small enough to read on screen.
 **One approval covers the batch** — twelve notes is one decision. On approval, print the plan back
 with `--approve` so what was agreed is on the record before anything is written.
 
-## 9. The two datetime markers
+## 9. Write the GitHub issues
+
+**Read this section before opening anything.** An issue body in a shared repository is visible to
+the team and its history cannot be rewritten. A note routed to the wrong repository is not an
+inconvenience, it is a disclosure.
+
+### Before approval: check you can reach each repository
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" github "$ROOT" --batch evaluated.json --body-dir "$(mktemp -d)"
+```
+
+It prints one `gh repo view` probe per **distinct** destination repository. Run them **before the
+batch is approved** — a token scoped too narrowly discovered half way through a batch is how a run
+ends up half-written. Re-run with `--unreachable "owner/repo,…"` for any that fail; those rows
+shortlist, and **the reason names the repository**, because a fine-grained token lists
+repositories explicitly and so fails per repository rather than per organisation. Without the
+name, a too-narrow credential reads as a classifier problem.
+
+### Then run the planned commands, one at a time
+
+The script plans each `gh issue create` and writes each body to a file. **You run them.** One
+command per row, in table order, so a partial failure is attributable to a specific row.
+
+- **`--body-file`, never `--body`.** Note text is arbitrary user prose; shell quoting of arbitrary
+  prose is a bug waiting for the first backtick.
+- **The body carries the note verbatim** plus a provenance line — topic, capture date, link back
+  to the Mind Palace page. The template is the script's, so every issue triage opens has the same
+  shape.
+- **The title is yours**: a short statement of the work, so the issue list stays readable. Not the
+  raw bullet. The script rejects an empty one.
+- **`--project` is omitted when the repository has none**, and the run says the project was
+  skipped. Not an error — not every repository has a board.
+
+### After each creation
+
+**Advance `Last triaged` immediately**, with the note's own timestamp. A re-run after a failure
+must not open the same issue twice.
+
+**A failed creation is non-fatal.** The note keeps its old marker so it is proposed again next
+run, the failure is named in the run summary with the repository and the `gh` error, and the batch
+**continues** — one bad repository does not abandon it.
+
+**Report every created issue's URL back**, so what was just written can be opened.
+
+### What never gets written here
+
+A row whose repository could not be named, and a row whose destination is in an organisation
+flagged `shared`. Both shortlist — the shared one goes to `handoff/` with `kind: issue` and a
+`repo:` field once that contract lands. A personal session does not write into work somebody else
+owns.
+
+## 10. The two datetime markers
 
 `Last triaged` and `Shortlisted` on each topic row are **datetimes, not dates**, and must stay
 that way. A run that fails half way is resumed by re-running it, and only a timestamp separates

@@ -23,6 +23,7 @@ node scripts/triage-notes.mjs config "$ROOT" --json
 node scripts/triage-notes.mjs resolve "$ROOT" --repos repos.json --topics "dev-hub,IP"
 node scripts/triage-notes.mjs select  --pages pages.json                # new notes per topic, offline
 node scripts/triage-notes.mjs propose "$ROOT" --batch b.json --classify   # table + shortlist, writes nothing
+node scripts/triage-notes.mjs github  "$ROOT" --batch evaluated.json      # plan gh issue create, runs nothing
 node --test scripts/triage-notes.test.mjs                          # from the plugin directory
 node ../context-kit-core/scripts/check-plugin.mjs .                # before any commit
 ```
@@ -91,6 +92,22 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
   `ambiguous` skips step one entirely, so the six-destination test is a five-destination test for
   most topics. Without the gate, a note under a repository-less topic gets argued into an issue
   with nowhere to go.
+- **A GitHub issue is the one write whose history cannot be rewritten.** An issue body in a
+  shared repository is visible to the team, so a note routed to the wrong repository is a
+  disclosure rather than an inconvenience. Three guards follow from that and none is optional:
+  reachability is checked once per distinct destination repository BEFORE approval and shortlists
+  by REPOSITORY NAME (a fine-grained token lists repositories explicitly, so a too-narrow one
+  fails per repository and would otherwise read as a classifier problem); a shared destination is
+  never written directly from a personal session; and a row whose repository cannot be named is
+  refused rather than opened on a guess.
+- **The script formats, the model executes.** `gh issue create` is planned here and run by the
+  model, one command per row in table order, so a partial failure is attributable and the marker
+  can advance per note. `--body-file` and never `--body`: note text is arbitrary user prose, and
+  shell quoting of arbitrary prose is a bug waiting for the first backtick.
+- **`state.notes.projects` is OPTIONAL and keyed by REPOSITORY, not by topic.** It carries a board
+  name only, so it is not the topic map returning by another door: it cannot decide where a note
+  goes, only which board an issue lands on once exact matching has already chosen the repository.
+  Absent omits `--project` and says the board was skipped, which is not an error.
 - **`Last triaged` and `Shortlisted` are DATETIMES, not dates.** A run that fails half way is
   resumed by re-running, and only a timestamp separates notes already written from notes not yet
   reached; date granularity would re-propose everything written earlier the same day. Notion has
