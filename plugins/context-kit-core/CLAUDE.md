@@ -35,6 +35,8 @@ node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every
 node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
 node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not yet distilled
 node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion
+node scripts/teaching-workspace.mjs resolve --json               # which context repo, or WHY not (no network)
+node scripts/teaching-workspace.mjs roster "$ROOT"                # the teaching workspaces it DECLARES (--json)
 pwsh scripts/Start-ContextSession.ps1 -DryRun    # menu over ~/.context; -Shortcut installs a Desktop launcher
 bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux (--shortcut writes .desktop/.command)
 ```

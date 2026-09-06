@@ -189,6 +189,7 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 | `assistant-lesson` | 🔒 Record a transferable lesson into `LESSONS.md`, abstracted at write time |
 | `supervisor-sweep` | 🔒 Distil role lessons across every included project into a supervisor thread |
 | `supervisor-distil` | 🔒 Promote supervisor threads into durable doctrine and queue it to each project |
+| `teach-workspace` | 🔒 List the teaching workspaces a context repo declares, and prepare a new one for `teach` to work in (never self-triggers) |
 | `memory-triage` | 🔒 Drain Claude's own per-directory memory into the right layer — personal, project, role or local |
 | `assistant-contract` | _(hidden)_ The four-file contract behind role assistants, and why each rule exists |
 | `context-access` | _(hidden)_ The GitHub-API route sandboxes use, and the rules that stop an API write truncating a file |
