@@ -25,6 +25,8 @@ bash scripts/plugin-repo.sh --plugin context-kit-core   # ...or one plugin's own
 node scripts/list-plugins.mjs "$ROOT" --brief   # the plugin roster, read from the checkout — never hand-written
 node scripts/list-plugins.mjs "$ROOT"           # ...plus each plugin's skills (--json)
 node scripts/dates.mjs today
+node scripts/json-block.mjs entries "$CTX/context.json"                # the top-level keys, in file order
+node scripts/json-block.mjs set "$CTX/context.json" teaching '{...}'   # PLAN one block; --write applies it
 node scripts/init-context.mjs owner/repo            # PLAN a new context repo (+ the second brain, once); --yes does it
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
 node scripts/link-context.mjs owner/repo --threads context   # ...and route its threads off this repo
