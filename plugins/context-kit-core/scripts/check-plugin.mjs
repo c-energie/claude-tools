@@ -65,7 +65,14 @@ if (marketplace && manifest) {
 // ---------------------------------------------------------------- hooks
 const hooks = readJsonOptional('hooks/hooks.json');
 if (hooks) {
-  const commands = JSON.stringify(hooks).match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"'\s]+/g) ?? [];
+  // The class must exclude BACKSLASH as well as the quotes. hooks.json quotes the path
+  // (`bash "${CLAUDE_PLUGIN_ROOT}/hooks/load-context.sh"`), and JSON.stringify re-escapes that
+  // inner quote as \" — so a class that stops at " but admits \ captures the trailing backslash
+  // and the path becomes `hooks/load-context.sh\`. On Windows \ is a path separator, so join()
+  // normalised it away and the check passed; on Linux it is an ordinary filename character and
+  // the same manifest reported both of core's hooks as missing files. Invisible for as long as
+  // this only ran on Windows, and found the first time it ran in a Linux container.
+  const commands = JSON.stringify(hooks).match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"'\s\\]+/g) ?? [];
   for (const ref of commands) {
     const rel = ref.replace('${CLAUDE_PLUGIN_ROOT}/', '');
     if (!existsSync(join(root, rel))) err('hooks/hooks.json', `references missing file \`${rel}\``);
@@ -118,7 +125,10 @@ if (!existsSync(skillsDir)) {
         + 'nor gated by an explicit "ask the user before pushing" step — one or the other is required');
     }
 
-    for (const ref of text.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"'`\s)]+/g) ?? []) {
+    // Backslash excluded here too. This one reads raw SKILL.md text rather than stringified
+    // JSON, so it has no escaped quotes to trip on today — but the fault is the same one, and a
+    // path ending at an escaped or Windows-style separator would capture it identically.
+    for (const ref of text.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"'`\s)\\]+/g) ?? []) {
       const target = ref.replace('${CLAUDE_PLUGIN_ROOT}/', '');
       // Prose placeholders (".../scripts/...", "[name]", "{name}") are documentation, not paths.
       if (/\.\.\.|[[\]{}]/.test(target)) continue;
