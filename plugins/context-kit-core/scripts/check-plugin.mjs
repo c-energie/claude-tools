@@ -65,17 +65,31 @@ if (marketplace && manifest) {
 // ---------------------------------------------------------------- hooks
 const hooks = readJsonOptional('hooks/hooks.json');
 if (hooks) {
-  // The class must exclude BACKSLASH as well as the quotes. hooks.json quotes the path
-  // (`bash "${CLAUDE_PLUGIN_ROOT}/hooks/load-context.sh"`), and JSON.stringify re-escapes that
-  // inner quote as \" — so a class that stops at " but admits \ captures the trailing backslash
-  // and the path becomes `hooks/load-context.sh\`. On Windows \ is a path separator, so join()
-  // normalised it away and the check passed; on Linux it is an ordinary filename character and
-  // the same manifest reported both of core's hooks as missing files. Invisible for as long as
-  // this only ran on Windows, and found the first time it ran in a Linux container.
-  const commands = JSON.stringify(hooks).match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"'\s\\]+/g) ?? [];
-  for (const ref of commands) {
-    const rel = ref.replace('${CLAUDE_PLUGIN_ROOT}/', '');
-    if (!existsSync(join(root, rel))) err('hooks/hooks.json', `references missing file \`${rel}\``);
+  // Scan the PARSED command strings, never `JSON.stringify(hooks)`. A hook command quotes its
+  // path — `bash "${CLAUDE_PLUGIN_ROOT}/hooks/load-context.sh"` — because a Windows plugin
+  // root contains spaces; re-stringifying turns that quote back into \", and a scan that stops
+  // at " but admits \ then ran on past the path and took the backslash with it, so the check
+  // looked for a file called `load-context.sh\` and never found it. On Windows \ is a path
+  // separator, so join() normalised it away and the check passed; on Linux it is an ordinary
+  // filename character and the same manifest reported both of core's hooks as missing files.
+  // Invisible for as long as this only ran on Windows, and found the first time it ran in a
+  // Linux container.
+  //
+  // Excluding the backslash from the class (affd079) fixes that instance. Reading the parsed
+  // object takes the escaping out of the problem altogether, which is the difference worth
+  // having on the one gate whose whole contract is that exit 1 means stop before committing.
+  const commands = [];
+  const collect = (node) => {
+    if (typeof node === 'string') commands.push(node);
+    // Arrays and objects both answer to Object.values, and hooks.json nests both.
+    else if (node && typeof node === 'object') for (const value of Object.values(node)) collect(value);
+  };
+  collect(hooks);
+  for (const command of commands) {
+    for (const ref of command.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[^"'\s]+/g) ?? []) {
+      const rel = ref.replace('${CLAUDE_PLUGIN_ROOT}/', '');
+      if (!existsSync(join(root, rel))) err('hooks/hooks.json', `references missing file \`${rel}\``);
+    }
   }
 }
 
