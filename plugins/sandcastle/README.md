@@ -9,21 +9,35 @@ repo, no Notion, no Slack.
 
 | Skill | What it does |
 | --- | --- |
+| `sandcastle-install` | Install the harness into a workspace and get it to a verified, token-free green state — decide whether the root is an interdependent uv/npm workspace or a clone root, write the member table and prompt sets, wire the env, hand-write the Dockerfile, then prove it with smoke and preflight |
 | `sandcastle-prompts` | Write or repair the four prompts in a workspace's `.sandcastle/` — implementer, per-issue reviewer, group reviewer, planner — from that project's own CLAUDE.md, CODING_STANDARDS.md, test configuration and CI |
+
+The two are a pair, in that order: `sandcastle-install` gets a workspace wired and verified,
+`sandcastle-prompts` writes the briefs the agent is actually told the rules by. Each is useful
+without the other — a workspace already installed needs only the second; a workspace whose
+prompts are fine but whose image will not build needs only the first.
 
 ## Why this exists
 
 A harness install splits about 85/15. The 85% is the engine, and it is a versioned dependency
 now. The 15% is per project: the config, the Dockerfile, and **the prompts**.
 
-The config is mechanical — a member table, an image name, some paths. The prompts are the
-judgement, and they are the part that has already gone wrong. When the engine was first ported
+Both halves are judgement, and this README used to say otherwise — that the config was
+"mechanical: a member table, an image name, some paths". A third install disproved it. The member
+table encodes whether the members import each other at all, which decides the Dockerfile, whether
+`importName` means anything, and which verification steps can ever pass; `dir` and `importName`
+are not derivable from the folder names; and how many prompt sets the workspace wants is a claim
+about how many *kinds* of repository it holds. None of that is mechanical, and none of it is
+visible to the scaffolder, which has never seen the repo. That is what `sandcastle-install`
+records.
+
+The prompts are the other half, and they are the part that has already gone wrong. When the engine was first ported
 into a second workspace, its prompts were drafted from the *workspace* `CLAUDE.md` alone and
 missed most of the member's own `.sandcastle/CODING_STANDARDS.md`. The agent then produced work
 that was correct against the rules it had been given and wrong against the rules that existed —
 and the reviewer, reading the same incomplete prompts, approved it.
 
-That is the failure this skill is built around. Its method is source-first: inventory every
+That is the failure `sandcastle-prompts` is built around. Its method is source-first: inventory every
 governing document the project has, state which prompt carries each one, and name what was looked
 for and not found. A project with no standards document is a fine answer; a project with one that
 nobody noticed is the bug.
