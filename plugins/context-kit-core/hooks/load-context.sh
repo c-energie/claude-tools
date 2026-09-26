@@ -9,11 +9,68 @@
 # The refresh is capped (see the resolver). If it times out or fails, the session still gets
 # the local copy, but with a STALE banner above it saying so and how old it is — never silently.
 #
+# CONTEXT_KIT_AUTOLOAD=off in the user-level ~/.claude/settings.json turns the automatic load
+# off for the whole machine, before any of this runs; --refresh still loads. See the gate below.
+#
 # Also runs mid-session, by hand, as `load-context.sh --refresh` — that is the whole of the
 # refresh-context skill. Same pull, same STALE banner, different header (claiming "loaded at
 # session start" an hour into a session is exactly the kind of quiet lie this script exists to
 # avoid) plus a provenance line naming the checkout it actually read.
 set -u
+
+# The one spelling of "off" in this system, answering two different questions below: whether
+# this MACHINE autoloads (CONTEXT_KIT_AUTOLOAD, immediately after this) and whether this
+# PROJECT has a context repo at all (the repo name, much further down). Deliberately the same
+# vocabulary for both, so nobody has to remember which spelling a given switch accepts — and
+# in step with OPTOUT in hooks/connection-gate.mjs, scripts/context-repo.sh and
+# scripts/link-context.mjs. It sits up here, above every other helper, only because the
+# autoload gate has to run before the script does any work at all.
+is_optout() {  # $1 = the configured value; true when it means "deliberately no context repo"
+  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+    none|off|false|no|-|disabled) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------- machine-wide autoload switch
+# CONTEXT_KIT_AUTOLOAD says whether this MACHINE loads context automatically at all — a
+# different question from the per-project ladder below, which only ever answers *which repo*.
+# Read from the `env` block of the USER-level ~/.claude/settings.json; Claude Code exports that
+# block into the environment every hook runs in, so there is nothing to parse here and no `jq`
+# or bash spawn to get wrong on a Windows box (where the `bash` on PATH may be WSL's, with its
+# own $HOME). Before it existed, "off here" meant either disabling the whole plugin — losing the
+# skills and the PreToolUse connection gate with it — or dropping an opt-out marker into every
+# unrelated directory one ever opened a session in.
+#
+# Four properties, each of them deliberate:
+#
+#   * It is a HARD gate, and it goes first: before lookup_repo(), before the marker search,
+#     before the sandbox mount-timing retry and its ~10s wait, before any clone or pull. Off
+#     therefore costs one string comparison. Off means off in every project, with no exceptions
+#     — a project that explicitly names a repo does NOT load. Local can only ever VETO (a
+#     project `none` still beats a global on); it can never override a global off. The soft
+#     reading, where a configured project opts back in, was considered and rejected: it makes
+#     "off" mean "nothing loads unless something asked", which is not what a kill switch says.
+#   * It is a variable of its own, NOT a user-level PROJECT_CONTEXT_REPO: lookup_repo() reads
+#     that one first and returns immediately, so a user-level value would beat every project's
+#     settings file and every marker, and would take connection-gate.mjs's policy lookup down
+#     with it — a safety mechanism switched off by a convenience setting. Never use or document
+#     that form as a shortcut for this.
+#   * --refresh is exempt and still loads. An explicit hand-invocation is the user asking out
+#     loud, and going quiet on them would be exactly the silent lie this script is written to
+#     avoid. Deliberately different from the project-level opt-out below, which answers
+#     --refresh with "nothing to refresh": there `none` means there IS no repo, whereas off
+#     here means not AUTOMATICALLY. Different facts, different answers.
+#   * It fails OPEN. Unset, empty, or anything outside the opt-out vocabulary (`1`, `yes`,
+#     `maybe`, a typo) means on — today's behaviour, byte for byte. Silence must be something
+#     the user asked for and never something a typo caused, and "not configured" must stay
+#     distinguishable from "deliberately off".
+#
+# Silent exit 0: no banner, no warning, and no "no context repo configured" payload either —
+# off is genuinely silent, not merely repo-less.
+if [ "${1:-}" != "--refresh" ] && is_optout "${CONTEXT_KIT_AUTOLOAD:-}"; then
+  exit 0
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # In step with scripts/context-repo.sh: which context repo is PROJECT_CONTEXT_REPO
@@ -35,12 +92,6 @@ marker_repo() {
   case "$(head -c 1 "$1" 2>/dev/null)" in
     "{") settings_key "$1" contextRepo ;;
     *)   head -n 1 "$1" 2>/dev/null | tr -d ' \t\r\n' ;;
-  esac
-}
-is_optout() {  # $1 = the configured value; true when it means "deliberately no context repo"
-  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
-    none|off|false|no|-|disabled) return 0 ;;
-    *) return 1 ;;
   esac
 }
 # Thread routing, in step with scripts/context-repo.sh --threads: WHERE this project's working

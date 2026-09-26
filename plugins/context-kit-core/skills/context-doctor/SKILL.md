@@ -39,6 +39,14 @@ Useful flags:
 Findings come at three levels: `err` is actively broken or actively misleading, `warn` is worth
 a look, `note` is context rather than a defect.
 
+**The `autoload` note is the one to read out loud.** If `CONTEXT_KIT_AUTOLOAD` is off — in the
+environment, or in the user-level `~/.claude/settings.json` that sets it — the SessionStart hook
+loads nothing in *any* project on this machine, including one whose configuration is perfect. It is
+a deliberate setting rather than a defect, hence a note, but it presents exactly as a plugin that
+failed to load, so say so first when someone is here asking why their context did not appear.
+`refresh-context` still loads on an off machine; that and removing the flag are the only two routes.
+`context-setup` owns the fuller diagnosis.
+
 **Exit 2 means it could not run** (bad argument, no such directory) — that is not a clean bill
 of health, and must never be reported as one. Likewise a `note` saying enabledPlugins ids were
 NOT verified means exactly that: the marketplace was unreadable, so the check did not happen.

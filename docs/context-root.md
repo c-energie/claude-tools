@@ -101,6 +101,51 @@ went to `1.0.0` to mark that the old identifiers are dead. A stale `X@context-ki
 plugin that crashed on load — `context-doctor` carries the retired name and flags it, and `--fix`
 rewrites the ids.
 
+### Whether a session loads context at all: `CONTEXT_KIT_AUTOLOAD`
+
+A gate that sits **above** the ladder below rather than being a rung in it. In the `env` block of
+the **user-level** `~/.claude/settings.json`:
+
+```json
+{ "env": { "CONTEXT_KIT_AUTOLOAD": "off" } }
+```
+
+`off` (or any other spelling of off — `none` / `false` / `no` / `-` / `disabled`, case-insensitive)
+and `hooks/load-context.sh` exits silently at its first line, in **every** project on the machine:
+no payload, no banner, no marker search, and no "unconfigured" warning either. It answers a
+question the ladder cannot — not *which repo*, but whether this machine should load context
+automatically — which before it existed had no clean answer short of disabling the whole plugin
+(losing the skills and the `PreToolUse` connection gate with it) or dropping an opt-out marker into
+every unrelated directory one ever opened a session in.
+
+Four things about it are load-bearing (settled 2026-09-26):
+
+- **Off means off.** A project that explicitly names a context repo does *not* load. Local can only
+  ever be *more* restrictive than the machine: a project's `none` still beats a global on, and
+  nothing overrides a global off. The soft reading — "off by default, opt in per project" — was
+  rejected, because it makes off mean "nothing loads unless something asked", which is not what a
+  kill switch says.
+- **`refresh-context` is exempt** (`load-context.sh --refresh`), and is the route to context on a
+  machine with autoload off. An explicit hand-invocation is the user asking out loud. Note this
+  differs from the project-level opt-out, which answers `--refresh` with *"nothing to refresh"* —
+  correctly, because there `none` means **there is no repo**, whereas off here means **not
+  automatically**.
+- **It fails open.** Unset, empty or unrecognised (`1`, `yes`, `maybe`, a typo) means on — today's
+  behaviour exactly. Silence has to be something someone asked for, never something a typo caused.
+- **The connection gate is untouched.** `hooks/connection-gate.mjs` reads nothing the loader
+  injects, and a safety mechanism must not be switchable off through a convenience setting. The one
+  consequence worth knowing: in a Cowork sandbox the loader is what re-mirrors `connections` into
+  the marker each session, so this flag must never grow a marker-file or sandbox route. (It cannot
+  today — a sandbox has no `~/.claude/settings.json` to set it in.)
+
+> **Do not use a user-level `PROJECT_CONTEXT_REPO: "none"` for this.** It looks like the same thing
+> and is actively dangerous. Both resolvers read that variable **first and return immediately**, so
+> a user-level value beats every project's settings file and every marker on the machine — silently
+> opting out projects that are correctly configured, and taking `connection-gate.mjs`'s policy
+> lookup down with it, since it resolves the repo the same way. A variable of its own has no such
+> reach. That is the whole reason this flag is not spelled `PROJECT_CONTEXT_*` either: that prefix
+> means *per project*, and this one is per machine.
+
 ### How a session finds its context repo
 
 `hooks/load-context.sh` and `scripts/context-repo.sh` resolve, in order: `PROJECT_CONTEXT_REPO` env →

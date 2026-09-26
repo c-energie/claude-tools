@@ -87,6 +87,39 @@ It verifies the repo resolves *before* writing anything, merges `PROJECT_CONTEXT
 argument, never inferred from the project's git remote: guessing it is the wrong-context
 failure this plugin exists to prevent.
 
+**Opting the whole MACHINE out: `CONTEXT_KIT_AUTOLOAD`.** Everything above answers *which repo*.
+This answers whether this machine loads context automatically at all — a gate that sits above the
+ladder rather than a rung in it. In the `env` block of the **user-level** `~/.claude/settings.json`:
+
+```json
+{ "env": { "CONTEXT_KIT_AUTOLOAD": "off" } }
+```
+
+`hooks/load-context.sh` then exits silently at its first line in **every** project on the machine:
+no payload, no banner, no marker search, and no "unconfigured" warning either. Same vocabulary of
+off as everywhere else (`none` / `off` / `false` / `no` / `-` / `disabled`, case-insensitive), and
+it **fails open** — unset, empty or unrecognised means on, i.e. today's behaviour exactly, because
+silence must be something you asked for and never something a typo caused.
+
+It is for the cases the per-project ladder has no clean answer to: many sessions in directories
+that are not context-governed projects, wanting the (not small) payload on demand only, and
+debugging the plugin itself without editing a plugin file.
+
+- **Off means off.** A project that explicitly names a repo does not load. A project may be *more*
+  restrictive than the machine, never less: a project's `none` still wins over a global on, and
+  nothing overrides a global off. To get context in one project on an off machine, flip the flag or
+  run `refresh-context`.
+- **`refresh-context` still loads** (`load-context.sh --refresh`) — the flag governs the automatic
+  path, and going quiet on an explicit request would be the kind of silent lie this hook avoids.
+  Deliberately unlike the project-level `none`, which answers `--refresh` with "nothing to
+  refresh": there is no repo there, whereas here there is one and it is merely not automatic.
+- **The `PreToolUse` connection gate is unaffected** — it resolves `connections` itself and must not
+  be switchable off by a convenience setting.
+- **Never do this with a user-level `PROJECT_CONTEXT_REPO: "none"` instead.** Both resolvers read
+  that variable first and return immediately, so a user-level value beats every project's settings
+  file and every marker on the machine, and disables the connection gate's policy lookup along with
+  it. `docs/context-root.md` in the marketplace repo has the long form.
+
 **`${CLAUDE_PLUGIN_ROOT}` in these commands is not a shell variable.** The plugin loader
 substitutes it into skill text and hook commands before they run, per plugin; a terminal knows
 nothing of it and expands it to the empty string, turning the line above into
@@ -197,7 +230,8 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 
 The SessionStart hook loads `memory.md` + thread pointers automatically, with a STALE banner
 when the refresh fails — a silently stale context is the one failure mode that actively
-misleads. A project that will never have a context repo opts out with `none`; see above.
+misleads. A project that will never have a context repo opts out with `none`, and a whole machine
+opts out of the automatic load with `CONTEXT_KIT_AUTOLOAD`; see above.
 
 ### What is loaded eagerly, and what is announced
 
@@ -367,7 +401,8 @@ twice.
 
 ## Working on this repo
 
-No build, no tests: `node scripts/check-plugin.mjs .` is CI, run it before any commit. Bump
+No build: `node scripts/check-plugin.mjs .` is CI, run it before any commit. The one test file
+covers the autoload gate — `node --test hooks/load-context.test.mjs`, stdlib only, no network. Bump
 `.claude-plugin/plugin.json` via `node scripts/bump-version.mjs . patch|minor|major` — version
 lives there **only** (a version in `marketplace.json`'s `plugins[]` overrides it silently).
 `*.sh` stay LF. No angle brackets in any YAML front-matter value. The hook must exit 0 on
