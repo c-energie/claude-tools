@@ -6,10 +6,35 @@ description: First-run wiring and diagnosis for a project's context repo — fin
 # Set up / diagnose this project's context
 
 Run this once in a new project — or whenever a session starts with the ⚠ "no context repo
-configured" line, or with the wrong context. It finds the configuration, verifies it, loads
-the context now, and fixes gaps with the user.
+configured" line, with the wrong context, or with no context and no line at all. It finds the
+configuration, verifies it, loads the context now, and fixes gaps with the user.
 
-## 1. How is (or isn't) the repo named? Check every channel, report what you find
+## 1. Is the machine-wide autoload even on?
+
+Check this before anything else when the complaint is "nothing loaded" — it is the one answer that
+makes a perfectly configured project look like a broken plugin:
+
+```bash
+echo "${CONTEXT_KIT_AUTOLOAD:-(unset)}"
+```
+
+Any spelling of off (`off` / `none` / `false` / `no` / `-` / `disabled`, case-insensitive) and the
+SessionStart hook exited at its first line, in **every** project on this machine — no payload, no
+banner, not even the ⚠ "no context repo configured" line. Unset, empty or anything else means
+autoload is on and the rest of this skill applies.
+
+It is set in the `env` block of the **user-level** `~/.claude/settings.json`, so also read that
+file: someone who added it this session has it in the file but not yet in the environment, and it
+takes effect at the next session start.
+
+Off means off — a project that names a repo does not load, and nothing project-level can opt back
+in. So there are exactly two routes to context on an off machine: load it now with
+`refresh-context` (exempt by design — an explicit request is answered), or remove the flag and
+restart. Never "fix" this by writing `PROJECT_CONTEXT_REPO` anywhere user-level: the resolvers read
+that variable first and return, so it would beat every project's settings and marker on the machine
+and disable the connection gate's policy lookup too.
+
+## 2. How is (or isn't) the repo named? Check every channel, report what you find
 
 - `PROJECT_CONTEXT_REPO` in the environment. **These first two are not independent**: Claude
   Code applies a settings `env` block to the environment hooks run in, so the value you find
@@ -52,7 +77,7 @@ clones it, and nothing in the thread reveals that, because it is a fact about th
 distribution. Offer it when someone says a repo is a tool others install — and flag the one
 combination that resolves to nowhere: `context` with a context repo of `none`.
 
-## 2. Nothing found? Configure it with the user
+## 3. Nothing found? Configure it with the user
 
 Ask which repo (owner/repo on github.com) holds this project's context — never guess. Then:
 
@@ -84,7 +109,7 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
   the ⚠ line — but only on their say-so: never opt a project out to silence a lookup that
   merely failed. Undo with the same command and a real `owner/repo` plus `--force`.
 
-## 3. Verify the repo is reachable, then load it NOW
+## 4. Verify the repo is reachable, then load it NOW
 
 - **Shell + git:** `ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh")"` — then
   `bash "${CLAUDE_PLUGIN_ROOT}/hooks/load-context.sh" --refresh` and treat its output as the
@@ -101,10 +126,12 @@ Ask which repo (owner/repo on github.com) holds this project's context — never
   connectors but declares no `connections` block, offer to add one — it is what stops a
   multi-workspace machine writing through the wrong connection.
 
-## 4. If the hook should have done this but didn't
+## 5. If the hook should have done this but didn't
 
 The SessionStart hook performs the same lookup automatically. If a marker/setting exists in a
-standard location but the session still started unconfigured, check the installed plugin
+standard location but the session still started unconfigured, re-check `CONTEXT_KIT_AUTOLOAD`
+(step 1 — an off flag suppresses the ⚠ line as well, so "unconfigured" is not what you would see),
+then check the installed plugin
 version — `grep '"version"' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"` — against the
 marketplace, and tell the user whether the fix is "update the plugin" (stale version), "new
 location" (report the path), or "restart" (config read at session start only).

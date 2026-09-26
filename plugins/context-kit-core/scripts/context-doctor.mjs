@@ -385,6 +385,34 @@ if (settings) {
   }
 }
 
+// ---------------------------------------------------------------- machine-wide autoload
+// CONTEXT_KIT_AUTOLOAD=off in the user-level ~/.claude/settings.json makes the SessionStart hook
+// exit silently in every project on this machine. That is a legitimate setting, so it is a note
+// and not a defect — but it is reported because "why didn't my context load?" is the question
+// this script exists to answer, and an off flag otherwise looks EXACTLY like a plugin that
+// failed to load: no payload, no banner, no warning, everything else healthy.
+//
+// Read from the environment first and the file second, because those can disagree and the
+// difference matters: Claude Code exports the user-level `env` block into every hook, so the
+// environment is what the hook actually saw this session, whereas the file is what it will see
+// after the next restart (the settings watcher does not pick this up mid-session).
+const autoloadEnv = process.env.CONTEXT_KIT_AUTOLOAD;
+let autoloadFile = null;
+const userSettings = join(homedir(), '.claude', 'settings.json');
+if (existsSync(userSettings)) {
+  // A user settings file we cannot parse is not this script's business to report — Claude Code
+  // complains about that itself, loudly, at startup.
+  try { autoloadFile = readJson(userSettings).env?.CONTEXT_KIT_AUTOLOAD ?? null; } catch { /* ignore */ }
+}
+const isOff = (v) => typeof v === 'string' && OPTOUT.includes(v.trim().toLowerCase());
+if (isOff(autoloadEnv) || isOff(autoloadFile)) {
+  const where = isOff(autoloadEnv)
+    ? `CONTEXT_KIT_AUTOLOAD=${autoloadEnv} is set in this session's environment`
+    : `${userSettings} sets CONTEXT_KIT_AUTOLOAD=${autoloadFile} (it takes effect at the next session start)`;
+  add('note', 'autoload',
+    `${where} — the SessionStart hook loads nothing in ANY project on this machine, including one that names a context repo. Deliberate, not a broken plugin: refresh-context still loads. Remove the value, or set it to "on", to restore automatic loading.`);
+}
+
 // The canonical generated marker, per the core invariant: one committable file per context
 // repo, and the file a Cowork session gets attached.
 const markerFile = join(ROOT, '.claude', 'context-project.json');

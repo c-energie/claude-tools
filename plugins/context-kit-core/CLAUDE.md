@@ -16,6 +16,7 @@ A fix to the resolver or hook belongs in all three plugins' copies (see the mark
 
 ```bash
 node scripts/check-plugin.mjs .          # lint manifests/skills/hooks; exit 1 on error — run before any commit
+node --test hooks/load-context.test.mjs  # the autoload gate; stdlib only, no network, no clone
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
 bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
@@ -51,6 +52,24 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   — the hook exits 0 with no output and no marker search, and the resolvers exit 1 saying so.
   Keep the sentinel list in step across `hooks/load-context.sh`, both `context-repo.sh`
   copies and `link-context.mjs`. Never conflate it with *unconfigured*, which must stay loud.
+- **`CONTEXT_KIT_AUTOLOAD` is a machine-wide KILL SWITCH, not a default.** Any spelling of off
+  (`is_optout()`, so `none`/`off`/`false`/`no`/`-`/`disabled`) in the `env` block of the
+  **user-level** `~/.claude/settings.json`, and `hooks/load-context.sh` exits silently at its
+  first line in **every** project — including one that explicitly names a repo, and including
+  the loud "unconfigured" payload. Four things are load-bearing. It is a **hard gate placed
+  first**, before `lookup_repo()`, the marker search and the sandbox retry's ~10s wait, so off
+  costs one string comparison. **Local can only veto**: a project's `none` still beats a global
+  on, and nothing project-level overrides a global off — the soft reading ("off by default, opt
+  in per project") was considered and rejected, because it makes off mean "nothing loads unless
+  something asked". **`--refresh` is exempt** and still loads, unlike the project-level opt-out
+  which answers `--refresh` with "nothing to refresh" — `none` means there is no repo, off means
+  not automatically. And it **fails open**: unset, empty or unrecognised is today's behaviour
+  exactly, because silence must be asked for and never caused by a typo. Never implement this as
+  a user-level `PROJECT_CONTEXT_REPO` — that is read first and returned from, so it would beat
+  every project's settings and marker on the machine and take `connection-gate.mjs`'s policy
+  lookup with it. The gate itself is deliberately untouched by the flag, and the flag must never
+  grow a marker-file or sandbox route: in a sandbox the loader is what mirrors `connections`
+  into the marker the gate falls back to.
 - **The resolver's "env var first" does NOT mean "the invoking shell first."** Claude Code applies
   a settings file's `env` block to the environment hooks and tools run in, so the settings value
   is already *in* `PROJECT_CONTEXT_REPO` before the resolver looks. A project that configures its
