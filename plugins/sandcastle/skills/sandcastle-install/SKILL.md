@@ -256,7 +256,7 @@ reaches the container.
 Run them for **one member of every prompt set**; a set's prompts are only resolved when a member
 using it is named.
 
-### Two failures to expect, and what they mean
+### One failure to expect, and what it means
 
 - **`the suite could not run` on a Node member, from a Windows host.** The mounted checkout's
   `node_modules/.bin` shims are Windows shims that exec `node.exe`, which does not exist in a
@@ -264,9 +264,12 @@ using it is named.
   members are unaffected. Do **not** "fix" it by running `npm ci` in the mount — that is the
   user's live checkout and it would overwrite their host `node_modules`. Either give the member an
   environment the image owns, or leave `testCommand` undefined and say so.
-- **`workspace present at <ws>` failing on its own.** That check asserts `test -x <python>` as
-  well as `test -d <ws>/src`, so a workspace with no shared venv cannot pass it, whatever its
-  members declare. There is no config value that disables it.
+
+What you will see instead of a failure, on a workspace with no Python: `interpreter at <python>`
+reported as **SKIP** by the smoke test and as a `note` by the preflight. The two facts used to be
+one check — `test -d <ws>/src && test -x <python>` — which no venv-less workspace could pass and no
+config could disable. They are separate assertions now, and the interpreter is asserted only when
+some member declares an `importName` or the config sets `python` itself.
 
 ### Then a dry run, per prompt set
 
@@ -301,8 +304,8 @@ So, concretely:
 - `importName: null` on **every** member.
 - Drop `manifestFile`.
 - Rewrite the Dockerfile: no `uv sync`, no `VIRTUAL_ENV`, one COPY per member into `./src/<member>/`.
-- Expect the `workspace present` smoke check to fail on `test -x <python>`, and say so rather than
-  reporting the install as broken.
+- Expect `interpreter at <python>` to be skipped rather than asserted — with no `importName`
+  anywhere and no `python` in the config, there is no interpreter for it to be about.
 - Dependencies resolve inside the sandbox on first use (`uv run`, `npm`), which costs time on each
   run and needs network.
 
