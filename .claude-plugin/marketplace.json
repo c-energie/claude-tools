@@ -50,6 +50,11 @@
       "name": "devhub",
       "source": "./plugins/devhub",
       "category": "productivity"
+    },
+    {
+      "name": "sandcastle",
+      "source": "./plugins/sandcastle",
+      "category": "productivity"
     }
   ]
 }
