@@ -1,6 +1,6 @@
 {
   "name": "sandcastle",
   "description": "Write or repair a project's Sandcastle harness prompts — the implementer, reviewer, group-reviewer and planner briefs the agent is actually told the rules by — from that project's own governing documents rather than from a guess. The judgement half of a @c-energie/sandcastle-harness install, and the half that has already gone wrong once.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "c-energie" }
 }

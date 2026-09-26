@@ -3,9 +3,17 @@
 ## What this plugin is
 
 The **Sandcastle harness authoring** layer, `plugins/sandcastle` inside
-`c-energie/claude-tools`. One skill: `sandcastle-prompts`, which writes the four prompts a
-harness install cannot ship — the implementer, per-issue reviewer, group reviewer and planner
-briefs — from the consuming project's own governing documents.
+`c-energie/claude-tools`. Two skills, and between them they are the whole of the per-project half
+of a harness install:
+
+- **`sandcastle-install`** — getting a workspace wired and verified: which kind of root this is,
+  the member table, the prompt sets, the env, the Dockerfile, and the token-free proof that it
+  works. Everything before the image build is free, and this is the order it has to happen in.
+- **`sandcastle-prompts`** — the four prompts a harness install cannot ship (implementer,
+  per-issue reviewer, group reviewer, planner), written from the consuming project's own
+  governing documents.
+
+Neither depends on the other being run, and each says so in its `Not this skill:` line.
 
 It is deliberately **outside the context stack**. It reads no `context.json`, needs no context
 repo, and is useful in any workspace that has installed `@c-energie/sandcastle-harness`. Filing it
