@@ -1,0 +1,6 @@
+{
+  "name": "skills",
+  "description": "Skills for writing skills. First: author-setup-skill, which interviews an author about a setup they want to automate, scaffolds the setup skill's SKILL.md and a stdlib Python step script (named steps, --dry-run, reuse-don't-clobber, a state file) from that interview, optionally copies in the setup-observer that watches each run and files what the guide got wrong, then audits both — the fifteen-lesson recipe learned building the doc-workspace setup skills.",
+  "version": "0.1.0",
+  "author": { "name": "c-energie" }
+}

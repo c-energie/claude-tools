@@ -55,6 +55,11 @@
       "name": "sandcastle",
       "source": "./plugins/sandcastle",
       "category": "productivity"
+    },
+    {
+      "name": "skills",
+      "source": "./plugins/skills",
+      "category": "productivity"
     }
   ]
 }
