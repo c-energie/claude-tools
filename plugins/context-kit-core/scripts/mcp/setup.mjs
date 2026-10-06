@@ -71,6 +71,13 @@ function runChecks() {
 
   if (!has('npx')) warn('npx not found — Notion connectors need it');
   else ok('npx available');
+  const npmRoot = spawnSync('npm root -g', { encoding: 'utf8', shell: true });
+  if (npmRoot.status === 0 && existsSync(join(npmRoot.stdout.trim(), '@notionhq', 'notion-mcp-server', 'bin', 'cli.mjs'))) {
+    ok('@notionhq/notion-mcp-server installed globally');
+  } else {
+    warn('@notionhq/notion-mcp-server not installed globally — Notion connectors will use npx -y,');
+    warn('  whose cold start can overrun the desktop app\'s 60s timeout. Fix: npm i -g @notionhq/notion-mcp-server');
+  }
 
   return { fatal, binary, docker };
 }

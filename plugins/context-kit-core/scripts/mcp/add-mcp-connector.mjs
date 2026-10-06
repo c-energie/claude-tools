@@ -40,6 +40,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const LAUNCHER = join(HERE, 'mcp-launch.mjs');
 const CONFIGS = configPaths();
 
+// The globally installed Notion server's entry point, or null. Through a shell so the npm.cmd
+// shim resolves on Windows; one string, not argv, which Node now deprecates with shell: true.
+function globalNotionCli() {
+  const out = spawnSync('npm root -g', { encoding: 'utf8', shell: true });
+  if (out.status !== 0 || !out.stdout) return null;
+  const cli = join(out.stdout.trim(), '@notionhq', 'notion-mcp-server', 'bin', 'cli.mjs');
+  return existsSync(cli) ? cli : null;
+}
+
 // ---------------------------------------------------------------- providers
 
 const PROVIDERS = {
@@ -64,6 +73,13 @@ const PROVIDERS = {
     },
 
     build() {
+      // Prefer a global install: `npx -y` re-resolves the package against the registry on every
+      // start, and on Windows that cold start (~60s with three servers launching together)
+      // overruns the desktop app's 60s initialize timeout — the connector then never appears,
+      // logged only as "Couldn't start ... Request timed out". The installed cli.mjs answers in
+      // a few seconds. Trade-off: it no longer self-updates (`npm i -g` to refresh).
+      const cli = globalNotionCli();
+      if (cli) return { command: process.execPath, args: [cli] };
       return { command: 'npx', args: ['-y', '@notionhq/notion-mcp-server'] };
     },
 

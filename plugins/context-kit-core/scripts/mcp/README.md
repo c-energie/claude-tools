@@ -33,7 +33,12 @@ time; adding a connector that already exists replaces it.
 - Node 18+
 - Claude Desktop opened at least once (so its config file exists)
 - For GitHub: either a `github-mcp-server` binary, or Docker
-- For Notion: `npx`
+- For Notion: `npm i -g @notionhq/notion-mcp-server` (recommended), else `npx`
+
+Notion via `npx -y` re-resolves the package on every start; on Windows that cold start can
+overrun the desktop app's 60s initialize timeout, and the connector silently never appears
+(`mcp.log`: "Couldn't start ... Request timed out"). `add-mcp-connector.mjs` uses the global
+install when `npm root -g` has it, and falls back to `npx` otherwise. Update it with `npm i -g`.
 
 The GitHub binary is the recommended route — no daemon, faster start. Download for your
 platform from https://github.com/github/github-mcp-server/releases, extract into
