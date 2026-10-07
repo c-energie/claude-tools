@@ -79,7 +79,7 @@ npx sandcastle-init --name "<workspace>" --owner <org> --member <member>
 > If it has already happened, delete the files and re-run, or edit them by hand.
 
 It writes `sandcastle.config.mts`, `.sandcastle/{Dockerfile,.dockerignore,.env.example,.gitignore,tsconfig.json}`,
-four prompt stubs and the npm scripts. It prints what it kept.
+five prompt stubs and the npm scripts. It prints what it kept.
 
 ---
 
@@ -326,7 +326,7 @@ right** before assuming the harness is wrong.
 
 ---
 
-**Not this skill:** writing the four prompts is `sandcastle-prompts` — it interviews the project's
+**Not this skill:** writing the five prompts is `sandcastle-prompts` — it interviews the project's
 own `CLAUDE.md` and standards documents, which is the part that has gone wrong when done by hand.
 Changing the engine itself — the runner, the config seam, a pin strategy — is a change to
 `c-energie/sandcastle-harness` and belongs in that repository.

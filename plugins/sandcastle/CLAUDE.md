@@ -9,8 +9,8 @@ of a harness install:
 - **`sandcastle-install`** — getting a workspace wired and verified: which kind of root this is,
   the member table, the prompt sets, the env, the Dockerfile, and the token-free proof that it
   works. Everything before the image build is free, and this is the order it has to happen in.
-- **`sandcastle-prompts`** — the four prompts a harness install cannot ship (implementer,
-  per-issue reviewer, group reviewer, planner), written from the consuming project's own
+- **`sandcastle-prompts`** — the five prompts a harness install cannot ship (implementer,
+  per-issue reviewer, group reviewer, revision, planner), written from the consuming project's own
   governing documents.
 
 Neither depends on the other being run, and each says so in its `Not this skill:` line.
@@ -25,8 +25,10 @@ context machinery. Same test as `devhub` and `diagrams`: same people, new topic,
 
 **`c-energie/sandcastle-harness` owns the contract; this plugin only teaches it.** Every rule in
 `references/contract.md` is a restatement of what `src/sandbox.mts` renders (`promptArgsFor`,
-`argsUsedIn`) and what `src/plan.mts` parses (`extractTaggedBlock`), plus the three tag names
-`run.mts` extracts.
+`argsUsedIn`), what each pass in `src/run.mts` adds to that map, what `src/plan.mts` parses
+(`extractTaggedBlock`), the revision loop's rules in `src/revision.mts`, and what the peer
+`@ai-hero/sandcastle` does with a placeholder nobody supplied (fails the pass). It names the
+harness and peer versions it was checked against; re-check on every harness minor.
 
 - **When the harness changes, this plugin is downstream.** A new placeholder, a renamed block, a
   changed verdict word — update `references/contract.md` from the engine's own code, then bump.
@@ -57,10 +59,17 @@ context machinery. Same test as `devhub` and `diagrams`: same people, new topic,
   A paraphrase is a second copy that drifts, which is the same mistake the harness extraction
   fixed one layer down.
 
-- **Four prompts, four jobs, and the group reviewer is not the reviewer with a wider diff.** It is
+- **Five prompts, five jobs, and the group reviewer is not the reviewer with a wider diff.** It is
   the only pass that runs the suite over the finished branch, which is the only state anybody will
   merge. A skill revision that lets the two collapse into variations of one document wastes a
-  container per group and finds the same things twice.
+  container per group and finds the same things twice. Likewise the revision brief is not the
+  implementer's with findings appended: that one says "implement the issue", and a revision round
+  must not re-open the design.
+
+- **Every prompt the engine resolves is covered.** The skill once named four and a fifth
+  (`revision`, optional in the config) shipped on the generic stub in every workspace that used
+  it. When the harness adds a pass, this skill and `references/contract.md` gain it in the same
+  release.
 
 - **An existing prompt is repaired, not replaced.** A prompt somebody has tuned over several runs
   is worth more than a fresh draft. Read it first; add what the inventory shows is missing.

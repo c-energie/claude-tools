@@ -1,13 +1,14 @@
 ---
 name: sandcastle-prompts
-description: "Write or repair a project's Sandcastle harness prompts — the implementer, reviewer, group-reviewer and planner briefs in .sandcastle/ — by interviewing that project's own governing documents rather than guessing: its CLAUDE.md, its CODING_STANDARDS.md, its test and lint configuration, its CI. Use when a workspace has just installed @c-energie/sandcastle-harness, when npx sandcastle-init has left generic stubs in place, when a run warns that it is using the harness's GENERIC stub for a prompt, when a new member or prompt set needs a brief, when an agent's work was correct against the rules it was given and wrong against the rules that exist, or when asked to write, fix, review or audit the sandcastle prompts."
+description: "Write or repair a project's Sandcastle harness prompts — the implementer, reviewer, group-reviewer, revision and planner briefs in .sandcastle/ — by interviewing that project's own governing documents rather than guessing: its CLAUDE.md, its CODING_STANDARDS.md, its test and lint configuration, its CI. Use when a workspace has just installed @c-energie/sandcastle-harness, when npx sandcastle-init has left generic stubs in place, when a run warns that it is using the harness's GENERIC stub for a prompt (revision-prompt.md included), when a new member or prompt set needs a brief, when an agent's work was correct against the rules it was given and wrong against the rules that exist, or when asked to write, fix, review or audit the sandcastle prompts."
 ---
 
 # sandcastle-prompts
 
-The Sandcastle harness runs an agent against a repository and reviews what it did. Four prompts
+The Sandcastle harness runs an agent against a repository and reviews what it did. Five prompts
 decide what the agent is told: the implementer's brief, the per-issue reviewer's, the
-whole-branch reviewer's, and the planner's. The harness ships generic stubs for all four so a
+whole-branch reviewer's, the revision agent's, and the planner's. The harness ships generic stubs
+for all five so a
 fresh install can be smoke-tested; **they know nothing about any project** and it warns, loudly,
 every time it falls back to one.
 
@@ -34,9 +35,16 @@ cat sandcastle.config.mts
 
 Take from it:
 
-- **every prompt set**, its name, and the four paths it names. A member table with two sets means
-  two implementers, two reviewers and two group reviewers — eight files plus one planner. Do not
-  assume one.
+- **every prompt set**, its name, and the paths it names: `prompt`, `review`, `groupReview` and
+  `revision`. A member table with two sets means two of each — up to eight files plus one planner.
+  Do not assume one.
+- **`revision` is optional in the config and easy to miss.** Unset, it resolves to
+  `.sandcastle/revision-prompt.md`; if that file is absent too, every revision round runs off the
+  generic stub. Workspaces installed before the revision loop existed almost all have this gap,
+  and the startup warning naming `revision-prompt.md` is the symptom. Decide per set whether it
+  gets its own revision brief or shares the workspace default — one per set is right whenever the
+  sets differ in their test command.
+- `planPrompt`, one per workspace, defaulting to `.sandcastle/plan-prompt.md`.
 - **which members use which set**, and *why they differ*. That difference is the single most
   useful fact available: the config's own comment usually says it (a Python package against a
   LaTeX tree; a package against a directory of shell tooling), and it tells you what each set
@@ -58,19 +66,26 @@ it is missing against step 3's inventory and add that, keeping everything else.
 
 ## 2. Understand what each prompt is FOR
 
-Four briefs, four different jobs. Writing them as four variations of one document is the most
-common way to waste three of them.
+Five briefs, five different jobs. Writing them as variations of one document is the most common
+way to waste most of them.
 
 | Prompt | Job | What it must NOT be |
 | --- | --- | --- |
 | implementer | Do this one issue, in this repository, to this project's standards. | A restatement of the issue. The issue is read by the agent at run time. |
 | per-issue reviewer | **The gate.** Was this issue actually implemented, is it correct, does it follow the standards. An approval here says it is safe for the next issue to build on. | A style review. And never a re-read of the whole branch — that is the next one's job. |
 | group reviewer | The four faults invisible from inside one issue: a later issue undoing an earlier one, the same helper built twice, scaffolding nobody removed, and the suite at the tip. | The per-issue review with a wider diff. That costs a container and finds the same things again. |
+| revision | Address **these findings**, verbatim from the reviewer that objected, on this branch — and nothing else. Runs at both review points when the verdict is `changes-requested`; a fresh reviewer then reads the result. | The implementer's prompt with the findings appended. That prompt says "implement the issue", and a round that re-reads the issue re-opens the design. Nor a refactor licence. |
 | planner | Which open issues to work, in what order, and **which belong on one branch**. Reads issue bodies; touches no files. | A judgement about code. It has not seen any. |
 
 The group reviewer's is the one most often written as a duplicate, and the one whose distinct
 value is highest: it is the only pass that ever runs the suite over the finished branch, which is
 the only state anybody will merge.
+
+The revision brief is the one most often **missing altogether**, because it is optional and the
+loop only fires on a rejection — so a workspace can run for weeks before a revision round reveals
+it was driven by a stub. It is also the one that most needs the project's test command: a round
+that "fixes" a finding and breaks the suite is caught only by the next reviewer, at the cost of
+another round.
 
 ---
 
@@ -152,6 +167,26 @@ What each prompt must actually say, concretely, and where the generic versions a
   something a hook would have fixed wastes the gate.
 - That small fixes may be committed, prefixed `review fix:`, and that anything larger is a
   finding rather than a fix.
+- That the finding lines are **the revision agent's whole brief.** Each must stand alone: the
+  file, what is wrong, what would make it right. "Error handling is weak" sends a revision round
+  off to guess. (Same for the group reviewer, whose `changes-requested` also starts a round when
+  the branch holds 2+ issues.)
+
+**Revision**
+- The findings are the brief: `{{REVIEW_FINDINGS}}` is the objecting reviewer's verdict block,
+  verbatim. Address each one, or answer it in words — never silently skip one.
+- Change nothing the findings do not name. Do not re-open the design; a finding that can only be
+  met by rebuilding the change is handed back, not acted on.
+- The same test command as the implementer, and that it must pass before committing — plus the
+  same lint/typecheck, the same standards document by path, and the same never-touch list. Do not
+  summarise these into the revision brief from memory: lift them from this set's implementer.
+- **Every commit prefixed `revision:`.** The engine reads that prefix: the PR title is never taken
+  from a revision commit. A round that commits nothing ends the loop, so "I could not address
+  this" is said in the reply, not committed.
+- **One file serves both review points.** At the group point `{{ISSUE}}` is empty and the
+  findings are about the whole branch; `{{ISSUE_LIST}}`, `{{GROUP_WHY}}` and
+  `{{PER_ISSUE_REVIEWS}}` are not supplied at either point, and writing one fails the round. Word
+  any issue read conditionally.
 
 **Group reviewer**
 - The suite command again, plus what running it whole involves here: how long it takes, what a
@@ -162,6 +197,8 @@ What each prompt must actually say, concretely, and where the generic versions a
   tree the issues after it then changed.
 
 **Planner**
+- `{{ISSUE_SCOPE}}`, literally, with a section saying a scoped run plans exactly those issues. A
+  planner without it plans the whole backlog on an `--issues` run and has its queue refused.
 - How to read this project's backlog: which labels mean what, how an epic is expressed, whether
   there is a milestone or project board that matters.
 - What makes two issues belong on one branch **here**.
@@ -188,8 +225,24 @@ The dry run prints the resolved prompt paths and the rendered `promptArgs`. Chec
   back to its stub — it warns, and the warning is the thing to act on.
 - **no `WARNING  Using the harness's GENERIC stub`** for any set. Repeat with a member from each
   set: a second set's prompts are only resolved when a member using it is named.
-- every placeholder the prompt writes appears in `promptArgs`. One that does not is a typo, and
-  it reaches the agent as a literal `{{TYPO}}`.
+- **every placeholder each prompt writes is one that pass is given.** In a prompt file an
+  unmatched `{{X}}` does not render as text — Sandcastle **fails the pass**, after the container
+  has started. The dry run prints only the implementer's map, so check the other four against
+  `references/contract.md`'s per-pass tables:
+
+  ```bash
+  for f in .sandcastle/*.md .sandcastle/prompts/*/*.md; do
+    echo "$f: $(grep -oE '\{\{ *[A-Za-z_][A-Za-z0-9_]* *\}\}' "$f" | sort -u | tr '\n' ' ')"
+  done
+  ```
+
+  Watch for three things in that list: a typo; a pass-specific placeholder in the wrong pass
+  (`{{ISSUE_LIST}}` in a revision prompt); and `{{PYTHON}}` anywhere a member resolves `python` to
+  null — **even in a sentence about it**. The harness warns that it "will render unreplaced"; it
+  does not, the pass fails.
+- `revision-prompt.md` (or each set's `revision`) is named in the dry run's resolved paths and not
+  under `node_modules`. It is resolved on every run, though only used on a rejection.
+- the planner writes `{{ISSUE_SCOPE}}`.
 - `npx tsc -p .sandcastle/tsconfig.json` still passes, if the config was touched.
 
 Then read the rendered prompt as the agent will see it, once, end to end. A prompt that

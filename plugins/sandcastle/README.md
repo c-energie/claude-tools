@@ -10,7 +10,7 @@ repo, no Notion, no Slack.
 | Skill | What it does |
 | --- | --- |
 | `sandcastle-install` | Install the harness into a workspace and get it to a verified, token-free green state — decide whether the root is an interdependent uv/npm workspace or a clone root, write the member table and prompt sets, wire the env, hand-write the Dockerfile, then prove it with smoke and preflight |
-| `sandcastle-prompts` | Write or repair the four prompts in a workspace's `.sandcastle/` — implementer, per-issue reviewer, group reviewer, planner — from that project's own CLAUDE.md, CODING_STANDARDS.md, test configuration and CI |
+| `sandcastle-prompts` | Write or repair the five prompts in a workspace's `.sandcastle/` — implementer, per-issue reviewer, group reviewer, revision, planner — from that project's own CLAUDE.md, CODING_STANDARDS.md, test configuration and CI |
 
 The two are a pair, in that order: `sandcastle-install` gets a workspace wired and verified,
 `sandcastle-prompts` writes the briefs the agent is actually told the rules by. Each is useful
@@ -71,5 +71,5 @@ plugins/sandcastle/
 ├── README.md                                  this file
 └── skills/sandcastle-prompts/
     ├── SKILL.md                               the method
-    └── references/contract.md                 placeholders and output blocks
+    └── references/contract.md                 the five prompts, placeholders per pass, output blocks
 ```
