@@ -16,11 +16,12 @@ every surface, including Cowork, which cannot fetch a second private repo):
 | [`plugins/devhub`](plugins/devhub/) | dev-hub authoring: write or fix a repo's committed `devhub.toml`, and the dev-hub plugin behind it. Outside the context stack — useful in any repo |
 | [`plugins/sandcastle`](plugins/sandcastle/) | Sandcastle harness authoring: write or repair a workspace's four agent prompts from that project's own standards. Outside the context stack |
 | [`plugins/skills`](plugins/skills/) | Skills for writing skills: `author-setup-skill` scaffolds and audits an interactive setup skill to a fifteen-lesson recipe. Outside the context stack |
+| [`plugins/project-workspace`](plugins/project-workspace/) | Document-workspace setup: create and wire the writing and analysis repos from the c-energie templates, adapt an existing document or analysis, add doc-publish. Enabled by the templates' own `.claude/settings.json`. Outside the context stack |
 
 Install: add this repo as a marketplace (`/plugin marketplace add c-energie/claude-tools`, or
 Cowork's plugin UI), then install `context-kit-core@c-energie` and — as the project needs
 them — `context-notion@c-energie`, `context-slack@c-energie`, `diagrams@c-energie`,
-`devhub@c-energie`, `sandcastle@c-energie`, `skills@c-energie`.
+`devhub@c-energie`, `sandcastle@c-energie`, `skills@c-energie`, `project-workspace@c-energie`.
 
 ## One catalog per org
 

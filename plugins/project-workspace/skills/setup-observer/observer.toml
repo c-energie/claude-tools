@@ -1,0 +1,33 @@
+# Everything setup-observer knows about the workspaces these skills set up. Its SKILL.md and
+# observe.py are verbatim copies of the master in the skills@c-energie plugin
+# (assets/setup-observer/); edit this file, not those. check-plugin.mjs errors on drift.
+
+# Extra tools to record versions of (git, gh, uv, python, node and claude always are).
+tools = ["latexmk", "make", "quarto"]
+# Env vars whose presence before setup is a deviation-in-waiting. Secrets are recorded as set/unset only.
+env_vars = ["DOC_REPO", "DOC_ENV", "FIGURES_HTML_DIR"]
+secret_vars = ["NOTION_TOKEN"]
+# Files and directories at the workspace root whose presence the baseline records.
+state_files = ["workspace.toml", "pyproject.toml", ".python-version", ".venv", ".env", ".claude/settings.json"]
+
+# Which repo a deviation is reported on. `upstream` and `this machine only` are implicit.
+
+[[owners]]
+repo = "c-energie/claude-tools"
+covers = "these skills and their scripts (plugins/project-workspace), and the observer itself"
+
+[[owners]]
+repo = "c-energie/doc-workspace-template"
+covers = "the workspace shell: its CLAUDE.md, README.md, .claude/settings.json, pyproject.toml"
+
+[[owners]]
+repo = "c-energie/analysis-template"
+covers = "doc_analysis, notebook-skeleton, its init.py, README, AGENTS.md"
+
+[[owners]]
+repo = "c-energie/writing-template"
+covers = "the LaTeX template, SETUP.md, its init.py"
+
+[[owners]]
+repo = "c-energie/doc-publish"
+covers = "the doc-publish CLI and its docs"

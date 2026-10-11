@@ -12,11 +12,12 @@
 The hook itself is a one-line shell append (see SKILL.md frontmatter), so failures are
 recorded even before uv or Python exist on the machine; this script only reads them.
 
-    uv run --no-project --python 3.12 .claude/skills/setup-observer/observe.py baseline
+    uv run --no-project --python 3.12 path/to/observe.py --root <repo root> baseline
 
 This file and SKILL.md are verbatim copies of the master in the skills@c-energie plugin
-(assets/setup-observer/); edit observer.toml beside them, which holds everything specific to
-this repo. Stdlib only.
+(assets/setup-observer/), whether copied into a repo's .claude/skills/ or shipped inside
+another plugin; edit observer.toml beside them, which holds everything specific to the repos
+it observes. Stdlib only.
 """
 import argparse
 import datetime
@@ -31,12 +32,27 @@ import sys
 import tomllib
 from pathlib import Path
 
-# .claude/skills/setup-observer/observe.py -> the repo root
-ROOT = Path(__file__).resolve().parents[3]
-OBS = ROOT / ".setup" / "observer"
-LOG = OBS / "log.md"
-EVENTS = OBS / "events.jsonl"
-BASELINE = OBS / "baseline.json"
+
+def default_root():
+    """The repo root when --root is not given: three levels up from a copy at
+    .claude/skills/setup-observer/observe.py, else the current directory (a copy shipped in a
+    plugin sits in the plugin cache, nowhere near the repo)."""
+    here = Path(__file__).resolve()
+    if here.parent.parent.name == "skills" and here.parents[2].name == ".claude":
+        return here.parents[3]
+    return Path.cwd()
+
+
+def set_root(root):
+    global ROOT, OBS, LOG, EVENTS, BASELINE
+    ROOT = Path(root).resolve()
+    OBS = ROOT / ".setup" / "observer"
+    LOG = OBS / "log.md"
+    EVENTS = OBS / "events.jsonl"
+    BASELINE = OBS / "baseline.json"
+
+
+set_root(default_root())
 CONFIG = Path(__file__).with_name("observer.toml")
 
 TOOLS = {
@@ -209,6 +225,8 @@ def cmd_redact(args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--root", help="the repo root: where .setup/observer/ lives, and the "
+                    "directory the hook writes under ($CLAUDE_PROJECT_DIR)")
     sub = ap.add_subparsers(dest="step", required=True)
     p = sub.add_parser("baseline")
     p.add_argument("--skill", default="unknown", help="the setup skill that invoked the observer")
@@ -217,6 +235,8 @@ def main(argv=None):
     p = sub.add_parser("redact")
     p.add_argument("files", nargs="+")
     args = ap.parse_args(argv)
+    if args.root:
+        set_root(args.root)
     return {"baseline": cmd_baseline, "events": cmd_events, "owners": cmd_owners,
             "redact": cmd_redact}[args.step](args)
 

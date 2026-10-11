@@ -60,6 +60,11 @@
       "name": "skills",
       "source": "./plugins/skills",
       "category": "productivity"
+    },
+    {
+      "name": "project-workspace",
+      "source": "./plugins/project-workspace",
+      "category": "productivity"
     }
   ]
 }

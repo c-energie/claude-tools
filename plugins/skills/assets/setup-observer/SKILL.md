@@ -1,6 +1,6 @@
 ---
 name: setup-observer
-description: Observe a setup run — record each deviation from the setup guide, research its cause outside the guide, and with the user's consent file the findings as GitHub issues or pull requests on the repo that owns them. Invoked first by every setup skill in this repo; or when the user asks to report setup problems.
+description: Observe a setup run — record each deviation from the setup guide, research its cause outside the guide, and with the user's consent file the findings as GitHub issues or pull requests on the repo that owns them. Invoked first by every setup skill beside it; or when the user asks to report setup problems.
 hooks:
   PostToolUseFailure:
     - matcher: "Bash|PowerShell"
@@ -21,10 +21,11 @@ reports the maintainer can act on. The setup itself always comes first: fix the 
 as the guide intends, and log it as you go.
 
 ```bash
-uv run --no-project --python 3.12 .claude/skills/setup-observer/observe.py <step>
+uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/observe.py" --root "${CLAUDE_PROJECT_DIR}" <step>
 ```
 
-Abbreviated `OBSERVE <step>`. Everything lives in `.setup/observer/` (gitignored). The hook
+Abbreviated `OBSERVE <step>`. Both paths are filled in when this skill loads, so the command
+works from any directory, and whether this skill was copied into the repo or ships in a plugin. Everything lives in `.setup/observer/` (gitignored). The hook
 in this skill's frontmatter appends every failed shell command to `events.jsonl` for the
 rest of the session; it needs nothing installed.
 
