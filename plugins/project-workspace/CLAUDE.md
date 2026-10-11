@@ -4,9 +4,9 @@
 
 **The document-workspace setup skills**, `plugins/project-workspace` inside
 `c-energie/claude-tools`, added 2026-10-11. Moved here from
-`c-energie/doc-workspace-template/.claude/skills/` so that a fix reaches workspaces already made
+`c-energie/project-workspace-template/.claude/skills/` so that a fix reaches workspaces already made
 from the template — a template copy is frozen at stamping, a plugin updates in place. All three
-templates (`doc-workspace-template`, `analysis-template`, `writing-template`) enable it through a
+templates (`project-workspace-template`, `analysis-template`, `writing-template`) enable it through a
 committed `.claude/settings.json` with `autoUpdate: true` on the `c-energie` marketplace entry.
 
 Outside the context stack, like `devhub` and `skills`: it reads no `context.json`.
@@ -28,7 +28,7 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
   `check-plugin.mjs` errors on drift. Only `observer.toml` is this plugin's own.
 - **`CLAUDE.writing-only.md` is workspace text, not plugin text.** `setup_workspace.py root` puts
   it in place of the template's full-layout `CLAUDE.md`. Keep it in step with
-  `doc-workspace-template/CLAUDE.md` — the two describe the same shell in two layouts.
+  `project-workspace-template/CLAUDE.md` — the two describe the same shell in two layouts.
 - **The scripts are stdlib-only Python with LF endings**, run through
   `uv run --no-project --python 3.12`, every write routed through `write`/`run` so `--dry-run`
   covers it. Their tests are the check: run both suites (README.md, "Tests") before a bump.

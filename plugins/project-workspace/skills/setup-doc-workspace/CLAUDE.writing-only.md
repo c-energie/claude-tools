@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working in this
 ## What this directory is
 
 The `<<WORKSPACE>>` workspace, **writing-only layout**: one checkout that authors one LaTeX
-document, with no analysis repo. Made from `c-energie/doc-workspace-template`.
+document, with no analysis repo. Made from `c-energie/project-workspace-template`.
 `workspace.toml` records `layout = "writing-only"`.
 
 It is **itself a git repo, but only as a SHELL**: it tracks this file, `.claude/`,
