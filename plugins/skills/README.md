@@ -13,8 +13,8 @@ skill of the kinds it knows.
 A setup skill — one that walks a user through creating repos from templates, installing tools
 and wiring them together — goes wrong in the same ways every time: the agent acts before the
 interview is finished, a rule that must never break lives only in prose, a step is "done when it
-looks right", the proof runs from one directory only. The five doc-workspace setup skills in
-`c-energie/doc-workspace-template` learned fifteen lessons fixing exactly those, and
+looks right", the proof runs from one directory only. The five doc-workspace setup skills (now
+the `project-workspace` plugin) learned fifteen lessons fixing exactly those, and
 `references/recipe.md` is that recipe.
 
 The skill applies it in order: interview into a JSON **spec**, `scaffold.mjs` turns the spec into
@@ -44,7 +44,14 @@ plugins/skills/
 
 Every setup skill starts by invoking `/setup-observer`: it baselines the machine, logs each place
 the guide and reality disagree (failed commands caught by a skill-scoped `PostToolUseFailure`
-hook), and with consent files redacted issues or PRs on the repo that owns each problem. It has to
-live **in the target repo** — the people running a setup may not have this plugin — so
-`scaffold.mjs` copies it in, unchanged, and writes the only per-repo part, `observer.toml`, from
-the interview. A repo that already has one is left alone and checked for drift from the master.
+hook), and with consent files redacted issues or PRs on the repo that owns each problem. The
+master here is inert; it runs from one of two kinds of copy, both verbatim:
+
+- **In a target repo's `.claude/skills/`** — `scaffold.mjs` copies it in and writes the only
+  per-repo part, `observer.toml`, from the interview. A repo that already has one is left alone
+  and checked for drift from the master.
+- **In another plugin's `skills/`** — `project-workspace` ships it as a live skill beside its
+  own `observer.toml`, and `check-plugin.mjs` errors if that copy drifts.
+
+Either way it is run as `"${CLAUDE_SKILL_DIR}/observe.py" --root "${CLAUDE_PROJECT_DIR}"`, so the
+same two files work wherever they sit.

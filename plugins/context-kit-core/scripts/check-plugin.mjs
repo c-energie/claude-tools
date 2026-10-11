@@ -184,6 +184,11 @@ const COPIES = [
   // people by notionUserId; pending-parse.mjs defines the queue format those rows land in.
   { file: 'scripts/lib.mjs',           origin: 'context-notion',   copies: ['context-slack'] },
   { file: 'scripts/pending-parse.mjs', origin: 'context-notion',   copies: ['context-slack'] },
+  // The step-0 setup observer. Its master is an inert asset in `skills` (scaffold.mjs copies it
+  // into repos); project-workspace ships it as a live skill, so the copy sits at another path
+  // (`to`). Both files are copied whole — neither has a banner — so any difference is drift.
+  { file: 'assets/setup-observer/SKILL.md',   to: 'skills/setup-observer/SKILL.md',   origin: 'skills', copies: ['project-workspace'] },
+  { file: 'assets/setup-observer/observe.py', to: 'skills/setup-observer/observe.py', origin: 'skills', copies: ['project-workspace'] },
 ];
 
 // Drop the shebang and the contiguous comment block at the top, then compare what is left.
@@ -206,19 +211,19 @@ const marketRoot = [join(root, '..', '..'), root]
   .find((d) => existsSync(join(d, '.claude-plugin', 'marketplace.json'))) ?? null;
 
 if (marketRoot) {
-  for (const { file, origin, copies } of COPIES) {
+  for (const { file, to = file, origin, copies } of COPIES) {
     const originPath = join(marketRoot, 'plugins', origin, file);
     if (!existsSync(originPath)) continue;
     const originBody = bodyOf(readFileSync(originPath, 'utf8'));
     for (const copy of copies) {
-      const copyPath = join(marketRoot, 'plugins', copy, file);
+      const copyPath = join(marketRoot, 'plugins', copy, to);
       // A legitimately absent copy is not drift — only plugins that ship the file are bound.
       if (!existsSync(copyPath)) continue;
       if (bodyOf(readFileSync(copyPath, 'utf8')) !== originBody) {
-        err(`plugins/${copy}/${file}`, `has DRIFTED from its original in \`${origin}\`. These are `
+        err(`plugins/${copy}/${to}`, `has DRIFTED from its original in \`${origin}\`. These are `
           + `deliberate copies and must stay identical below the header banner. Fix `
           + `\`plugins/${origin}/${file}\` first, then copy it over this one, restoring only this `
-          + `file's banner. (diff plugins/${origin}/${file} plugins/${copy}/${file})`);
+          + `file's banner. (diff plugins/${origin}/${file} plugins/${copy}/${to})`);
       }
     }
   }

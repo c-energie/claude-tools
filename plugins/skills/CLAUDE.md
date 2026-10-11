@@ -16,15 +16,20 @@ only edits this marketplace's plugins is `update-plugin`'s job, in context-kit-c
   `corson94/second-brain` `threads/2026-10-06-setup-skill-authoring-lessons.md`; once shipped,
   `references/recipe.md` is the version that matters. A new lesson goes here first; the skill
   cites lessons by number (**L*n***), so renumbering means updating `SKILL.md` too.
-- **The worked examples are `c-energie/doc-workspace-template`'s `.claude/skills/`.** The recipe
-  names them; it does not copy them.
-- **`assets/setup-observer/` is the master of the step-0 observer.** `scaffold.mjs` copies its
-  `SKILL.md` and `observe.py` *verbatim* into each target repo, beside an `observer.toml` it
-  writes from the spec — the one per-repo file (owner table, env vars, state files, extra
-  tools). It is copied rather than run from here because a setup skill's users may not have
-  this plugin. Keep both master files free of anything project-specific, or every copy
-  inherits it. Moved here from `doc-workspace-template` on 2026-10-06; that repo's own copy
-  predates `observer.toml` and is now downstream — re-sync it from here.
+- **The worked examples are the `project-workspace` plugin's skills** (moved there from
+  `c-energie/doc-workspace-template`'s `.claude/skills/` on 2026-10-11). The recipe names them;
+  it does not copy them.
+- **`assets/setup-observer/` is the master of the step-0 observer**, and it stays here because
+  any setup skill can use it, not only the doc-workspace ones. Its `SKILL.md` and `observe.py`
+  are copied *verbatim* to two kinds of place: `scaffold.mjs` copies them into a target repo's
+  `.claude/skills/` beside an `observer.toml` it writes from the spec; and `project-workspace`
+  ships them as a live skill beside its own `observer.toml`. The `observer.toml` is the one
+  per-deployment file (owner table, env vars, state files, extra tools). Keep both master files
+  free of anything project-specific, or every copy inherits it. **Location-independent**: the
+  command is `"${CLAUDE_SKILL_DIR}/observe.py" --root "${CLAUDE_PROJECT_DIR}"`, and without
+  `--root` the script falls back to three levels up when it sits in `.claude/skills/`, else the
+  current directory. **A change here is copied to `plugins/project-workspace/skills/setup-observer/`
+  in the same commit** — `check-plugin.mjs` errors on drift, and both plugins get a bump.
 - `assets/` sits outside `skills/` on purpose: only `skills/[name]/SKILL.md` registers as a
   plugin skill, so the observer's `SKILL.md` is inert here and live only once copied.
 - **`scaffold.mjs` and `SKILL.md` must agree** on the spec keys and on what the skeleton

@@ -7,3 +7,6 @@ plugins/*/scripts/mcp/bin/
 .claude/worktrees/
 .idea/
 *.stackdump
+
+# Python bytecode from running project-workspace's tests
+__pycache__/
