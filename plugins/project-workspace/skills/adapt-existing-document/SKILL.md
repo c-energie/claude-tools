@@ -1,6 +1,6 @@
 ---
 name: adapt-existing-document
-description: Adapt an existing LaTeX document to the conventions the figure tooling needs (Sections/[Name]/Figures, \graphicspath, bare filenames, labels mirroring filenames), one section at a time — in place, or moved from .setup/import-source/ into the template. Use after setup-doc-workspace in adapt or import mode, or when generated figures aren't found by the document.
+description: Adapt an existing LaTeX document to the conventions the figure tooling needs (Sections/[Name]/Figures, \graphicspath, bare filenames, labels mirroring filenames), one section at a time — in place, or moved from .setup/import-source/ into the template. Use after setup-project-workspace in adapt or import mode, or when generated figures aren't found by the document.
 ---
 
 # Adapt an existing document
@@ -93,7 +93,7 @@ bibliography location, whether a glossary exists, `\chapter` vs `\section`.
    and the `\graphicspath` entry from step 3 work, because the block compiles nowhere while
    it is commented. Re-comment it afterwards if the figure is not meant to appear yet.
    **After the first section only** (full layout), finish the workspace-root proof that
-   `setup-doc-workspace` §7 deferred — it could not run while the document had no
+   `setup-project-workspace` §7 deferred — it could not run while the document had no
    `Sections/` (#3). At the workspace root:
    `uv run python -c "import sys; from doc_analysis import notebook_setup, document_repo; notebook_setup(); print(sys.executable); print(document_repo())"`.
    Expect the root `.venv`'s interpreter, then the absolute path of the writing repo.

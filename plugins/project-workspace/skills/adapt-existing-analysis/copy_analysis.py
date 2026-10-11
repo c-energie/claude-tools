@@ -57,7 +57,7 @@ def set_root(root):
     WORK_DIR = ROOT / ".setup" / "analysis-import"
     PLAN = WORK_DIR / "plan.json"
     CLONE_DIR = ROOT / ".setup" / "analysis-source"
-    # The workspace's interpreter pin, written by setup-doc-workspace's `root` step (#9).
+    # The workspace's interpreter pin, written by setup-project-workspace's `root` step (#9).
     PYTHON_VERSION = ROOT / ".python-version"
 
 
@@ -84,7 +84,7 @@ PIN = re.compile(r"\d+\.\d+(?:\.\d+)?")
 # Pads a version to three parts as the top of a range: 3.12 -> 3.12.<any patch>.
 PATCH_MAX = 10**9
 # What a re-pin is followed by; the adapt skill spells it out the same way.
-SETUP_SCRIPT = Path(__file__).resolve().parents[1] / "setup-doc-workspace" / "setup_workspace.py"
+SETUP_SCRIPT = Path(__file__).resolve().parents[1] / "setup-project-workspace" / "setup_workspace.py"
 RESYNC = f'uv run --no-project --python 3.12 "{SETUP_SCRIPT.as_posix()}" sync'
 
 
@@ -112,7 +112,7 @@ def analysis_root(override=None):
     if override:
         return (ROOT / override).resolve()
     if not STATE_FILE.exists():
-        sys.exit("workspace.toml missing: run /project-workspace:setup-doc-workspace first, or pass --analysis-dir.")
+        sys.exit("workspace.toml missing: run /project-workspace:setup-project-workspace first, or pass --analysis-dir.")
     state = tomllib.loads(STATE_FILE.read_text(encoding="utf-8"))["workspace"]
     return (ROOT / state["analysis_dir"]).resolve()
 

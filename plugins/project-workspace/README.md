@@ -12,13 +12,13 @@ plugin, with auto-update on, so it loads as soon as you trust a workspace made f
 
 | Skill | What it does |
 | --- | --- |
-| `setup-doc-workspace` | First-run setup: create the writing repo (and, unless writing-only, the analysis repo) from the templates or adopt an Overleaf project, write the root `pyproject.toml`/`workspace.toml`, sync, prove the pipeline. Later: add the analysis repo to a writing-only workspace |
+| `setup-project-workspace` | First-run setup: create the writing repo (and, unless writing-only, the analysis repo) from the templates or adopt an Overleaf project, write the root `pyproject.toml`/`workspace.toml`, sync, prove the pipeline. Later: add the analysis repo to a writing-only workspace |
 | `adapt-existing-document` | Bring an existing document into the `Sections/` / `\graphicspath` / label conventions, one section at a time |
 | `adapt-existing-analysis` | Copy an existing analysis project's notebooks in — the source stays untouched — and retrofit each with the `save_fig`/`save_table` setup |
 | `setup-doc-publish` | Optional: install `doc-publish` for a corpus, Notion wiki or Quarto site |
 | `setup-observer` | Step 0 of the four above: baseline the machine, log every place the guide and reality disagree, and with consent file redacted issues or PRs on the repo that owns each problem |
 
-Invoke them by their full names, e.g. `/project-workspace:setup-doc-workspace`.
+Invoke them by their full names, e.g. `/project-workspace:setup-project-workspace`.
 
 ## Why a plugin and not copies in the template
 
@@ -33,7 +33,7 @@ plugin is versioned and updated in place.
 plugins/project-workspace/
   .claude-plugin/plugin.json
   skills/
-    setup-doc-workspace/
+    setup-project-workspace/
       SKILL.md
       setup_workspace.py           the step script: check, workspace, writing, analysis, root, ...
       test_setup_workspace.py
@@ -55,7 +55,7 @@ plugins/project-workspace/
 From the marketplace root:
 
 ```bash
-uv run --no-project --python 3.12 -m unittest discover -s plugins/project-workspace/skills/setup-doc-workspace
+uv run --no-project --python 3.12 -m unittest discover -s plugins/project-workspace/skills/setup-project-workspace
 uv run --no-project --python 3.12 -m unittest discover -s plugins/project-workspace/skills/adapt-existing-analysis
 ```
 

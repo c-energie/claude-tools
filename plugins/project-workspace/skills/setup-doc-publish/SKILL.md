@@ -1,6 +1,6 @@
 ---
 name: setup-doc-publish
-description: Publish the document with doc-publish — a queryable corpus, a Notion wiki or a Quarto site — by installing it into the workspace and wiring it to the document. Use after setup-doc-workspace when the user wants to publish, build the corpus, or sync to Notion.
+description: Publish the document with doc-publish — a queryable corpus, a Notion wiki or a Quarto site — by installing it into the workspace and wiring it to the document. Use after setup-project-workspace when the user wants to publish, build the corpus, or sync to Notion.
 ---
 
 # Set up doc-publish
@@ -8,7 +8,7 @@ description: Publish the document with doc-publish — a queryable corpus, a Not
 **First, invoke `/project-workspace:setup-observer`** (once per session): it records where this guide and
 reality disagree, so the maintainer can fix the guide.
 
-Prerequisite: `/project-workspace:setup-doc-workspace` has finished — `workspace.toml` exists at the
+Prerequisite: `/project-workspace:setup-project-workspace` has finished — `workspace.toml` exists at the
 workspace root. Read it for `layout`, `analysis_dir`, `writing_dir`,
 `analysis_distribution`, `extras` (no `layout` key means `full`).
 
@@ -36,7 +36,7 @@ Ask before every commit, push, Notion sync and `publish`.
 
 **Writing-only:**
 
-1. `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-doc-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" publish-root`
+1. `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" publish-root`
    — writes a minimal root `pyproject.toml` (only a `publish` extra), a root `.env` with
    an absolute `DOC_REPO` pointing at `<writing_dir>`, and adds `"publish"` to `extras`.
    It keeps any existing `pyproject.toml` or `.env`.
@@ -50,7 +50,7 @@ Ask before every commit, push, Notion sync and `publish`.
    publish = ["<analysis_distribution>[publish]"]
    ```
    and add `"publish"` to the `extras` list in `workspace.toml`.
-2. `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-doc-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync`
+2. `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync`
    (it passes every extra in `workspace.toml`; a bare `uv sync` would uninstall the others).
 3. `cd <analysis_dir> && uv run doc-publish --help` to confirm.
 

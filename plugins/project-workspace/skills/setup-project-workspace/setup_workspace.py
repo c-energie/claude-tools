@@ -12,7 +12,7 @@ The workspace (this repo) holds independent checkouts. The `full` layout has two
 The `writing-only` layout has just the writing member, and no pyproject.toml or venv
 unless doc-publish is wanted (the `publish-root` step).
 
-Driven by the `setup-doc-workspace` skill, which does the interview and then calls the
+Driven by the `setup-project-workspace` skill, which does the interview and then calls the
 steps below in order. Each step is also runnable by hand, and each refuses rather than
 overwrites when its target already exists:
 
@@ -308,7 +308,7 @@ def load_state():
 
 
 def write_state(state):
-    write(STATE_FILE, "# Written by setup-doc-workspace and read by the workspace skills.\n"
+    write(STATE_FILE, "# Written by setup-project-workspace and read by the workspace skills.\n"
                       "# Edit it if you rename a member directory or repo.\n\n[workspace]\n"
                       + "".join(f"{k} = {json.dumps(v)}\n" for k, v in state.items()))
 
@@ -765,7 +765,7 @@ def cmd_add_analysis(args):
     state = load_state().get("workspace", {})
     if not state:
         sys.exit("workspace.toml missing: this workspace is not set up. "
-                 "Run /project-workspace:setup-doc-workspace from the start instead.")
+                 "Run /project-workspace:setup-project-workspace from the start instead.")
     if state.get("layout", "full") == "full":
         wanted = {"analysis_dir": args.dir, "analysis_repo": args.repo, "backend": args.backend}
         differs = {k: state.get(k) for k, v in wanted.items() if state.get(k) != v}

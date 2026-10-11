@@ -1,5 +1,5 @@
 ---
-name: setup-doc-workspace
+name: setup-project-workspace
 description: First-run setup of a document workspace — create the writing repo (and, unless writing-only, the analysis repo) from the c-energie templates and prove the pipeline works — and later, adding the analysis repo to a writing-only workspace. Use when workspace.toml is missing at the workspace root, when the user asks to set up the workspace or bring an Overleaf document into it, or when a writing-only workspace now needs generated figures.
 ---
 
