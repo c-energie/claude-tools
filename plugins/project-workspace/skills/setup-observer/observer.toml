@@ -17,7 +17,7 @@ repo = "c-energie/claude-tools"
 covers = "these skills and their scripts (plugins/project-workspace), and the observer itself"
 
 [[owners]]
-repo = "c-energie/doc-workspace-template"
+repo = "c-energie/project-workspace-template"
 covers = "the workspace shell: its CLAUDE.md, README.md, .claude/settings.json, pyproject.toml"
 
 [[owners]]

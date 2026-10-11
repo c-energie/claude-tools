@@ -17,7 +17,7 @@ only edits this marketplace's plugins is `update-plugin`'s job, in context-kit-c
   `references/recipe.md` is the version that matters. A new lesson goes here first; the skill
   cites lessons by number (**L*n***), so renumbering means updating `SKILL.md` too.
 - **The worked examples are the `project-workspace` plugin's skills** (moved there from
-  `c-energie/doc-workspace-template`'s `.claude/skills/` on 2026-10-11). The recipe names them;
+  `c-energie/project-workspace-template`'s `.claude/skills/` on 2026-10-11). The recipe names them;
   it does not copy them.
 - **`assets/setup-observer/` is the master of the step-0 observer**, and it stays here because
   any setup skill can use it, not only the doc-workspace ones. Its `SKILL.md` and `observe.py`

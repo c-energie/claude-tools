@@ -1,7 +1,7 @@
 # project-workspace
 
 Setup and workflow skills for a **document workspace** — the shell repo made from
-[`c-energie/doc-workspace-template`](https://github.com/c-energie/doc-workspace-template) that
+[`c-energie/project-workspace-template`](https://github.com/c-energie/project-workspace-template) that
 holds a LaTeX writing repo (from `writing-template`) and an analysis repo (from
 `analysis-template`) side by side, with one uv venv and a figure pipeline from notebooks into the
 document.
@@ -65,7 +65,7 @@ A workspace made before 2026-10-11 still carries its own copies in `.claude/skil
 workspace root:
 
 1. Add `.claude/settings.json` — copy it from
-   [`doc-workspace-template`](https://github.com/c-energie/doc-workspace-template/blob/main/.claude/settings.json),
+   [`project-workspace-template`](https://github.com/c-energie/project-workspace-template/blob/main/.claude/settings.json),
    or merge its two keys into the one you have.
 2. Delete the five old skill directories: `setup-doc-workspace`, `adapt-existing-document`,
    `adapt-existing-analysis`, `setup-doc-publish`, `setup-observer` under `.claude/skills/`.

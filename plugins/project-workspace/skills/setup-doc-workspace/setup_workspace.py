@@ -66,7 +66,7 @@ def set_root(root):
 set_root(default_root())
 
 ORG = "c-energie"
-WORKSPACE_TEMPLATE = f"{ORG}/doc-workspace-template"
+WORKSPACE_TEMPLATE = f"{ORG}/project-workspace-template"
 WRITING_TEMPLATE = f"{ORG}/writing-template"
 ANALYSIS_TEMPLATE = f"{ORG}/analysis-template"
 
