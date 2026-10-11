@@ -1,6 +1,7 @@
 {
   "name": "context-notion",
   "description": "Notion middle layer for context-kit: generic add-action, add-open-question, log-decision, query-decisions, update-action and the pending queue (add-pending / process-pending), all driven by the project's context.json state.notion block — database IDs, property schemas and roster — so one install serves every Notion-backed project. Requires the Notion connector and the context-kit plugin.",
-  "version": "0.10.4",
-  "author": { "name": "c-energie" }
+  "version": "0.10.5",
+  "author": { "name": "c-energie" },
+  "license": "MIT"
 }

@@ -25,9 +25,9 @@ is a gallery quietly missing rows, which nobody notices because it still renders
 
 ```json
 {
-  "project": "FlexSense",
+  "project": "Acme",
   "state": {
-    "diagrams": { "repo": "net-flex/diagrams" }
+    "diagrams": { "repo": "acme-co/diagrams" }
   }
 }
 ```

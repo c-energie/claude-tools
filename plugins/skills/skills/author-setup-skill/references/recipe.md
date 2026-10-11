@@ -62,7 +62,7 @@ shape, not the specifics.
 
 13. **Two test layers**: throwaway scratch workspaces to smoke-test the script — including the
     guardrails: tamper with the source, aim a destination outside — and a real test bed for
-    acceptance (for the doc workspace, `corson94/test-doc`). Never a real project.
+    acceptance (for the doc workspace, a throwaway repo such as `your-user/test-doc`). Never a real project.
 14. **Audit with `writing-for-agents`**: description front-loaded, one trigger per branch (the
     doc-workspace descriptions shrank ~45%); positive instructions, with prohibitions kept only
     as hard guardrails and paired with the target; one source of truth per fact.

@@ -51,12 +51,12 @@ The script reports each entry's `type`, but `feedback` covers two different thin
 distinction is the whole job:
 
 - *"Prefers prose discussion over multiple-choice questions"* — about **the person**. Personal.
-- *"Wants the FlexSense docs to state only what works"* — about **a project**, in the same
+- *"Wants the Acme docs to state only what works"* — about **a project**, in the same
   `type: feedback` clothing. That belongs in that project's repo. Promote it into the personal
   layer and a product's documentation convention becomes a fact about a human being.
 
 The script flags entries whose summary names a project token from their own store path
-(`AMBIGUOUS — names "flexsense"...`). Treat that as a prompt to look, not a verdict: it reads
+(`AMBIGUOUS — names "acme"...`). Treat that as a prompt to look, not a verdict: it reads
 the summary only, because the body of a good memory always names the episode the fact was
 learned from, which is evidence for a general preference rather than a limit on its scope.
 

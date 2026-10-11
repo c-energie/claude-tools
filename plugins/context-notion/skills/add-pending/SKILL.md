@@ -49,8 +49,8 @@ list the fields that file accepts.
 At the **bottom**, in the format `pending-parse.mjs` owns:
 
 ```
-## Chase UKPN for the constraint-data extract
-- owner: adam
+## Chase the supplier for the data extract
+- owner: sam
 - due: 2026-08-05
 - notes: They said the Q3 dataset lands in August.
 ```

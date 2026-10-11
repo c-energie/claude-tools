@@ -1,7 +1,7 @@
 # MCP connectors
 
 Scripts for wiring Claude to GitHub and Notion with **one credential per project**, so a
-connection scoped to the thesis workspace can't reach FlexSense and vice versa.
+connection scoped to the thesis workspace can't reach a client project and vice versa.
 
 Tokens are never written into the Claude config files. They go into the OS credential store
 (Windows DPAPI, macOS Keychain, Linux libsecret) and are read back when a server starts.
@@ -76,9 +76,9 @@ After a `setup-connectors.mjs` run the runtime lives in `~/.mcp/`; before one, r
 files from the plugin's `scripts/mcp/` directory.
 
 ```bash
-node ~/.mcp/add-mcp-connector.mjs --github github-flexsense --binary ~/.mcp/bin/github-mcp-server --toolsets repos,issues
+node ~/.mcp/add-mcp-connector.mjs --github github-client --binary ~/.mcp/bin/github-mcp-server --toolsets repos,issues
 node ~/.mcp/add-mcp-connector.mjs --notion notion-thesis
-node ~/.mcp/mcp-launch.mjs github-flexsense --print    # check a stored credential
+node ~/.mcp/mcp-launch.mjs github-client --print    # check a stored credential
 ```
 
 Flags: `--toolsets <list>`, `--readonly`, `--binary <path>`, `--remote`.
@@ -117,7 +117,7 @@ config. Backups are left as `.bak-mcp`.
 
 ## When this becomes unnecessary
 
-FlexSense now has a GitHub org, so the endgame is a GitHub App installed on it: an admin
+Once a project has its own GitHub org, so the endgame is a GitHub App installed on it: an admin
 picks the repos once and it applies to everyone, with no local setup or per-machine PAT
 juggling. Until that App is set up, the fine-grained PATs above are still the way in — and
 Notion has no org-level equivalent, so its per-workspace integrations stay either way.

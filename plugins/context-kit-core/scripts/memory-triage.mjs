@@ -2,7 +2,7 @@
 // Drain Claude's native per-directory memory into the context ladder.
 //
 //   node memory-triage.mjs scan <context-repo-root> [--dir path] [--json] [--today YYYY-MM-DD]
-//   node memory-triage.mjs mark <memory-file> --to "corson94/second-brain memory.md" [--today ...]
+//   node memory-triage.mjs mark <memory-file> --to "your-user/second-brain memory.md" [--today ...]
 //
 // THE PROBLEM. Claude's own memory lives in ~/.claude/projects/[mangled-cwd]/memory/, keyed by
 // WORKING DIRECTORY. One project spread over several checkouts therefore gets several stores
@@ -156,7 +156,7 @@ for (const s of stores) {
 
 // `type: feedback` does NOT mean personal, and treating it that way is the mistake this guard
 // exists to prevent. "Jamie prefers prose over multiple choice" is about the person; "Jamie
-// wants FlexSense docs to state only what works" wears the same type and is about a project.
+// wants Acme docs to state only what works" wears the same type and is about a project.
 // Promote the second into the personal layer and a product's documentation convention becomes
 // a fact about a human being.
 //

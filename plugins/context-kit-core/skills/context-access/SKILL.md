@@ -43,7 +43,7 @@ Both are configuration, never a guess:
 
   **It may name more than one.** A fine-grained PAT has a single resource owner, so a project
   spanning two owners declares a map of owner to connection:
-  `{ "github": { "corson94": "github-second-brain", "c-energie": "github-second-brain-c-energie" } }`.
+  `{ "github": { "your-user": "github-second-brain", "c-energie": "github-second-brain-c-energie" } }`.
   Pick by the owner of the repo you are reaching for — that is what the key is for. Guessing
   costs you a 404 that says "not found" when it means "wrong credential", the same wrong-cause
   failure a data-source ID gives a Notion create. Where the owner is not knowable, the entry

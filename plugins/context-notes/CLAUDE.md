@@ -39,7 +39,7 @@ node ../context-kit-core/scripts/check-plugin.mjs .                # before any 
     "mindPalace": { "dataSource": "collection://[id]", "database": "[bare id]" },
     "organisations": [
       { "owner": "c-energie", "visibility": "personal" },
-      { "owner": "net-flex",  "visibility": "shared" }
+      { "owner": "acme-co",   "visibility": "shared" }
     ],
     "sensitiveTerms": ["salary", "non-disclosure"]
   }

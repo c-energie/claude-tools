@@ -95,7 +95,7 @@ return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
 ## 5. Property traps (all workspaces)
 
 - **The title is the title.** Owners, dates, statuses go in properties, never in the title
-  text — "Adam — chase UKPN — 5 Aug" arrives as an unfilterable row.
+  text — "Sam — chase the supplier — 5 Aug" arrives as an unfilterable row.
 - **Every date property needs both** `date:Name:start` (`YYYY-MM-DD`) **and**
   `date:Name:is_datetime` = `0`. Compute dates with
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs"` (`today`, `add 3d`, `add weekly`) — never
