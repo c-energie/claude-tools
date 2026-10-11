@@ -1,6 +1,6 @@
 """Tests for setup_workspace.py's import staging. Stdlib only: no pandoc, no network.
 
-    uv run --no-project --python 3.12 -m unittest discover -s plugins/project-workspace/skills/setup-doc-workspace
+    uv run --no-project --python 3.12 -m unittest discover -s plugins/project-workspace/skills/setup-project-workspace
 """
 import contextlib
 import io

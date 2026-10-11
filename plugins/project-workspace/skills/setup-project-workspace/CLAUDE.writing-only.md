@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working in this
 
 <!-- setup-banner -->
 > **Not set up yet?** `workspace.toml` does not exist beside this file, so nothing below is
-> true yet and the `<<...>>` names are unfilled. Run **/project-workspace:setup-doc-workspace** first.
+> true yet and the `<<...>>` names are unfilled. Run **/project-workspace:setup-project-workspace** first.
 <!-- /setup-banner -->
 
 ## What this directory is
@@ -44,7 +44,7 @@ uv sync --extra publish              # pass EVERY extra in workspace.toml's `ext
 uv run doc-publish doctor|build|check
 ```
 
-`/project-workspace:setup-doc-workspace` can also run its `sync` step, which reads that list
+`/project-workspace:setup-project-workspace` can also run its `sync` step, which reads that list
 for you.
 
 ## Overleaf routine (GitHub sync)
@@ -71,13 +71,13 @@ trust this folder (with auto-update on, so fixes arrive by themselves).
 
 | Skill | Use |
 |---|---|
-| `/project-workspace:setup-doc-workspace` | First-run setup: create the writing repo from the template (or adopt an Overleaf project), name it, prove the document builds. Safe to re-run. |
+| `/project-workspace:setup-project-workspace` | First-run setup: create the writing repo from the template (or adopt an Overleaf project), name it, prove the document builds. Safe to re-run. |
 | `/project-workspace:adapt-existing-document` | Bring an existing document into the `Sections/` / `\graphicspath` / label conventions, one section at a time. |
 | `/project-workspace:setup-doc-publish` | Optional: corpus, Notion wiki, Quarto site. |
 | `/project-workspace:setup-observer` | Invoked by the setup skills: logs deviations from the guide and, with consent, files them on GitHub. |
 
 `/project-workspace:adapt-existing-analysis` needs an analysis repo, which this layout does not have. To add
-one, keeping the writing repo as it is, run `/project-workspace:setup-doc-workspace` again: it moves the
+one, keeping the writing repo as it is, run `/project-workspace:setup-project-workspace` again: it moves the
 workspace to the full layout.
 
 ## Agent skills

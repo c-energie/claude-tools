@@ -1,6 +1,6 @@
 ---
 name: adapt-existing-analysis
-description: Copy an existing analysis project's notebooks into the workspace's analysis repo, placed by document section, and retrofit each with the save_fig/save_table setup. Use after setup-doc-workspace names an existing analysis, or when asked to bring old notebooks in.
+description: Copy an existing analysis project's notebooks into the workspace's analysis repo, placed by document section, and retrofit each with the save_fig/save_table setup. Use after setup-project-workspace names an existing analysis, or when asked to bring old notebooks in.
 ---
 
 # Adapt an existing analysis project
@@ -26,7 +26,7 @@ and as it is; all work happens on the copies inside `<analysis_dir>/`.
 
 Read `workspace.toml` at the workspace root for `analysis_dir`, `writing_dir`, `backend`.
 If it records `layout = "writing-only"`, stop: there is no analysis repo to copy into.
-Offer to add one first: `/project-workspace:setup-doc-workspace`, "Adding analysis later" (#18). Carry on
+Offer to add one first: `/project-workspace:setup-project-workspace`, "Adding analysis later" (#18). Carry on
 here once `workspace.toml` records `layout = "full"`.
 Read `<analysis_dir>/AGENTS.md`: it is the authority on the saver conventions.
 
@@ -47,7 +47,7 @@ whose section does not exist yet goes to `notebooks/unsorted/`.
 Ask where the existing project is: a local path, or `OWNER/NAME` (cloned into
 `.setup/analysis-source/`). Then `COPY plan --source <it>`.
 
-**Only part of a larger project?** Ask which notebooks or folders (setup-doc-workspace
+**Only part of a larger project?** Ask which notebooks or folders (setup-project-workspace
 question 10 may already have the answer), and pass each as `--include <glob>`, repeated:
 `COPY plan --source <it> --include 'results/**' --include 'notebooks/2024-*.ipynb'`.
 Globs are relative to the source, with `/` separators; `*` stays within one folder, `**`
@@ -80,7 +80,7 @@ outside the range, or could not check it, or the workspace has no `.python-versi
 1. Pick a version inside the source's `requires-python`, preferring its `.python-version`.
    Confirm it with the user.
 2. At the workspace root, `uv python pin <version>`, then re-sync:
-   `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-doc-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync`.
+   `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync`.
 3. Do this **before** step 3: the copies' dependencies go into the re-pinned venv.
 
 Done when `plan` printed `Inventoried N file(s) in <the path given>`, with `--include`

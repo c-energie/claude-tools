@@ -5,7 +5,7 @@ through creating repos from templates, installing tools and wiring things togeth
 learned by getting it wrong once, building the five doc-workspace setup skills in
 `c-energie/project-workspace-template` (2026-10), since moved to the `project-workspace` plugin in
 this marketplace (`plugins/project-workspace/skills/`). Those skills are the worked examples:
-`setup-doc-workspace` (interview, mode table, read-back, step script), `adapt-existing-analysis`
+`setup-project-workspace` (interview, mode table, read-back, step script), `adapt-existing-analysis`
 (guardrails in code, checkable criteria) and `setup-observer` (step 0). Read them; copy the
 shape, not the specifics.
 
