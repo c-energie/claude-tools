@@ -2,8 +2,8 @@
 // Associate a project with its context repo — the one first-run step that used to be a
 // hand-edited settings file.
 //
-//   node link-context.mjs corson94/thesis-context             # → .claude/settings.json (committed)
-//   node link-context.mjs corson94/thesis-context --local     # → .claude/settings.local.json
+//   node link-context.mjs your-user/thesis-context             # → .claude/settings.json (committed)
+//   node link-context.mjs your-user/thesis-context --local     # → .claude/settings.local.json
 //   node link-context.mjs <owner/repo> --project path/to/repo # target another checkout
 //   node link-context.mjs <owner/repo> --force                # re-point a project already linked
 //   node link-context.mjs <owner/repo> --no-verify            # skip the reachability check (offline)
@@ -75,7 +75,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 for (const f of flags) if (!OPTIONS.includes(f)) die(`unknown option --${f} (use ${OPTIONS.map((o) => `--${o}`).join(', ')})`);
 
-if (!positional[0]) die('needs the context repo as owner/repo (or "none" to opt out), e.g. corson94/thesis-context');
+if (!positional[0]) die('needs the context repo as owner/repo (or "none" to opt out), e.g. your-user/thesis-context');
 const optOut = OPTOUT.includes(positional[0].trim().toLowerCase());
 // Tolerate a pasted browser URL or a clone URL — the same repo, just wearing more clothes.
 const repo = optOut ? 'none' : positional[0]

@@ -12,9 +12,9 @@
 # Recipes name a context repo as <owner>/<repo>, matching the ~/.context/<owner>/<repo> clone
 # layout that context-repo.sh creates. Run them from anywhere inside this checkout.
 #
-#     just connector-check corson94/thesis-context
-#     just connector-add   corson94/thesis-context github
-#     just connector       corson94/thesis-context
+#     just connector-check your-user/thesis-context
+#     just connector-add   your-user/thesis-context github
+#     just connector       your-user/thesis-context
 
 # Windows needs an explicit shell, and both obvious choices are wrong. just's default is `sh`,
 # which a plain PowerShell session cannot find: the Windows PATH carries `C:\Program Files\Git\cmd`

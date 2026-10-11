@@ -92,9 +92,9 @@ be typed. Recipes name a context repo as `<owner>/<repo>`, matching the `~/.cont
 and run from anywhere inside this checkout:
 
 ```bash
-just connector-check corson94/thesis-context          # diagnose, changes nothing
-just connector-add   corson94/thesis-context github   # declare the provider in context.json
-just connector       corson94/thesis-context          # provision, prompting for the credential
+just connector-check your-user/thesis-context          # diagnose, changes nothing
+just connector-add   your-user/thesis-context github   # declare the provider in context.json
+just connector       your-user/thesis-context          # provision, prompting for the credential
 ```
 
 Convenience only, and today it covers the connector steps alone. `just` is not installed by

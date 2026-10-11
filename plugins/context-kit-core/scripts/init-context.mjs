@@ -75,7 +75,7 @@ const today = opts.today || new Date().toISOString().slice(0, 10);
 const clean = (s) => s.replace(/^(https:\/\/|git@)github\.com[/:]/, '').replace(/\.git$/, '').replace(/\/+$/, '');
 let projectRepo = null;
 if (!sbOnly) {
-  if (!positional[0]) die('needs the new context repo as owner/repo, e.g. corson94/thesis-context (or --second-brain-only)');
+  if (!positional[0]) die('needs the new context repo as owner/repo, e.g. your-user/thesis-context (or --second-brain-only)');
   projectRepo = clean(positional[0]);
   if (!REPO_RE.test(projectRepo)) die(`not an owner/repo name: ${positional[0]}`);
 }

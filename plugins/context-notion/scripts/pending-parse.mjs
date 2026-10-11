@@ -13,8 +13,8 @@
 //
 // The format is deliberately plain, because it has to be hand-writable in the GitHub web editor:
 //
-//   ## Chase UKPN for the constraint-data extract
-//   - owner: adam
+//   ## Chase the supplier for the data extract
+//   - owner: sam
 //   - due: 2026-08-05
 //   - notes: They said the Q3 dataset lands in August.
 //

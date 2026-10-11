@@ -1,3 +1,9 @@
 # github-mcp-server binaries are fetched per machine, never committed
 # (see plugins/context-kit-core/scripts/mcp/README.md)
 plugins/*/scripts/mcp/bin/
+
+# Local-only: sandcastle state (holds a .env), agent worktrees, IDE files, crash dumps
+.sandcastle/
+.claude/worktrees/
+.idea/
+*.stackdump

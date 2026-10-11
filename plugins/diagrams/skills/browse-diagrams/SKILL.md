@@ -53,7 +53,7 @@ Someone holding read on more than one store can pass them all and get one page, 
 filter facet:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/gallery-build.mjs" ~/c-energie/diagrams ~/net-flex/diagrams
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gallery-build.mjs" ~/c-energie/diagrams ~/acme-co/diagrams
 ```
 
 **This is a local convenience and must stay one.** It is for a person who already holds both

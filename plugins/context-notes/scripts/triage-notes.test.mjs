@@ -27,19 +27,19 @@ import {
 
 const ORGS = [
   { owner: 'c-energie', visibility: 'personal' },
-  { owner: 'net-flex', visibility: 'shared' },
+  { owner: 'acme-co', visibility: 'shared' },
 ];
 
 const NOTES = {
   _comment: 'a comment key, which must be skipped rather than rejected',
   mindPalace: {
     _comment: 'a nested comment key, which must also be skipped',
-    dataSource: 'collection://6dbf62e9-4462-82fc-b00d-07ee4d4eb085',
-    database: '0f9f62e9-4462-837a-8ff4-011c0a692148',
+    dataSource: 'collection://11111111-2222-4333-8444-555555555555',
+    database: '66666666-7777-4888-8999-aaaaaaaaaaaa',
   },
   _mindPalaceNote: 'another comment key',
   organisations: ORGS,
-  // A trimmed version of the real fourteen-term list in net-flex/context.
+  // A short, generic sensitive-terms list.
   sensitiveTerms: ['salary', 'non-disclosure', 'cap table', 'investor', 'moat'],
 };
 
@@ -49,11 +49,11 @@ const REPOS = [
   { owner: 'c-energie', name: 'dev-hub' },
   { owner: 'c-energie', name: 'doc-writer' },
   { owner: 'c-energie', name: 'secret-roster' },
-  { owner: 'net-flex', name: 'news-watch' },
-  { owner: 'net-flex', name: 'website' },
-  { owner: 'net-flex', name: 'context' },
-  { owner: 'net-flex', name: 'secret-roster' },
-  { owner: 'net-flex', name: 'dev-hub-catalogue' },
+  { owner: 'acme-co', name: 'news-watch' },
+  { owner: 'acme-co', name: 'website' },
+  { owner: 'acme-co', name: 'context' },
+  { owner: 'acme-co', name: 'secret-roster' },
+  { owner: 'acme-co', name: 'dev-hub-catalogue' },
   { owner: 'somebody-else', name: 'dev-hub' },   // undeclared org: must never be matched
 ];
 
@@ -65,7 +65,7 @@ const repoWith = (state) => {
   const dir = mkdtempSync(join(tmp, 'repo-'));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'context.json'),
-    JSON.stringify({ project: 'Test', contextRepo: 'net-flex/context', state }, null, 2));
+    JSON.stringify({ project: 'Test', contextRepo: 'acme-co/context', state }, null, 2));
   return dir;
 };
 
@@ -151,8 +151,8 @@ test('validation is exhaustive rather than fail-fast', () => {
 
 test('palaceIds strips the prefix from dataSource and leaves database bare', () => {
   const ids = palaceIds(NOTES);
-  assert.equal(ids.dataSource, '6dbf62e9-4462-82fc-b00d-07ee4d4eb085');
-  assert.equal(ids.database, '0f9f62e9-4462-837a-8ff4-011c0a692148');
+  assert.equal(ids.dataSource, '11111111-2222-4333-8444-555555555555');
+  assert.equal(ids.database, '66666666-7777-4888-8999-aaaaaaaaaaaa');
 });
 
 // ---------------------------------------------------------------- topic resolution
@@ -160,8 +160,8 @@ test('palaceIds strips the prefix from dataSource and leaves database bare', () 
 test('a topic equal to a repository name resolves to repo, with owner and visibility', () => {
   const r = resolveTopic('news-watch', REPOS, ORGS);
   assert.equal(r.outcome, 'repo');
-  assert.equal(r.repo, 'net-flex/news-watch');
-  assert.equal(r.owner, 'net-flex');
+  assert.equal(r.repo, 'acme-co/news-watch');
+  assert.equal(r.owner, 'acme-co');
   assert.equal(r.visibility, 'shared');       // from the ORGANISATION, not the repository
 });
 
@@ -170,9 +170,9 @@ test('visibility follows the organisation, so a personal org gives a personal de
 });
 
 test('a topic matching nothing resolves to a thread and names the context repo', () => {
-  const r = resolveTopic('general', REPOS, ORGS, { contextRepo: 'net-flex/context' });
+  const r = resolveTopic('general', REPOS, ORGS, { contextRepo: 'acme-co/context' });
   assert.equal(r.outcome, 'thread');
-  assert.equal(r.thread, 'net-flex/context');
+  assert.equal(r.thread, 'acme-co/context');
   assert.equal(r.repo, null);
 });
 
@@ -184,7 +184,7 @@ test('repo and thread are distinguishable states, not a value and its absence', 
 });
 
 test('matching is exact: claude does not become claude-tools', () => {
-  const r = resolveTopic('claude', REPOS, ORGS, { contextRepo: 'net-flex/context' });
+  const r = resolveTopic('claude', REPOS, ORGS, { contextRepo: 'acme-co/context' });
   assert.equal(r.outcome, 'thread');
 });
 
@@ -203,16 +203,16 @@ test('an undeclared organisation is never matched, however exact the name', () =
 });
 
 test('case is reported explicitly, never silently matched and never silently missed', () => {
-  const r = resolveTopic('Website', REPOS, ORGS, { contextRepo: 'net-flex/context' });
+  const r = resolveTopic('Website', REPOS, ORGS, { contextRepo: 'acme-co/context' });
   assert.equal(r.outcome, 'thread', 'a case difference is not a match');
-  assert.deepEqual(r.caseOnly, ['net-flex/website'], 'and the near-miss is named');
+  assert.deepEqual(r.caseOnly, ['acme-co/website'], 'and the near-miss is named');
 });
 
 test('a name matching in two declared organisations is ambiguous and names both', () => {
   const r = resolveTopic('secret-roster', REPOS, ORGS);
   assert.equal(r.outcome, 'ambiguous');
   assert.equal(r.repo, null, 'ambiguous resolves to NEITHER');
-  assert.deepEqual(r.candidates.map((c) => c.repo).sort(), ['c-energie/secret-roster', 'net-flex/secret-roster']);
+  assert.deepEqual(r.candidates.map((c) => c.repo).sort(), ['acme-co/secret-roster', 'c-energie/secret-roster']);
   assert.deepEqual(r.candidates.map((c) => c.visibility).sort(), ['personal', 'shared']);
 });
 
@@ -221,7 +221,7 @@ test('a name matching in two declared organisations is ambiguous and names both'
 test('a stale repository list still resolves, and the staleness is carried into the result', () => {
   const now = '2026-09-06T12:00:00Z';
   const old = '2026-09-01T12:00:00Z';                       // 120h, well past the threshold
-  const out = resolveTopics(['general'], repoList(old), NOTES, { contextRepo: 'net-flex/context', now });
+  const out = resolveTopics(['general'], repoList(old), NOTES, { contextRepo: 'acme-co/context', now });
   assert.equal(out.repoList.stale, true);
   assert.ok(out.repoList.ageHours > REPOS_STALE_HOURS);
   assert.equal(out.topics[0].outcome, 'thread', 'it still resolves');
@@ -230,20 +230,20 @@ test('a stale repository list still resolves, and the staleness is carried into 
 
 test('a fresh list attributes nothing, so a thread outcome is about the topic', () => {
   const out = resolveTopics(['general'], repoList('2026-09-06T11:00:00Z'), NOTES,
-    { contextRepo: 'net-flex/context', now: '2026-09-06T12:00:00Z' });
+    { contextRepo: 'acme-co/context', now: '2026-09-06T12:00:00Z' });
   assert.equal(out.repoList.stale, false);
   assert.equal(out.topics[0].staleListCaveat, undefined);
 });
 
-test('the nine live FlexSense topics route as the spec says they do', () => {
+test('the nine example topics route as the spec says they do', () => {
   const topics = ['dev-hub', 'news-watch', 'website', 'general', 'notion', 'test', 'claude', 'IP', 'tool-platform'];
   const out = resolveTopics(topics, repoList('2026-09-06T11:00:00Z'), NOTES,
-    { contextRepo: 'net-flex/context', now: '2026-09-06T12:00:00Z' });
+    { contextRepo: 'acme-co/context', now: '2026-09-06T12:00:00Z' });
   const by = Object.fromEntries(out.topics.map((t) => [t.topic, t.repo ?? t.outcome]));
   assert.deepEqual(by, {
     'dev-hub': 'c-energie/dev-hub',
-    'news-watch': 'net-flex/news-watch',
-    'website': 'net-flex/website',
+    'news-watch': 'acme-co/news-watch',
+    'website': 'acme-co/website',
     // The remaining six have no repository of that exact name, so they are threads.
     // `claude` is a thread because the repository is `claude-tools`; the fix is renaming the
     // Notion topic, not loosening the match. `IP` is a thread rather than a shortlist, which is
@@ -266,7 +266,7 @@ test('a multi-word term matches across the space it contains', () => {
 
 test('a short term matching inside a longer unrelated word is the SPECIFIED behaviour, not a bug', () => {
   // This is why `nda` was rejected from the real list: as a substring it hits `standardising`,
-  // `standardised` and `foundation`, all ordinary FlexSense vocabulary. Left in, it would have
+  // `standardised` and `foundation`, all ordinary project vocabulary. Left in, it would have
   // shortlisted most of the corpus and made the shortlist the table rather than the exception.
   // The rule is substring matching, so this asserts the trap rather than pretending it is fixed.
   assert.deepEqual(sensitiveHits('we are standardising the foundation', ['nda']), ['nda']);
@@ -404,8 +404,8 @@ test('a never-triaged topic (marker null) yields every note on the page', () => 
 test('identical text repeated in one page collapses to one row, keeping the earlier', () => {
   const page = [
     heading('2026-09-05'),
-    bullet('Ask Dan about the CLF bid', '2026-09-05T09:00:00.000Z'),
-    bullet('ask   dan  about the CLF BID', '2026-09-05T11:00:00.000Z'),   // the same note, retyped
+    bullet('Ask Sam about the grant bid', '2026-09-05T09:00:00.000Z'),
+    bullet('ask   sam  about the GRANT bid', '2026-09-05T11:00:00.000Z'),   // the same note, retyped
   ];
   const s = selectNotes('general', page, MARKER);
   assert.equal(s.notes.length, 1, 'a bullet typed twice must not become two issues');
@@ -501,11 +501,11 @@ test('parseNotionDatetime falls back to the leading date, and returns null for n
 
 const RES = (topic, outcome, extra = {}) => ({ topic, outcome, repo: null, thread: null, visibility: null, candidates: [], ...extra });
 const RES_REPO = (topic, repo, visibility) => RES(topic, 'repo', { repo, visibility, owner: repo.split('/')[0] });
-const RES_THREAD = (topic) => RES(topic, 'thread', { thread: 'net-flex/context' });
+const RES_THREAD = (topic) => RES(topic, 'thread', { thread: 'acme-co/context' });
 const RES_AMBIG = (topic) => RES(topic, 'ambiguous', {
   candidates: [
     { repo: 'c-energie/secret-roster', owner: 'c-energie', visibility: 'personal' },
-    { repo: 'net-flex/secret-roster', owner: 'net-flex', visibility: 'shared' },
+    { repo: 'acme-co/secret-roster', owner: 'acme-co', visibility: 'shared' },
   ],
 });
 
@@ -535,7 +535,7 @@ test('an ambiguous topic names both organisations and never targets either', () 
   const b = evaluateBatch([row], [RES_AMBIG('secret-roster')], NOTES);
   const expanded = renderShortlist(b);
   assert.match(expanded, /c-energie\/secret-roster \(personal\)/);
-  assert.match(expanded, /net-flex\/secret-roster \(shared\)/);
+  assert.match(expanded, /acme-co\/secret-roster \(shared\)/);
   assert.equal(b.rows[0].target, null, 'resolves to NEITHER, so nothing is targeted');
   assert.equal(renderTable(b).includes('secret-roster'), false, 'and it is absent from the main table');
 });
@@ -567,8 +567,8 @@ test('a sensitiveTerms hit beats a clean classification — the check cannot be 
 
 test('trigger 4 of 5: a shared destination shortlists, and the same row under personal does not', () => {
   const shared = evaluateBatch(
-    [{ ...CLEAN, topic: 'website', target: 'net-flex/website', why: 'closes when the PR merges' }],
-    [RES_REPO('website', 'net-flex/website', 'shared')], NOTES);
+    [{ ...CLEAN, topic: 'website', target: 'acme-co/website', why: 'closes when the PR merges' }],
+    [RES_REPO('website', 'acme-co/website', 'shared')], NOTES);
   assert.deepEqual(shared.rows[0].triggers, ['sharedDestination']);
 
   const personal = evaluateBatch([CLEAN], CLEAN_RES, NOTES);
@@ -581,8 +581,8 @@ test('trigger 5 of 5: a note that would be written directly shortlists on its ow
 });
 
 test('a note hitting two triggers appears ONCE with both reasons named', () => {
-  const row = { ...CLEAN, topic: 'website', target: 'net-flex/website', note: 'ship the investor page' };
-  const b = evaluateBatch([row], [RES_REPO('website', 'net-flex/website', 'shared')], NOTES);
+  const row = { ...CLEAN, topic: 'website', target: 'acme-co/website', note: 'ship the investor page' };
+  const b = evaluateBatch([row], [RES_REPO('website', 'acme-co/website', 'shared')], NOTES);
   assert.equal(b.shortlist.length, 1, 'once, not twice');
   assert.deepEqual(b.rows[0].triggers.sort(), ['sensitiveTerm', 'sharedDestination']);
   assert.equal(b.rows[0].shortlistReasons.length, 2, 'half a reason is not why it stopped');
@@ -606,7 +606,7 @@ test('a topic resolving to thread produces no issue row anywhere in the batch', 
 });
 
 test('under a thread topic the test starts at the action branch instead', () => {
-  const row = { id: '1', topic: 'IP', note: 'Jamie to send the envelope argument by Friday', destination: 'action', target: null, why: 'a dated commitment by a named person, and not code' };
+  const row = { id: '1', topic: 'IP', note: 'Jamie to send the pricing argument by Friday', destination: 'action', target: null, why: 'a dated commitment by a named person, and not code' };
   const b = evaluateBatch([row], [RES_THREAD('IP')], NOTES);
   assert.deepEqual(b.errors, []);
   assert.equal(b.table.length, 1);
@@ -692,7 +692,7 @@ test('the approved plan groups by destination and is printed before anything is 
   const rows = [
     CLEAN,
     { id: '2', topic: 'IP', note: 'Jamie to write it up by Friday', destination: 'action', target: null, why: 'a dated commitment by a named person' },
-    { id: '3', topic: 'IP', note: 'why the envelope is the moat', destination: 'thread', target: null, why: 'reasoning a later reader needs' },
+    { id: '3', topic: 'IP', note: 'why the pricing model is the moat', destination: 'thread', target: null, why: 'reasoning a later reader needs' },
   ];
   const b = evaluateBatch(rows, [...CLEAN_RES, RES_THREAD('IP')], NOTES);
   const plan = renderPlan(b);
@@ -780,7 +780,7 @@ test('a repository with no project creates the issue anyway and states the skip'
 });
 
 test('a shared destination NEVER produces a create command', () => {
-  const p = planIssue({ ...ISSUE_ROW, target: 'net-flex/website', visibility: 'shared' }, { projects: PROJECTS });
+  const p = planIssue({ ...ISSUE_ROW, target: 'acme-co/website', visibility: 'shared' }, { projects: PROJECTS });
   assert.equal(p.ok, false);
   assert.equal(p.shortlist, true);
   assert.match(p.reason, /flagged shared/);
@@ -845,7 +845,7 @@ test('a non-issue row is never planned as one', () => {
 });
 
 test('the optional projects map validates, and is keyed by repository not by topic', () => {
-  assert.deepEqual(validate({ ...NOTES, projects: { 'c-energie/dev-hub': 'Board', 'net-flex/website': 3 } }), []);
+  assert.deepEqual(validate({ ...NOTES, projects: { 'c-energie/dev-hub': 'Board', 'acme-co/website': 3 } }), []);
   const bad = validate({ ...NOTES, projects: { 'dev-hub': 'Board' } });
   assert.ok(bad.some((e) => /is not an owner\/repo name/.test(e)),
     'keyed by repository, so it cannot decide where a note goes — only which board an issue lands on');
@@ -863,7 +863,7 @@ const PROV = { capturedAt: '2026-09-05', topicUrl: 'https://notion.so/topic-IP' 
 
 const ACTION_ROW = {
   id: '1', topic: 'IP', destination: 'action',
-  note: 'Send the flexibility-envelope argument to Dan',
+  note: 'Send the pricing-model argument to Sam',
   owner: 'Jamie Corson', due: '2026-09-11', why: 'a dated commitment by a named person', ...PROV,
 };
 const QUESTION_ROW = {
@@ -956,7 +956,7 @@ test('every argument set carries provenance: topic, capture date and link', () =
 });
 
 test('text needing shell quoting passes through unaltered — arguments go to a skill, not a shell', () => {
-  const nasty = 'Ask "Dan" about $BUDGET & the `envelope`; 100% of it\nsecond line';
+  const nasty = 'Ask "Sam" about $BUDGET & the `pricing`; 100% of it\nsecond line';
   const p = planNotionRow({ ...ACTION_ROW, note: nasty });
   assert.equal(p.args.task, nasty, 'no escaping, no mangling — nothing here builds a command line');
 });
@@ -1009,91 +1009,91 @@ const TAXONOMY = parseTaxonomy(`
 version: 1
 
 topics:
-  gridflex:
+  platform:
     description: The platform as a whole.
   ip:
     description: Intellectual property and what protects it.
-  dno:
-    description: Distribution network operators.
+  supplier:
+    description: Component suppliers.
 
 aliases:
-  dnos: dno
-  distribution-network-operator: dno
+  suppliers: supplier
+  component-supplier: supplier
 `);
 
 const THREAD_ROW = {
   id: '1', topic: 'IP', destination: 'thread',
-  note: 'The window is not a moat; what would make it one is the flexibility envelope.',
+  note: 'The window is not a moat; what would make it one is the pricing model.',
   why: 'reasoning a future reader needs', capturedAt: '2026-09-05',
   topicUrl: 'https://notion.so/topic-IP',
   threadTitle: 'Why the window is not a moat', topics: ['ip'],
 };
 
 test('the taxonomy parser reads the tags and the aliases and nothing else', () => {
-  assert.deepEqual([...TAXONOMY.topics].sort(), ['dno', 'gridflex', 'ip']);
-  assert.equal(TAXONOMY.aliases.get('dnos'), 'dno');
+  assert.deepEqual([...TAXONOMY.topics].sort(), ['ip', 'platform', 'supplier']);
+  assert.equal(TAXONOMY.aliases.get('suppliers'), 'supplier');
   assert.equal(TAXONOMY.topics.has('version'), false, 'a top-level key is not a topic');
   assert.equal(TAXONOMY.topics.has('description'), false, 'nor is a nested one');
 });
 
-test('it parses the real taxonomy.yml, not just a fixture', () => {
-  const real = parseTaxonomy(readFileSync('C:/Users/corso/.context/net-flex/context/taxonomy.yml', 'utf8'));
-  assert.ok(real.topics.size > 10, `expected a populated vocabulary, got ${real.topics.size}`);
-  assert.ok(real.topics.has('gridflex'));
-  assert.equal(real.aliases.get('dnos'), 'dno');
+// Opt-in: set TRIAGE_REAL_TAXONOMY to a context repo's taxonomy.yml to run it.
+test('it parses a real taxonomy.yml, not just a fixture', { skip: !process.env.TRIAGE_REAL_TAXONOMY }, () => {
+  const real = parseTaxonomy(readFileSync(process.env.TRIAGE_REAL_TAXONOMY, 'utf8'));
+  assert.ok(real.topics.size > 0, `expected a populated vocabulary, got ${real.topics.size}`);
+  assert.equal(real.topics.has('version'), false, 'a top-level key is not a topic');
 });
 
 test('a tag present in the taxonomy passes', () => {
-  const p = planThread({ title: 'x', topics: ['ip'], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const p = planThread({ title: 'x', topics: ['ip'], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.ok, true);
   assert.deepEqual(p.topics, ['ip']);
 });
 
 test('an alias resolves to its canonical tag rather than being rejected', () => {
-  const p = planThread({ title: 'x', topics: ['dnos'], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const p = planThread({ title: 'x', topics: ['suppliers'], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.ok, true);
-  assert.deepEqual(p.topics, ['dno'], 'rejecting an alias would orphan the rename aliases exist to allow');
+  assert.deepEqual(p.topics, ['supplier'], 'rejecting an alias would orphan the rename aliases exist to allow');
 });
 
 test('a tag absent from the taxonomy SHORTLISTS and names the tag — it is never invented', () => {
-  const p = planThread({ title: 'x', topics: ['flexibility-envelope'], rows: [THREAD_ROW] },
-    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const p = planThread({ title: 'x', topics: ['pricing-model'], rows: [THREAD_ROW] },
+    { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.shortlist, true);
   assert.equal(p.ok, undefined, 'no save is planned');
-  assert.deepEqual(p.missingTags, ['flexibility-envelope']);
+  assert.deepEqual(p.missingTags, ['pricing-model']);
   assert.match(p.reason, /pull request/, 'the user adds the tag; triage does not');
 });
 
 test('a singleton exempt from front matter passes without a tag', () => {
   const p = planThread({ title: 'x', topics: [], rows: [THREAD_ROW] },
-    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context', singletonExempt: true });
+    { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context', singletonExempt: true });
   assert.equal(p.ok, true);
 });
 
 test('no tag at all, and not exempt, shortlists rather than saving untagged', () => {
-  const p = planThread({ title: 'x', topics: [], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const p = planThread({ title: 'x', topics: [], rows: [THREAD_ROW] }, { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.shortlist, true);
 });
 
 test('a status outside active|settled|archived is rejected — triage adds no vocabulary', () => {
   for (const status of ['seed', 'dropped', 'open']) {
     const p = planThread({ title: 'x', topics: ['ip'], status, rows: [THREAD_ROW] },
-      { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+      { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
     assert.equal(p.ok, false, `${status} should be rejected`);
     assert.match(p.reason, /not one of active \| settled \| archived/);
   }
   for (const status of THREAD_STATUSES) {
     assert.equal(planThread({ title: 'x', topics: ['ip'], status, rows: [THREAD_ROW] },
-      { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' }).ok, true);
+      { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' }).ok, true);
   }
 });
 
 test('a thread bound for another context repo is PARKED, never saved', () => {
-  const p = planThread({ title: 'x', topics: ['ip'], targetRepo: 'corson94/thesis-context', rows: [THREAD_ROW] },
-    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const p = planThread({ title: 'x', topics: ['ip'], targetRepo: 'example-user/thesis-context', rows: [THREAD_ROW] },
+    { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.park, true);
   assert.equal(p.ok, undefined);
-  assert.equal(p.target, 'corson94/thesis-context', 'and the target is named, so something waiting is visible');
+  assert.equal(p.target, 'example-user/thesis-context', 'and the target is named, so something waiting is visible');
   assert.match(p.reason, /that project's own session/);
   assert.match(p.reason, /taxonomy\.yml validation/, 'which is the reason the boundary exists');
 });
@@ -1103,7 +1103,7 @@ test('the assembled body carries every contributing note VERBATIM plus provenanc
     THREAD_ROW,
     { ...THREAD_ROW, id: '2', topic: 'website', note: 'The deploy preview is part of the same argument.' },
   ];
-  const p = planThread({ title: 'One argument', topics: ['ip'], rows }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const p = planThread({ title: 'One argument', topics: ['ip'], rows }, { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.ok, true);
   for (const r of rows) assert.ok(p.body.includes(r.note), 'the user\'s phrasing survives');
   assert.match(p.body, /Mind Palace/);
@@ -1118,7 +1118,7 @@ test('several rows sharing a thread produce ONE save and mark each row separatel
     { ...THREAD_ROW, id: '3', topic: 'general', thread: 'moat', note: 'third strand' },
   ];
   const batch = evaluateBatch(rows, [RES_THREAD('IP'), RES_THREAD('website'), RES_THREAD('general')], NOTES);
-  const out = planThreads(batch, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const out = planThreads(batch, { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(out.saves.length, 1, 'one thread, not one per bullet');
   assert.deepEqual(out.saves[0].rowIds, ['1', '2', '3'], 'each contributing note is marked individually');
   for (const s of ['first strand', 'second strand', 'third strand']) assert.ok(out.saves[0].body.includes(s));
@@ -1130,7 +1130,7 @@ test('rows under different threads stay separate — a thread is not a dumping g
     { ...THREAD_ROW, id: '2', topic: 'notion', thread: 'meetings', note: 'b' },
   ];
   const batch = evaluateBatch(rows, [RES_THREAD('IP'), RES_THREAD('notion')], NOTES);
-  const out = planThreads(batch, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const out = planThreads(batch, { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(out.saves.length, 2);
 });
 
@@ -1140,7 +1140,7 @@ test('an ANGLE BRACKET in a note reaches the body and never a front-matter value
   // rather than being folded into "special characters".
   const note = 'Replace <placeholder> with the real id before <shipping>';
   const p = planThread({ title: 'x', topics: ['ip'], rows: [{ ...THREAD_ROW, note }] },
-    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+    { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.ok, true);
   assert.ok(p.body.includes(note), 'body text is fine and must not be mangled');
   // Nothing this plugin produces is a front-matter value: it has no front-matter knowledge at all.
@@ -1152,7 +1152,7 @@ test('an ANGLE BRACKET in a note reaches the body and never a front-matter value
 test('YAML-significant characters in a note are carried without corrupting anything', () => {
   const note = '- leading dash\nkey: value\n  indented: more\n"quoted"  #hash  |pipe  >fold';
   const p = planThread({ title: 'x', topics: ['ip'], rows: [{ ...THREAD_ROW, note }] },
-    { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+    { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.ok(p.body.includes(note));
 });
 
@@ -1164,7 +1164,7 @@ test('this plugin holds no thread front-matter knowledge — that is the design,
 });
 
 test('a thread with no contributing notes is refused rather than saved empty', () => {
-  const p = planThread({ title: 'x', topics: ['ip'], rows: [] }, { taxonomy: TAXONOMY, resolvedRepo: 'net-flex/context' });
+  const p = planThread({ title: 'x', topics: ['ip'], rows: [] }, { taxonomy: TAXONOMY, resolvedRepo: 'acme-co/context' });
   assert.equal(p.ok, false);
   assert.match(p.reason, /no contributing notes/);
 });
@@ -1180,9 +1180,9 @@ test('a thread with no contributing notes is refused rather than saved empty', (
 // .claude/threads/.
 
 const ORGS_H = [
-  { owner: 'corson94', visibility: 'personal' },
+  { owner: 'example-user', visibility: 'personal' },
   { owner: 'c-energie', visibility: 'personal' },
-  { owner: 'net-flex', visibility: 'shared' },
+  { owner: 'acme-co', visibility: 'shared' },
 ];
 
 const item = (fm, body = 'The item itself, with enough context that the receiving session needs nothing from here.') =>
@@ -1190,16 +1190,16 @@ const item = (fm, body = 'The item itself, with enough context that the receivin
 
 test('kind: issue with a repo field parses', () => {
   const p = parseHandoffItem(item({
-    title: 'Add a dry-run flag', project: 'net-flex/context', kind: 'issue',
-    repo: 'net-flex/website', date: '2026-09-05',
+    title: 'Add a dry-run flag', project: 'acme-co/context', kind: 'issue',
+    repo: 'acme-co/website', date: '2026-09-05',
   }), '2026-09-05-dry-run.md');
   assert.equal(p.ok, true, p.errors.join('; '));
   assert.equal(p.kind, 'issue');
-  assert.equal(p.repo, 'net-flex/website');
+  assert.equal(p.repo, 'acme-co/website');
 });
 
 test('kind: issue WITHOUT a repo field is rejected, naming the missing field', () => {
-  const p = parseHandoffItem(item({ title: 'x', project: 'net-flex/context', kind: 'issue', date: '2026-09-05' }), 'x.md');
+  const p = parseHandoffItem(item({ title: 'x', project: 'acme-co/context', kind: 'issue', date: '2026-09-05' }), 'x.md');
   assert.equal(p.ok, false);
   assert.ok(p.errors.some((e) => /requires a "repo" field/.test(e)));
   assert.ok(p.errors.some((e) => /not inferred from the text/.test(e)));
@@ -1209,7 +1209,7 @@ test('an item in the OLD four-kind format with no repo: parses unchanged', () =>
   // The compatibility case: repurposing the contract must not strand items already in a queue.
   for (const kind of ['action', 'decision', 'open-question', 'thread-seed']) {
     const p = parseHandoffItem(item({
-      title: 'A pre-existing item', project: 'corson94/thesis-context', kind, date: '2026-08-20',
+      title: 'A pre-existing item', project: 'example-user/thesis-context', kind, date: '2026-08-20',
     }), '2026-08-20-something.md');
     assert.equal(p.ok, true, `${kind}: ${p.errors.join('; ')}`);
     assert.equal(p.repo, null, 'absent repo: is normal for these kinds');
@@ -1218,7 +1218,7 @@ test('an item in the OLD four-kind format with no repo: parses unchanged', () =>
 });
 
 test('the date falls back to the filename when front-matter omits it', () => {
-  const p = parseHandoffItem(item({ title: 'x', project: 'corson94/thesis-context', kind: 'action' }), '2026-08-13-topic.md');
+  const p = parseHandoffItem(item({ title: 'x', project: 'example-user/thesis-context', kind: 'action' }), '2026-08-13-topic.md');
   assert.equal(p.date, '2026-08-13');
 });
 
@@ -1231,7 +1231,7 @@ test('an unknown kind, a missing project and a bad repo name are each named', ()
 });
 
 test('an angle bracket in a front-matter value is reported — the ingester drops it silently', () => {
-  const p = parseHandoffItem(item({ title: 'Replace <placeholder>', project: 'corson94/thesis-context', kind: 'action' }), 'x.md');
+  const p = parseHandoffItem(item({ title: 'Replace <placeholder>', project: 'example-user/thesis-context', kind: 'action' }), 'x.md');
   assert.equal(p.ok, false);
   assert.ok(p.errors.some((e) => /angle bracket/.test(e) && /silently/.test(e)));
 });
@@ -1245,31 +1245,31 @@ test('a file with no front-matter block is rejected rather than half-read', () =
 const parsed = (fm) => parseHandoffItem(item(fm), '2026-09-05-x.md');
 
 test('an item bound for a PERSONAL context repo drains automatically', () => {
-  const c = classifyHandoff(parsed({ title: 'x', project: 'corson94/thesis-context', kind: 'action' }),
-    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  const c = classifyHandoff(parsed({ title: 'x', project: 'example-user/thesis-context', kind: 'action' }),
+    { organisations: ORGS_H, selfRepo: 'example-user/second-brain' });
   assert.equal(c.action, 'drain');
   assert.equal(c.visibility, 'personal');
   assert.match(c.reason, /gating you on your own approval/);
 });
 
 test('the SAME item bound for a SHARED context repo is listed and left', () => {
-  const c = classifyHandoff(parsed({ title: 'x', project: 'net-flex/context', kind: 'action' }),
-    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  const c = classifyHandoff(parsed({ title: 'x', project: 'acme-co/context', kind: 'action' }),
+    { organisations: ORGS_H, selfRepo: 'example-user/second-brain' });
   assert.equal(c.action, 'list');
   assert.equal(c.visibility, 'shared');
   assert.match(c.reason, /the gate sits exactly here/);
 });
 
 test('an item targeting THIS repo is written — you cannot hand off to yourself', () => {
-  const c = classifyHandoff(parsed({ title: 'x', project: 'corson94/second-brain', kind: 'action' }),
-    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  const c = classifyHandoff(parsed({ title: 'x', project: 'example-user/second-brain', kind: 'action' }),
+    { organisations: ORGS_H, selfRepo: 'example-user/second-brain' });
   assert.equal(c.action, 'drain');
   assert.match(c.reason, /cannot hand off to yourself/);
 });
 
 test('an item whose target repo cannot be resolved is LISTED, never defaulted', () => {
   const c = classifyHandoff(parsed({ title: 'x', project: 'some-other-org/context', kind: 'action' }),
-    { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+    { organisations: ORGS_H, selfRepo: 'example-user/second-brain' });
   assert.equal(c.action, 'list');
   assert.match(c.reason, /cannot be resolved/);
   assert.match(c.reason, /must not land somewhere arbitrary/);
@@ -1277,8 +1277,8 @@ test('an item whose target repo cannot be resolved is LISTED, never defaulted', 
 
 test('an item whose repo: is unreachable is listed with that reason', () => {
   const c = classifyHandoff(
-    parsed({ title: 'x', project: 'corson94/thesis-context', kind: 'issue', repo: 'corson94/private-thing' }),
-    { organisations: ORGS_H, selfRepo: 'corson94/second-brain', unreachable: ['corson94/private-thing'] });
+    parsed({ title: 'x', project: 'example-user/thesis-context', kind: 'issue', repo: 'example-user/private-thing' }),
+    { organisations: ORGS_H, selfRepo: 'example-user/second-brain', unreachable: ['example-user/private-thing'] });
   assert.equal(c.action, 'list');
   assert.match(c.reason, /credential problem, not a routing one/);
 });
@@ -1291,11 +1291,11 @@ test('an unparseable item is listed with its parse errors, never drained', () =>
 
 test('visibility comes from the SAME organisations flag the shortlist rules use', () => {
   // Read the same way from the same place, so the two can never disagree about an owner.
-  const shared = classifyHandoff(parsed({ title: 'x', project: 'net-flex/context', kind: 'action' }),
-    { organisations: NOTES.organisations, selfRepo: 'corson94/second-brain' });
+  const shared = classifyHandoff(parsed({ title: 'x', project: 'acme-co/context', kind: 'action' }),
+    { organisations: NOTES.organisations, selfRepo: 'example-user/second-brain' });
   assert.equal(shared.visibility, 'shared');
   const personal = classifyHandoff(parsed({ title: 'x', project: 'c-energie/dev-hub', kind: 'action' }),
-    { organisations: NOTES.organisations, selfRepo: 'corson94/second-brain' });
+    { organisations: NOTES.organisations, selfRepo: 'example-user/second-brain' });
   assert.equal(personal.visibility, 'personal');
 });
 
@@ -1310,19 +1310,19 @@ const queueDir = (files) => {
 };
 
 test('README.md and INDEX.md are not items', () => {
-  const dir = queueDir({ '2026-09-05-a.md': { title: 'a', project: 'corson94/thesis-context', kind: 'action' } });
-  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  const dir = queueDir({ '2026-09-05-a.md': { title: 'a', project: 'example-user/thesis-context', kind: 'action' } });
+  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'example-user/second-brain' });
   assert.equal(q.total, 1);
   rmSync(dir, { recursive: true, force: true });
 });
 
 test('a queue splits into drain-now and list-only', () => {
   const dir = queueDir({
-    '2026-09-01-mine.md': { title: 'mine', project: 'corson94/thesis-context', kind: 'action' },
-    '2026-09-02-theirs.md': { title: 'theirs', project: 'net-flex/context', kind: 'decision' },
-    '2026-09-03-issue.md': { title: 'an issue', project: 'corson94/thesis-context', kind: 'issue', repo: 'corson94/serl-mock' },
+    '2026-09-01-mine.md': { title: 'mine', project: 'example-user/thesis-context', kind: 'action' },
+    '2026-09-02-theirs.md': { title: 'theirs', project: 'acme-co/context', kind: 'decision' },
+    '2026-09-03-issue.md': { title: 'an issue', project: 'example-user/thesis-context', kind: 'issue', repo: 'example-user/sim-data' },
   });
-  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'example-user/second-brain' });
   assert.equal(q.total, 3);
   assert.deepEqual(q.drain.map((i) => i.title).sort(), ['an issue', 'mine']);
   assert.deepEqual(q.list.map((i) => i.title), ['theirs']);
@@ -1330,8 +1330,8 @@ test('a queue splits into drain-now and list-only', () => {
 });
 
 test('the carried-over section renders WITH A COUNT when items were drained', () => {
-  const dir = queueDir({ '2026-09-01-mine.md': { title: 'mine', project: 'corson94/thesis-context', kind: 'action' } });
-  const out = renderCarriedOver(readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' }));
+  const dir = queueDir({ '2026-09-01-mine.md': { title: 'mine', project: 'example-user/thesis-context', kind: 'action' } });
+  const out = renderCarriedOver(readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'example-user/second-brain' }));
   assert.match(out, /carried over \(1\)/);
   assert.match(out, /mine/);
   rmSync(dir, { recursive: true, force: true });
@@ -1339,8 +1339,8 @@ test('the carried-over section renders WITH A COUNT when items were drained', ()
 
 test('it renders with a ZERO count rather than being omitted', () => {
   // An omitted section makes "nothing was carried over" indistinguishable from "not printed".
-  const dir = queueDir({ '2026-09-02-theirs.md': { title: 'theirs', project: 'net-flex/context', kind: 'action' } });
-  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' });
+  const dir = queueDir({ '2026-09-02-theirs.md': { title: 'theirs', project: 'acme-co/context', kind: 'action' } });
+  const q = readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'example-user/second-brain' });
   const out = renderCarriedOver(q);
   assert.match(out, /carried over \(0\)/);
   assert.match(out, /\(nothing\)/);
@@ -1356,8 +1356,8 @@ test('an empty queue still renders a zero section and a zero backlog', () => {
 });
 
 test('shared items are listed EVERY run, so a stalled one stays visible', () => {
-  const dir = queueDir({ '2026-08-20-old.md': { title: 'an old shared item', project: 'net-flex/context', kind: 'action' } });
-  const out = renderCarriedOver(readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'corson94/second-brain' }));
+  const dir = queueDir({ '2026-08-20-old.md': { title: 'an old shared item', project: 'acme-co/context', kind: 'action' } });
+  const out = renderCarriedOver(readHandoffQueue(dir, { organisations: ORGS_H, selfRepo: 'example-user/second-brain' }));
   assert.match(out, /waiting for a person \(1\)/);
   assert.match(out, /an old shared item/);
   rmSync(dir, { recursive: true, force: true });
@@ -1372,10 +1372,10 @@ test('a repo with no handoff/ directory reports zero rather than erroring', () =
 
 test('re-running over a half-drained queue produces no duplicate work', () => {
   const dir = queueDir({
-    '2026-09-01-one.md': { title: 'one', project: 'corson94/thesis-context', kind: 'action' },
-    '2026-09-02-two.md': { title: 'two', project: 'corson94/thesis-context', kind: 'action' },
+    '2026-09-01-one.md': { title: 'one', project: 'example-user/thesis-context', kind: 'action' },
+    '2026-09-02-two.md': { title: 'two', project: 'example-user/thesis-context', kind: 'action' },
   });
-  const opts = { organisations: ORGS_H, selfRepo: 'corson94/second-brain' };
+  const opts = { organisations: ORGS_H, selfRepo: 'example-user/second-brain' };
   assert.equal(readHandoffQueue(dir, opts).drain.length, 2);
 
   // "one" was written, so it moved to done/. "two" failed, so it stayed exactly where it was.

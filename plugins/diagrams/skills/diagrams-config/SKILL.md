@@ -21,10 +21,10 @@ already hold the path) and prints the store repo, its checkout, the org and the 
 
 ```json
 {
-  "project": "FlexSense",
-  "contextRepo": "net-flex/context",
+  "project": "Acme",
+  "contextRepo": "acme-co/context",
   "state": {
-    "diagrams": { "repo": "net-flex/diagrams" }
+    "diagrams": { "repo": "acme-co/diagrams" }
   }
 }
 ```
