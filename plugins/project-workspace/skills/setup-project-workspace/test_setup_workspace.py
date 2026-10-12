@@ -398,6 +398,17 @@ class AddAnalysis(Workspace):
         self.assertTrue((self.tmp / "thesis" / "setup-nested.sh").exists())
         self.assertTrue((self.tmp / "thesis" / ".gitattributes").exists())
 
+    def test_an_outdated_script_is_replaced(self):
+        # setUp's copy has no in-place support; gh_raw stands in for the template's.
+        self.add()
+        self.assertIn("updated an outdated setup-nested.sh", self.out)
+
+    def test_a_current_script_is_kept(self):
+        (self.tmp / "thesis" / "setup-nested.sh").write_text("# mine\nMODE=in-place\n",
+                                                             encoding="utf-8")
+        self.add()
+        self.assertEqual(self.read("thesis/setup-nested.sh"), "# mine\nMODE=in-place\n")
+
     def test_bad_python_is_refused(self):
         with self.assertRaises(SystemExit):
             self.add("--python", "3.9")
@@ -448,8 +459,15 @@ class Migrate(Workspace):
         (self.tmp / ".venv").mkdir()
         (self.tmp / "CLAUDE.md").write_text("old\n", encoding="utf-8")
 
-    def migrate(self, *flags, legacy=LEGACY_FULL):
+    CURRENT_SCRIPT = "#!/bin/sh\nMODE=in-place\n"
+
+    def migrate(self, *flags, legacy=LEGACY_FULL, gh_raw=None):
         (self.tmp / "workspace.toml").write_text(legacy, encoding="utf-8")
+
+        def fetched(repo, path):
+            # Where the analysis checkout is when the template is read: still beside.
+            self.analysis_beside_at_fetch = (self.tmp / "thesis-analysis").exists()
+            return self.CURRENT_SCRIPT if path == "setup-nested.sh" else "*.sh text eol=lf\n"
 
         def nested(cmd, cwd=None, **kw):
             # uv looks upward for a workspace root: the old one must be gone by now.
@@ -460,9 +478,36 @@ class Migrate(Workspace):
                     encoding="utf-8")
         with mock.patch.object(sw, "run", side_effect=nested) as run, \
                 mock.patch.object(sw, "find_sh", return_value="/bin/sh"), \
+                mock.patch.object(sw, "gh_raw", side_effect=gh_raw or fetched), \
                 mock.patch.object(sw, "origin_url", return_value="https://x/a.git"):
             self.call(*flags, "migrate")
         return run
+
+    def test_outdated_setup_nested_is_replaced_before_the_move(self):
+        self.migrate()
+        self.assertTrue(self.analysis_beside_at_fetch)
+        self.assertEqual(self.read("thesis-writing/setup-nested.sh"), self.CURRENT_SCRIPT)
+        self.assertTrue((self.tmp / "thesis-writing" / ".gitattributes").exists())
+
+    def test_outdated_setup_nested_is_in_the_plan(self):
+        self.migrate("--dry-run")
+        self.assertIn("update the outdated thesis-writing/setup-nested.sh", self.out)
+        self.assertEqual(self.read("thesis-writing/setup-nested.sh"), "#!/bin/sh\n")
+
+    def test_template_fetch_failure_stops_before_anything_changes(self):
+        with self.assertRaises(SystemExit):
+            self.migrate(gh_raw=mock.Mock(side_effect=SystemExit("no network")))
+        self.assertTrue((self.tmp / "thesis-analysis" / ".git").exists())
+        self.assertTrue((self.tmp / "pyproject.toml").exists())
+        self.assertTrue((self.tmp / ".venv").exists())
+        self.assertEqual(self.read("CLAUDE.md"), "old\n")
+        self.assertIn("[workspace]", self.read("workspace.toml"))
+
+    def test_current_setup_nested_is_left_alone(self):
+        (self.tmp / "thesis-writing" / "setup-nested.sh").write_text(
+            "#!/bin/sh\n# mine\nMODE=in-place\n", encoding="utf-8")
+        self.migrate(gh_raw=mock.Mock(side_effect=AssertionError("fetched a current script")))
+        self.assertIn("# mine", self.read("thesis-writing/setup-nested.sh"))
 
     def test_moves_analysis_inside_and_runs_setup_nested_in_place(self):
         run = self.migrate()

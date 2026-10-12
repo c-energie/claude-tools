@@ -142,6 +142,10 @@ ANALYSIS_PYTHON = "3.12"
 PYTHON_PIN = re.compile(r"\d+\.\d+(?:\.\d+)?")
 
 NESTED_LAYOUT = "writing-hosts-analysis"
+# A line only a setup-nested.sh that can record a checkout already in place carries
+# (writing-template#13, which also brought --python). A document repo's copy without it
+# predates both flags: add-analysis and migrate replace it before relying on them.
+NESTED_SCRIPT_MARKER = "MODE=in-place"
 BACKENDS = ("plotly", "matplotlib")
 
 DRY_RUN = False
@@ -818,14 +822,7 @@ def cmd_add_analysis(args):
     if not document.is_dir():
         sys.exit(f"{doc['dir']}/ does not exist. Clone it back first: "
                  f"gh repo clone {doc['repo']} {doc['dir']}")
-    script = document / "setup-nested.sh"
-    if not script.is_file():
-        # A document repo stamped before the script existed, or adopted before the overlay
-        # carried it. Added as a file of the document repo, to commit there.
-        write(script, gh_raw(WRITING_TEMPLATE, "setup-nested.sh"))
-        if not (document / ".gitattributes").exists():
-            write(document / ".gitattributes", gh_raw(WRITING_TEMPLATE, ".gitattributes"))
-        say(f"  (commit setup-nested.sh in {doc['dir']}/: it restores the analysis repo on a fresh clone)")
+    install_setup_nested(document, fetch_setup_nested(document))
     sh = find_sh()
     if not sh:
         sys.exit("No POSIX sh found. On Windows it comes with Git for Windows: "
@@ -856,6 +853,36 @@ def cmd_add_analysis(args):
     say(f"\nAnalysis repo ready at {doc['dir']}/{analysis}/, with its own venv. "
         "Next: the plotly check and the proof (add-analysis, §4).")
     return 0
+
+
+def setup_nested_state(document):
+    """'current', 'missing' or 'outdated': the document repo's copy of setup-nested.sh."""
+    script = document / "setup-nested.sh"
+    if not script.is_file():
+        return "missing"
+    text = script.read_text(encoding="utf-8", errors="replace")
+    return "current" if NESTED_SCRIPT_MARKER in text else "outdated"
+
+
+def fetch_setup_nested(document):
+    """writing-template's setup-nested.sh when the document's copy is missing or outdated,
+    else None. Fetched before anything changes, so a gh failure stops a step cleanly."""
+    if setup_nested_state(document) == "current":
+        return None
+    return gh_raw(WRITING_TEMPLATE, "setup-nested.sh")
+
+
+def install_setup_nested(document, text):
+    """Write a fetched setup-nested.sh into the document repo, plus the .gitattributes that
+    keeps it LF if there is none. Both are the document repo's files, to commit there."""
+    if text is None:
+        return
+    state = setup_nested_state(document)
+    write(document / "setup-nested.sh", text)
+    if not (document / ".gitattributes").exists():
+        write(document / ".gitattributes", gh_raw(WRITING_TEMPLATE, ".gitattributes"))
+    say(f"  ({'updated an outdated' if state == 'outdated' else 'added'} setup-nested.sh in "
+        f"{document.name}/: commit it there; it restores the analysis repo on a fresh clone)")
 
 
 def cmd_document(args):
@@ -924,6 +951,11 @@ def migrate_plan(legacy):
                 stops.append(f"{analysis}/ has no origin remote; nested_remote needs one")
             plan.append(f"move {analysis}/ -> {writing}/{analysis}/  (close Jupyter, IDEs and "
                         "terminals inside it first: Windows will not move an open directory)")
+        nested = setup_nested_state(ROOT / writing) if writing else "current"
+        if nested != "current":
+            plan.append(f"{'update the outdated' if nested == 'outdated' else 'add'} "
+                        f"{writing}/setup-nested.sh from {WRITING_TEMPLATE} first (commit it "
+                        "there): only a current one can record a checkout in place")
         plan.append(f"run {writing}/setup-nested.sh --dir {analysis}: gitignore it, write "
                     f"layout.toml, build its own .venv")
         plan.append(f"uv sync there with the extras {legacy.get('extras', [])}")
@@ -973,6 +1005,12 @@ def cmd_migrate(args):
         if pin.exists():
             python = pin.read_text(encoding="utf-8").strip() or None
             break
+
+    # A document repo's setup-nested.sh from before in-place --dir would refuse the moved
+    # checkout after everything below had changed: fetched now, while a failure costs nothing,
+    # and installed before the move.
+    if layout == "full" and legacy.get("analysis_dir"):
+        install_setup_nested(document, fetch_setup_nested(document))
 
     # Replaced, not merged: the old text describes the side-by-side layout. Out of the way
     # first, so every step below that refreshes CLAUDE.md writes the new one.

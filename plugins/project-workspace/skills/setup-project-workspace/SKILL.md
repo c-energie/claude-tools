@@ -109,10 +109,11 @@ renames a repo or a document directory: Overleaf's sync and IDE configs point at
    are fixed first.
 2. Ask them to **close Jupyter, IDEs and terminals inside the analysis repo and the root
    `.venv`**: Windows will not move or delete an open directory.
-3. On an explicit yes: `SETUP migrate`. It moves the analysis checkout in (its `.env` travels
-   unchanged: the document repo has not moved, so a `DOC_REPO` there is still right), runs the document's
-   `setup-nested.sh --dir <analysis>` (adds `setup-nested.sh` first if the document repo
-   lacks it), syncs the new venv with the old `extras`, and backs up `pyproject.toml`,
+3. On an explicit yes: `SETUP migrate`. First, before anything moves, it adds or updates the
+   document repo's `setup-nested.sh` from writing-template if it is missing or predates
+   in-place `--dir` (a `gh` failure there stops it with nothing changed). It then moves the
+   analysis checkout in (its `.env` travels unchanged: the document repo has not moved, so a
+   `DOC_REPO` there is still right), runs `setup-nested.sh --dir <analysis>`, syncs the new venv with the old `extras`, and backs up `pyproject.toml`,
    `uv.lock`, `.python-version`, `workspace.toml` and `CLAUDE.md` to
    `.setup/migrate-backup/` before replacing or removing them.
 4. Merge anything of the user's from `.setup/migrate-backup/CLAUDE.md` into the new
