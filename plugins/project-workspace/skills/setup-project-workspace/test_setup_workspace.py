@@ -109,19 +109,19 @@ class StageDocumentDryRun(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp)
         docx = tmp / "Draft.docx"
         docx.write_bytes(b"not really a docx")
-        import_dir = tmp / ".setup" / "import-source"
+        import_dir = tmp / ".setup" / "thesis" / "import-source"
         out = io.StringIO()
         with mock.patch.object(sw, "DRY_RUN", True), \
-                mock.patch.object(sw, "IMPORT_DIR", import_dir), \
                 mock.patch.object(sw, "ROOT", tmp), \
                 mock.patch.object(sw.subprocess, "run") as subprocess_run, \
                 contextlib.redirect_stdout(out):
-            sw.stage_import_source(str(docx))
+            sw.stage_import_source(str(docx), import_dir)
         printed = out.getvalue()
         self.assertIn("uv run --no-project --with pypandoc_binary==1.17", printed)
         self.assertIn("--extract-media=media", printed)
         self.assertIn("--standalone", printed)
         self.assertIn(sw.PANDOC_DOWNLOAD, printed)
+        self.assertIn(".setup/thesis/import-source/Draft.tex", printed)
         subprocess_run.assert_not_called()
         self.assertFalse((tmp / ".setup").exists())
 
@@ -171,261 +171,381 @@ class RunInit(unittest.TestCase):
         subprocess_run.assert_not_called()
 
 
-class RootPinsPython(unittest.TestCase):
-    """`root` pins the workspace interpreter: unpinned, `uv sync` takes the newest one
-    allowed, and scientific stacks often have no wheels for it yet (#9)."""
+
+
+class Workspace(unittest.TestCase):
+    """A temporary project workspace, with GitHub and setup-nested.sh mocked out."""
 
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.tmp)
-        (self.tmp / "CLAUDE.md").write_text("<!-- setup-banner -->\nx\n<!-- /setup-banner -->\n",
-                                            encoding="utf-8")
-
-    def root(self, *flags, python=None):
-        out = io.StringIO()
-        with mock.patch.object(sw, "ROOT", self.tmp), \
-                mock.patch.object(sw, "STATE_FILE", self.tmp / "workspace.toml"), \
-                mock.patch.object(sw, "DRY_RUN", False), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            sw.main([*flags, "root", "--name", "w", "--layout", "writing-only",
-                     "--writing-dir", "w-writing", "--writing-repo", "o/w-writing",
-                     "--writing-mode", "fresh", *(["--python", python] if python else [])])
-        return out.getvalue()
-
-    def test_writes_python_version(self):
-        self.root()
-        self.assertEqual((self.tmp / ".python-version").read_text(encoding="utf-8"), "3.12\n")
-
-    def test_keeps_an_existing_pin(self):
-        (self.tmp / ".python-version").write_text("3.11\n", encoding="utf-8")
-        printed = self.root()
-        self.assertEqual((self.tmp / ".python-version").read_text(encoding="utf-8"), "3.11\n")
-        self.assertIn("kept  .python-version", printed)
-
-    def test_python_flag_sets_the_pin(self):
-        self.root(python="3.11")
-        self.assertEqual((self.tmp / ".python-version").read_text(encoding="utf-8"), "3.11\n")
-
-    def test_python_flag_accepts_a_patch(self):
-        self.root(python="3.12.4")
-        self.assertEqual((self.tmp / ".python-version").read_text(encoding="utf-8"), "3.12.4\n")
-
-    def test_python_flag_below_the_minimum_stops(self):
-        with self.assertRaises(SystemExit):
-            self.root(python="3.10")
-        self.assertFalse((self.tmp / ".python-version").exists())
-
-    def test_python_flag_not_a_version_stops(self):
-        with self.assertRaises(SystemExit):
-            self.root(python="latest")
-
-    def test_existing_pin_that_differs_from_the_flag_is_kept_and_named(self):
-        (self.tmp / ".python-version").write_text("3.13\n", encoding="utf-8")
-        printed = self.root(python="3.11")
-        self.assertEqual((self.tmp / ".python-version").read_text(encoding="utf-8"), "3.13\n")
-        self.assertIn("uv python pin 3.11", printed)
-
-    def test_dry_run_writes_nothing(self):
-        printed = self.root("--dry-run")
-        self.assertIn("write .python-version", printed)
-        self.assertFalse((self.tmp / ".python-version").exists())
-        self.assertFalse((self.tmp / "workspace.toml").exists())
-
-
-FULL_CLAUDE_MD = ("<!-- setup-banner -->\nbanner\n<!-- /setup-banner -->\n"
-                  "# <<WORKSPACE>>: <<WRITING_DIR>> (<<WRITING_REPO>>) + "
-                  "<<ANALYSIS_DIR>> (<<ANALYSIS_REPO>>), <<BACKEND>>\n")
-
-
-class AddAnalysis(unittest.TestCase):
-    """`add-analysis` turns a writing-only workspace into a full one without recreating
-    the writing repo (#18). GitHub and the analysis template's init.py are mocked: the
-    clone is faked as a checkout whose pyproject.toml init.py has already filled in."""
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.tmp)
-        (self.tmp / "CLAUDE.md").write_text(
-            sw.WRITING_ONLY_CLAUDE_MD.read_text(encoding="utf-8"), encoding="utf-8")
-        (self.tmp / ".gitignore").write_text(".venv/\n", encoding="utf-8")
-        (self.tmp / "w-writing" / "Sections" / "Intro" / "Figures").mkdir(parents=True)
-        (self.tmp / "w-writing" / "document_settings.sty").write_text(
-            "\\graphicspath{%\n  {Sections/Intro/Figures/}%\n}\n", encoding="utf-8")
-        self.patch()
-        self.call("root", "--name", "w", "--layout", "writing-only",
-                  "--writing-dir", "w-writing", "--writing-repo", "o/w-writing",
-                  "--writing-mode", "fresh")
-
-    def patch(self):
-        for name, value in (("ROOT", self.tmp), ("STATE_FILE", self.tmp / "workspace.toml"),
-                            ("DRY_RUN", False)):
-            patcher = mock.patch.object(sw, name, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        saved = sw.ROOT
+        self.addCleanup(sw.set_root, saved)
+        sw.set_root(self.tmp)
+        patcher = mock.patch.object(sw, "DRY_RUN", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def call(self, *argv):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            sw.main(list(argv))
-        return out.getvalue()
-
-    def fake_clone(self, repo, directory):
-        checkout = self.tmp / directory
-        (checkout / ".git").mkdir(parents=True, exist_ok=True)
-        (checkout / "pyproject.toml").write_text('[project]\nname = "w-analysis"\n',
-                                                 encoding="utf-8")
-        return checkout
-
-    def add(self, *flags, analysis_dir="w-analysis", analysis_repo="o/w-analysis"):
-        self.created = mock.MagicMock()
-        self.init = mock.MagicMock()
-        with mock.patch.object(sw, "create_from_template", self.created), \
-                mock.patch.object(sw, "clone", side_effect=self.fake_clone) as clone, \
-                mock.patch.object(sw, "run_init", self.init), \
-                mock.patch.object(sw, "gh_raw", return_value=FULL_CLAUDE_MD):
-            self.clone = clone
-            return self.call(*flags, "add-analysis", "--repo", analysis_repo,
-                             "--dir", analysis_dir, "--distribution", "w-analysis",
-                             "--author", "A")
-
-    def state(self):
-        return sw.tomllib.loads((self.tmp / "workspace.toml").read_text(encoding="utf-8"))["workspace"]
+            code = sw.main(["--root", str(self.tmp), *argv])
+        self.out = out.getvalue()
+        return code
 
     def read(self, name):
         return (self.tmp / name).read_text(encoding="utf-8")
 
-    def test_records_the_full_layout(self):
-        self.add()
-        state = self.state()
-        self.assertEqual(state["layout"], "full")
-        self.assertEqual(state["analysis_dir"], "w-analysis")
-        self.assertEqual(state["analysis_repo"], "o/w-analysis")
-        self.assertEqual(state["analysis_distribution"], "w-analysis")
-        self.assertEqual(state["backend"], "plotly")
-        self.assertEqual(state["extras"], ["dev", "notebooks", "plotly"])
-        self.assertEqual(state["writing_dir"], "w-writing")
-        self.assertEqual(state["writing_mode"], "fresh")
+    def state(self):
+        return sw.tomllib.loads(self.read("workspace.toml"))
 
-    def test_creates_the_analysis_repo_with_doc_repo_at_the_writing_member(self):
-        self.add()
-        self.created.assert_called_once_with(sw.ANALYSIS_TEMPLATE, "o/w-analysis", "private")
-        self.assertEqual(self.init.call_args.kwargs["doc_repo"],
-                         (self.tmp / "w-writing").as_posix())
+    def fake_clone(self, repo, directory):
+        checkout = self.tmp / directory
+        (checkout / ".git").mkdir(parents=True, exist_ok=True)
+        return checkout
 
-    def test_root_pyproject_lists_the_member(self):
-        self.add()
-        pyproject = sw.tomllib.loads(self.read("pyproject.toml"))
-        self.assertEqual(pyproject["tool"]["uv"]["workspace"]["members"], ["w-analysis"])
-        self.assertEqual(pyproject["project"]["dependencies"], ["w-analysis"])
+    def add_document(self, *flags, repo="o/thesis", mode="fresh"):
+        with mock.patch.object(sw, "create_from_template") as created, \
+                mock.patch.object(sw, "clone", side_effect=self.fake_clone), \
+                mock.patch.object(sw, "run_init"), \
+                mock.patch.object(sw, "repo_exists", return_value=True), \
+                mock.patch.object(sw, "wait_for_content"), \
+                mock.patch.object(sw, "gh_raw", return_value="template text\n"):
+            self.created = created
+            extra = [] if mode == "adapt" else ["--title", "T", "--author", "A"]
+            return self.call("add-document", "--mode", mode, "--repo", repo, *extra, *flags)
 
-    def test_gitignore_block_covers_both_members_and_keeps_the_rest(self):
-        self.add()
+
+class Init(Workspace):
+    def test_writes_schema_2_and_claude_md(self):
+        self.call("init", "--name", "w")
+        self.assertEqual(self.state(), {"schema": 2, "name": "w"})
+        claude = self.read("CLAUDE.md")
+        self.assertIn("The `w` project workspace", claude)
+        self.assertIn("_none yet", claude)
+
+    def test_name_defaults_to_the_folder(self):
+        self.call("init")
+        self.assertEqual(self.state()["name"], self.tmp.name)
+
+    def test_untracked_workspace_gets_no_gitignore(self):
+        self.call("init")
+        self.assertFalse((self.tmp / ".gitignore").exists())
+
+    def test_re_run_keeps_documents_and_an_own_claude_md(self):
+        self.call("init")
+        self.add_document()
+        (self.tmp / "CLAUDE.md").write_text("mine\n", encoding="utf-8")
+        self.call("init")
+        self.assertEqual(len(self.state()["document"]), 1)
+        self.assertEqual(self.read("CLAUDE.md"), "mine\n")
+
+    def test_schema_1_is_sent_to_migrate(self):
+        (self.tmp / "workspace.toml").write_text('[workspace]\nname = "w"\n', encoding="utf-8")
+        with self.assertRaises(SystemExit) as caught:
+            self.call("init")
+        self.assertIn("migrate", str(caught.exception))
+
+
+class Track(Workspace):
+    def test_git_init_and_a_documents_block(self):
+        self.call("init")
+        self.add_document()
+        with mock.patch.object(sw, "run", side_effect=lambda cmd, cwd=None, **kw:
+                               (self.tmp / ".git").mkdir()):
+            self.call("track")
         text = self.read(".gitignore")
-        self.assertIn("/w-writing/\n/w-analysis/\n", text)
+        self.assertIn(f"{sw.BLOCK_START}\n", text)
+        self.assertIn("/thesis/\n", text)
+        self.assertIn("/.setup/", text)
+
+    def test_tracked_block_follows_new_documents_and_keeps_the_rest(self):
+        (self.tmp / ".git").mkdir()
+        self.call("init")
+        (self.tmp / ".gitignore").write_text(self.read(".gitignore") + "mine/\n", encoding="utf-8")
+        self.add_document()
+        self.add_document(repo="o/paper")
+        text = self.read(".gitignore")
         self.assertEqual(text.count(sw.BLOCK_START), 1)
-        self.assertIn(".venv/", text)
+        self.assertIn("/thesis/\n/paper/\n", text)
+        self.assertIn("mine/", text)
 
-    def test_unedited_writing_only_claude_md_becomes_the_full_one(self):
-        self.add()
-        self.assertEqual(self.read("CLAUDE.md"),
-                         "# w: w-writing (o/w-writing) + w-analysis (o/w-analysis), plotly\n")
 
-    def test_edited_claude_md_is_kept_and_named(self):
-        (self.tmp / "CLAUDE.md").write_text("my own notes\n", encoding="utf-8")
-        printed = self.add()
-        self.assertEqual(self.read("CLAUDE.md"), "my own notes\n")
-        self.assertIn("kept  CLAUDE.md", printed)
+class AddDocument(Workspace):
+    def setUp(self):
+        super().setUp()
+        self.call("init", "--name", "w")
 
-    def test_publish_root_pyproject_is_replaced_and_publish_carried_over(self):
-        self.call("publish-root")
-        printed = self.add()
-        pyproject = sw.tomllib.loads(self.read("pyproject.toml"))
-        self.assertEqual(pyproject["tool"]["uv"]["workspace"]["members"], ["w-analysis"])
-        self.assertEqual(pyproject["project"]["optional-dependencies"]["publish"],
-                         ["w-analysis[publish]"])
-        self.assertEqual(self.state()["extras"], ["dev", "notebooks", "plotly", "publish"])
-        # The root .env may hold a Notion token: kept, and the move it needs is named.
-        self.assertTrue((self.tmp / ".env").exists())
-        self.assertIn("w-analysis/.env", printed)
+    def test_lists_the_document_dir_defaulting_to_the_repo_name(self):
+        self.add_document()
+        self.assertEqual(self.state()["document"],
+                         [{"name": "thesis", "dir": "thesis", "repo": "o/thesis"}])
+        self.created.assert_called_once_with(sw.WRITING_TEMPLATE, "o/thesis", "private")
 
-    def test_edited_root_pyproject_stops_before_any_repo_is_created(self):
-        (self.tmp / "pyproject.toml").write_text("[project]\nname = 'mine'\n", encoding="utf-8")
-        with self.assertRaises(SystemExit):
-            self.add()
-        self.created.assert_not_called()
-        self.assertEqual(self.state()["layout"], "writing-only")
-
-    def test_missing_workspace_toml_stops(self):
-        (self.tmp / "workspace.toml").unlink()
-        with self.assertRaises(SystemExit):
-            self.add()
-        self.created.assert_not_called()
+    def test_several_documents_and_the_claude_md_table(self):
+        self.add_document()
+        self.add_document("--dir", "p", "--name", "paper", repo="o/paper")
+        self.assertEqual([d["name"] for d in self.state()["document"]], ["thesis", "paper"])
+        claude = self.read("CLAUDE.md")
+        self.assertIn("| thesis | `thesis/` | `o/thesis` | — |", claude)
+        self.assertIn("| paper | `p/` | `o/paper` | — |", claude)
+        self.assertNotIn("_none yet", claude)
 
     def test_re_run_changes_nothing(self):
-        self.add()
-        before = {p: self.read(p) for p in ("workspace.toml", "pyproject.toml",
-                                            ".gitignore", "CLAUDE.md")}
-        self.add()
-        self.assertEqual(before, {p: self.read(p) for p in before})
+        self.add_document()
+        before = self.read("workspace.toml"), self.read("CLAUDE.md")
+        self.add_document()
+        self.assertEqual(before, (self.read("workspace.toml"), self.read("CLAUDE.md")))
 
-    def test_full_workspace_with_another_analysis_member_stops(self):
-        self.add()
+    def test_same_dir_from_another_repo_stops(self):
+        self.add_document()
         with self.assertRaises(SystemExit):
-            self.add(analysis_dir="other-analysis", analysis_repo="o/other-analysis")
+            self.add_document("--dir", "thesis", repo="o/other")
+
+    def test_adapt_overlays_setup_nested_sh(self):
+        self.add_document(mode="adapt")
+        self.assertEqual(self.read("thesis/setup-nested.sh"), "template text\n")
         self.created.assert_not_called()
 
-    def test_no_sections_is_reported(self):
-        shutil.rmtree(self.tmp / "w-writing" / "Sections")
-        printed = self.add()
-        self.assertIn("no Sections/", printed)
+    def test_import_stages_per_document(self):
+        source = self.tmp / "old"
+        source.mkdir()
+        (source / "main.tex").write_text("x", encoding="utf-8")
+        self.add_document("--source", str(source), mode="import")
+        self.assertTrue((self.tmp / ".setup" / "thesis" / "import-source" / "main.tex").exists())
 
-    def test_figure_dir_missing_from_graphicspath_is_reported(self):
-        (self.tmp / "w-writing" / "Sections" / "Method" / "Figures").mkdir(parents=True)
-        printed = self.add()
-        self.assertIn("Sections/Method/Figures/ is not in", printed)
-        self.assertNotIn("Sections/Intro/Figures/ is not", printed)
+    def test_needs_init_first(self):
+        (self.tmp / "workspace.toml").unlink()
+        with self.assertRaises(SystemExit):
+            self.add_document()
 
-    def test_section_without_figures_is_one_reminder(self):
-        (self.tmp / "w-writing" / "Sections" / "Method").mkdir()
-        printed = self.add()
-        self.assertIn("no Figures/ yet in Method", printed)
-        self.assertNotIn("Sections/Method/Figures/ is not in", printed)
 
-    def test_dry_run_writes_nothing(self):
-        before = self.read("workspace.toml")
-        with mock.patch.object(self, "fake_clone", lambda repo, directory: self.tmp / directory):
-            printed = self.add("--dry-run")
-        self.assertEqual(self.read("workspace.toml"), before)
-        self.assertFalse((self.tmp / "pyproject.toml").exists())
-        self.assertIn("write pyproject.toml", printed)
+class FindDocument(Workspace):
+    def setUp(self):
+        super().setUp()
+        self.call("init", "--name", "w")
+        self.add_document()
+        self.add_document(repo="o/paper")
+        self.state_ = sw.read_state()
 
-    def test_missing_claude_md_gets_the_full_one(self):
-        (self.tmp / "CLAUDE.md").unlink()
-        self.add()
-        self.assertIn("w-analysis (o/w-analysis)", self.read("CLAUDE.md"))
+    def test_by_name(self):
+        self.assertEqual(sw.find_document(self.state_, "paper")["dir"], "paper")
 
-    def test_invalid_root_pyproject_stops_cleanly(self):
-        (self.tmp / "pyproject.toml").write_text("[project\n", encoding="utf-8")
+    def test_by_current_directory(self):
+        inside = self.tmp / "paper" / "Sections"
+        inside.mkdir(parents=True)
+        self.assertEqual(sw.find_document(self.state_, cwd=inside)["name"], "paper")
+
+    def test_ambiguous_stops_listing_them(self):
         with self.assertRaises(SystemExit) as caught:
-            self.add()
-        self.assertIn("not valid TOML", str(caught.exception))
-        self.created.assert_not_called()
+            sw.find_document(self.state_, cwd=self.tmp)
+        self.assertIn("thesis, paper", str(caught.exception))
 
-    def test_non_empty_analysis_dir_stops_before_any_repo_is_created(self):
-        (self.tmp / "w-analysis").mkdir()
-        (self.tmp / "w-analysis" / "stray.txt").write_text("x", encoding="utf-8")
+    def test_only_one_needs_no_name(self):
+        state = {"document": self.state_["document"][:1]}
+        self.assertEqual(sw.find_document(state, cwd=self.tmp)["name"], "thesis")
+
+    def test_analysis_comes_from_layout_toml(self):
+        (self.tmp / "thesis" / "layout.toml").write_text(
+            'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n', encoding="utf-8")
+        info = sw.describe(self.state_["document"][0])
+        self.assertEqual(info["analysis_dir"], "thesis-analysis")
+        self.assertEqual(info["analysis_path"], (self.tmp / "thesis" / "thesis-analysis").as_posix())
+        self.assertIsNone(sw.describe(self.state_["document"][1])["analysis_dir"])
+
+
+class AddAnalysis(Workspace):
+    """add-analysis hands the work to the document's own setup-nested.sh."""
+
+    def setUp(self):
+        super().setUp()
+        self.call("init", "--name", "w")
+        self.add_document()
+        (self.tmp / "thesis" / "setup-nested.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def add(self, *flags):
+        def nested(cmd, cwd=None, **kw):
+            (self.tmp / "thesis" / "layout.toml").write_text(
+                'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n',
+                encoding="utf-8")
+        with mock.patch.object(sw, "run", side_effect=nested) as run, \
+                mock.patch.object(sw, "find_sh", return_value="/bin/sh"), \
+                mock.patch.object(sw, "gh_raw", return_value="#!/bin/sh\n"):
+            self.call("add-analysis", *flags)
+        return run
+
+    def test_runs_setup_nested_in_the_document_with_init_answers_after_dashes(self):
+        run = self.add("--python", "3.12", "--distribution", "t-analysis", "--author", "A")
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[:2], ["/bin/sh", "setup-nested.sh"])
+        self.assertEqual(run.call_args.kwargs["cwd"], self.tmp / "thesis")
+        self.assertIn("--python", cmd)
+        self.assertEqual(cmd[cmd.index("--") + 1:], ["--distribution=t-analysis", "--author=A"])
+
+    def test_no_python_flag_unless_given(self):
+        cmd = self.add().call_args.args[0]
+        self.assertNotIn("--python", cmd)
+        self.assertNotIn("--", cmd)
+
+    def test_records_extras_and_the_table_shows_the_analysis(self):
+        self.add("--backend", "matplotlib")
+        self.assertEqual(self.state()["document"][0]["extras"], ["dev", "notebooks", "matplotlib"])
+        self.assertIn("`thesis/thesis-analysis/`", self.read("CLAUDE.md"))
+
+    def test_a_document_without_the_script_gets_it(self):
+        (self.tmp / "thesis" / "setup-nested.sh").unlink()
+        self.add()
+        self.assertTrue((self.tmp / "thesis" / "setup-nested.sh").exists())
+        self.assertTrue((self.tmp / "thesis" / ".gitattributes").exists())
+
+    def test_bad_python_is_refused(self):
         with self.assertRaises(SystemExit):
-            self.add()
-        self.created.assert_not_called()
+            self.add("--python", "3.9")
 
-    def test_template_fetch_failure_stops_before_any_repo_is_created(self):
-        with mock.patch.object(sw, "gh_raw", side_effect=SystemExit("no network")), \
-                mock.patch.object(sw, "create_from_template") as created, \
-                self.assertRaises(SystemExit):
-            self.call("add-analysis", "--repo", "o/w-analysis", "--dir", "w-analysis",
-                      "--distribution", "w-analysis", "--author", "A")
-        created.assert_not_called()
-        self.assertEqual(self.state()["layout"], "writing-only")
+
+class Sync(Workspace):
+    def setUp(self):
+        super().setUp()
+        self.call("init", "--name", "w")
+        self.add_document()
+
+    def test_passes_recorded_extras_in_the_analysis_repo(self):
+        (self.tmp / "thesis" / "layout.toml").write_text(
+            'layout = "writing-hosts-analysis"\nnested_dir = "a"\n', encoding="utf-8")
+        state = sw.read_state()
+        state["document"][0]["extras"] = ["dev", "plotly"]
+        sw.write_state(state)
+        with mock.patch.object(sw, "run") as run:
+            self.call("sync", "--extra", "publish")
+        self.assertEqual(run.call_args.args[0],
+                         ["uv", "sync", "--extra", "dev", "--extra", "plotly", "--extra", "publish"])
+        self.assertEqual(run.call_args.kwargs["cwd"], self.tmp / "thesis" / "a")
+        self.assertEqual(self.state()["document"][0]["extras"], ["dev", "plotly", "publish"])
+
+    def test_no_analysis_repo_stops(self):
+        with self.assertRaises(SystemExit):
+            self.call("sync")
+
+
+class Migrate(Workspace):
+    """Schema 1 -> 2: the analysis repo moves inside the document, the root loses its
+    Python, and everything removed is backed up first."""
+
+    LEGACY_FULL = ('[workspace]\nname = "thesis"\nlayout = "full"\nwriting_dir = "thesis-writing"\n'
+                   'writing_repo = "o/thesis-writing"\nwriting_mode = "adapt"\n'
+                   'analysis_dir = "thesis-analysis"\nanalysis_repo = "o/thesis-analysis"\n'
+                   'backend = "plotly"\nextras = ["dev", "notebooks", "plotly", "publish"]\n')
+
+    def setUp(self):
+        super().setUp()
+        for d in ("thesis-writing", "thesis-analysis"):
+            (self.tmp / d / ".git").mkdir(parents=True)
+        (self.tmp / "thesis-writing" / "setup-nested.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        (self.tmp / "thesis-analysis" / ".env").write_text("DOC_REPO=/old\nNOTION_TOKEN=x\n",
+                                                           encoding="utf-8")
+        (self.tmp / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (self.tmp / ".python-version").write_text("3.12\n", encoding="utf-8")
+        (self.tmp / ".venv").mkdir()
+        (self.tmp / "CLAUDE.md").write_text("old\n", encoding="utf-8")
+
+    def migrate(self, *flags, legacy=LEGACY_FULL):
+        (self.tmp / "workspace.toml").write_text(legacy, encoding="utf-8")
+
+        def nested(cmd, cwd=None, **kw):
+            # uv looks upward for a workspace root: the old one must be gone by now.
+            self.root_pyproject_seen = (self.tmp / "pyproject.toml").exists()
+            if "setup-nested.sh" in cmd:
+                (self.tmp / "thesis-writing" / "layout.toml").write_text(
+                    'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n',
+                    encoding="utf-8")
+        with mock.patch.object(sw, "run", side_effect=nested) as run, \
+                mock.patch.object(sw, "find_sh", return_value="/bin/sh"), \
+                mock.patch.object(sw, "origin_url", return_value="https://x/a.git"):
+            self.call(*flags, "migrate")
+        return run
+
+    def test_moves_analysis_inside_and_runs_setup_nested_in_place(self):
+        run = self.migrate()
+        self.assertTrue((self.tmp / "thesis-writing" / "thesis-analysis" / ".git").exists())
+        self.assertFalse((self.tmp / "thesis-analysis").exists())
+        nested = run.call_args_list[0].args[0]
+        self.assertEqual(nested[:4], ["/bin/sh", "setup-nested.sh", "--backend", "plotly"])
+        self.assertIn("--dir", nested)
+        self.assertEqual(nested[nested.index("--python") + 1], "3.12")
+        sync = run.call_args_list[1].args[0]
+        self.assertEqual(sync[-2:], ["--extra", "publish"])
+
+    def test_root_pyproject_is_gone_before_uv_runs_in_the_analysis_repo(self):
+        self.migrate()
+        self.assertFalse(self.root_pyproject_seen)
+
+    def test_writes_schema_2_with_one_document_and_its_extras(self):
+        self.migrate()
+        self.assertEqual(self.state(), {"schema": 2, "name": "thesis", "document": [{
+            "name": "thesis", "dir": "thesis-writing", "repo": "o/thesis-writing",
+            "extras": ["dev", "notebooks", "plotly", "publish"]}]})
+
+    def test_root_python_is_backed_up_and_removed(self):
+        self.migrate()
+        for name in ("pyproject.toml", ".python-version", ".venv"):
+            self.assertFalse((self.tmp / name).exists(), name)
+        backup = self.tmp / ".setup" / "migrate-backup"
+        self.assertTrue((backup / "pyproject.toml").exists())
+        self.assertEqual((backup / "CLAUDE.md").read_text(encoding="utf-8"), "old\n")
+        self.assertIn("[workspace]", (backup / "workspace.toml").read_text(encoding="utf-8"))
+
+    def test_analysis_env_travels_unchanged(self):
+        # The document repo does not move, so its DOC_REPO is still right, and doc-publish
+        # (which reads no layout.toml) still needs it.
+        self.migrate()
+        env = self.read("thesis-writing/thesis-analysis/.env")
+        self.assertEqual(env, "DOC_REPO=/old\nNOTION_TOKEN=x\n")
+
+    def test_claude_md_is_the_plugin_text(self):
+        self.migrate()
+        self.assertIn("`thesis-writing/thesis-analysis/`", self.read("CLAUDE.md"))
+
+    def test_legacy_gitignore_block_is_replaced(self):
+        (self.tmp / ".git").mkdir()
+        (self.tmp / ".gitignore").write_text(
+            f"{sw.LEGACY_BLOCK_START}\n/thesis-writing/\n/thesis-analysis/\n{sw.LEGACY_BLOCK_END}\n"
+            ".venv/\n", encoding="utf-8")
+        self.migrate()
+        text = self.read(".gitignore")
+        self.assertNotIn(sw.LEGACY_BLOCK_START, text)
+        self.assertIn("/thesis-writing/\n" + sw.BLOCK_END, text)
+        self.assertNotIn("/thesis-analysis/", text)
+        self.assertIn(".venv/", text)
+
+    def test_dry_run_changes_nothing(self):
+        run = self.migrate("--dry-run")
+        run.assert_not_called()
+        self.assertTrue((self.tmp / "thesis-analysis").exists())
+        self.assertTrue((self.tmp / "pyproject.toml").exists())
+        self.assertIn("move thesis-analysis/", self.out)
+
+    def test_target_taken_stops_before_anything_changes(self):
+        (self.tmp / "thesis-writing" / "thesis-analysis").mkdir()
+        with self.assertRaises(SystemExit):
+            self.migrate()
+        self.assertTrue((self.tmp / "pyproject.toml").exists())
+        self.assertIn("[workspace]", self.read("workspace.toml"))
+
+    def test_writing_only(self):
+        shutil.rmtree(self.tmp / "thesis-analysis")
+        run = self.migrate(legacy='[workspace]\nname = "p"\nlayout = "writing-only"\n'
+                                  'writing_dir = "thesis-writing"\nwriting_repo = "o/w"\n'
+                                  'extras = ["publish"]\n')
+        run.assert_not_called()
+        self.assertEqual(self.state()["document"], [{"name": "p", "dir": "thesis-writing",
+                                                     "repo": "o/w"}])
+        self.assertFalse((self.tmp / "pyproject.toml").exists())
+
+    def test_schema_2_reports_leftovers(self):
+        self.migrate()
+        (self.tmp / "uv.lock").write_text("", encoding="utf-8")
+        self.call("migrate")
+        self.assertIn("uv.lock", self.out)
 
 
 class FindsTheRoot(unittest.TestCase):
@@ -440,8 +560,8 @@ class FindsTheRoot(unittest.TestCase):
 
     def test_walks_up_to_workspace_toml(self):
         (self.tmp / "workspace.toml").write_text("", encoding="utf-8")
-        (self.tmp / "doc-writing" / "Sections").mkdir(parents=True)
-        with mock.patch.object(sw.Path, "cwd", return_value=self.tmp / "doc-writing" / "Sections"):
+        (self.tmp / "thesis" / "Sections").mkdir(parents=True)
+        with mock.patch.object(sw.Path, "cwd", return_value=self.tmp / "thesis" / "Sections"):
             self.assertEqual(sw.default_root(), self.tmp)
 
     def test_current_directory_before_setup(self):
@@ -450,11 +570,11 @@ class FindsTheRoot(unittest.TestCase):
 
     def test_root_flag_moves_every_root_path(self):
         seen = {}
-        step = lambda args: seen.update(root=sw.ROOT, state=sw.STATE_FILE, imports=sw.IMPORT_DIR)
+        step = lambda args: seen.update(root=sw.ROOT, state=sw.STATE_FILE, setup=sw.SETUP_DIR)
         with mock.patch.object(sw, "cmd_check", step):
             sw.main(["--root", str(self.tmp), "check"])
         self.assertEqual(seen, {"root": self.tmp, "state": self.tmp / "workspace.toml",
-                                "imports": self.tmp / ".setup" / "import-source"})
+                                "setup": self.tmp / ".setup"})
 
 
 if __name__ == "__main__":

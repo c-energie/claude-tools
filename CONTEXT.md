@@ -113,3 +113,34 @@ itself as, and is named for the GitHub *org* rather than the repo, so identifier
 
 A separate org gets a separate catalog; the same people plus a new topic gets a new plugin here.
 Not every plugin in this catalog is part of the context stack.
+
+## project workspace
+
+A local folder holding one or more [documents](#document), each in its own repos, listed in a
+`workspace.toml` at its root; made and extended by the `project-workspace` plugin's skills. It may
+be a git repo of its own — tracking only `workspace.toml`, `CLAUDE.md` and `.gitignore`, never a
+document — but need not be. No Python lives at its root.
+
+Not a [teaching workspace](#teaching-workspace): always say "project workspace" in full.
+_Avoid_: doc workspace, shell (as a noun), monorepo
+
+## document
+
+One deliverable — a thesis, paper or report — inside a project workspace: one
+[document repo](#document-repo) and, optionally, the [analysis repo](#analysis-repo) nested
+inside it. What a document's analysis is lives in that document repo's `layout.toml`, never in
+`workspace.toml`.
+_Avoid_: project (a context repo's sense), writing project
+
+## document repo
+
+The LaTeX repo of one document, made from `c-energie/writing-template` or adopted from an
+Overleaf project's GitHub sync; the host repo when it has an analysis repo.
+_Avoid_: writing repo, LaTeX repo, thesis repo (`writing-template` and
+`writing-hosts-analysis` keep the old word as fixed names)
+
+## analysis repo
+
+The Python repo, made from `c-energie/analysis-template`, whose notebooks generate one
+document's figures and tables. Nested inside its document repo, with its own venv.
+_Avoid_: code repo, companion repo

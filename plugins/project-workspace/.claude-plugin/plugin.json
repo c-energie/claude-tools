@@ -1,7 +1,9 @@
 {
   "name": "project-workspace",
-  "description": "Set up and adapt a document workspace made from c-energie/project-workspace-template: create the LaTeX writing repo and the analysis repo from their templates (or adopt an Overleaf project), wire them into one uv venv, prove the figure pipeline, bring an existing document or analysis project into the conventions, add doc-publish — with a setup observer that files what the guide got wrong.",
-  "version": "0.1.2",
-  "author": { "name": "c-energie" },
+  "description": "Set up a project workspace holding several LaTeX documents: add each document (new from c-energie/writing-template, adopted from Overleaf, or imported), nest an analysis repo with its own venv inside any of them, prove the figure pipeline, bring existing documents and notebooks into the conventions, add doc-publish, and migrate older single-document workspaces — with a setup observer that files what the guide got wrong.",
+  "version": "1.0.0",
+  "author": {
+    "name": "c-energie"
+  },
   "license": "MIT"
 }

@@ -1,22 +1,33 @@
 # project-workspace
 
-Setup and workflow skills for a **document workspace** — the shell repo made from
-[`c-energie/project-workspace-template`](https://github.com/c-energie/project-workspace-template) that
-holds a LaTeX writing repo (from `writing-template`) and an analysis repo (from
-`analysis-template`) side by side, with one uv venv and a figure pipeline from notebooks into the
-document.
+Setup and workflow skills for a **project workspace** — a folder holding several LaTeX
+**documents**, each a document repo (from
+[`writing-template`](https://github.com/c-energie/writing-template), or an Overleaf project)
+with, optionally, an analysis repo (from `analysis-template`) nested inside it, its own venv
+and a figure pipeline from its notebooks into that document:
 
-Install from the `c-energie` catalog: `project-workspace@c-energie`. You rarely do that by hand:
-the three templates commit a `.claude/settings.json` that registers the catalog and enables this
-plugin, with auto-update on, so it loads as soon as you trust a workspace made from them.
+```
+my-phd/                     workspace.toml (schema 2) + CLAUDE.md; optionally a git repo
+|-- thesis/                 document repo
+|   `-- thesis-analysis/    its nested analysis repo (layout.toml), with .venv/
+`-- paper/                  another document, writing only
+```
+
+Install it yourself from the `c-energie` catalog — `/plugin marketplace add c-energie/claude-tools`,
+then `/plugin install project-workspace@c-energie` — and run
+`/project-workspace:setup-project-workspace` in an empty folder: it creates the rest.
+`writing-template` and `analysis-template` also commit a `.claude/settings.json` enabling it,
+so a collaborator who clones just one document repo gets it too.
 
 | Skill | What it does |
 | --- | --- |
-| `setup-project-workspace` | First-run setup: create the writing repo (and, unless writing-only, the analysis repo) from the templates or adopt an Overleaf project, write the root `pyproject.toml`/`workspace.toml`, sync, prove the pipeline. Later: add the analysis repo to a writing-only workspace |
+| `setup-project-workspace` | Make a folder a project workspace (`workspace.toml`, `CLAUDE.md`, optionally its own git repo); migrate a schema-1 workspace made from the retired `project-workspace-template` |
+| `add-document` | Add a document: new from writing-template, an adopted Overleaf project, or an import (LaTeX, Word, Markdown); prove it builds |
+| `add-analysis` | Nest an analysis repo in one document through its `setup-nested.sh` — create, adopt or restore — and prove a figure lands |
 | `adapt-existing-document` | Bring an existing document into the `Sections/` / `\graphicspath` / label conventions, one section at a time |
-| `adapt-existing-analysis` | Copy an existing analysis project's notebooks in — the source stays untouched — and retrofit each with the `save_fig`/`save_table` setup |
-| `setup-doc-publish` | Optional: install `doc-publish` for a corpus, Notion wiki or Quarto site |
-| `setup-observer` | Step 0 of the four above: baseline the machine, log every place the guide and reality disagree, and with consent file redacted issues or PRs on the repo that owns each problem |
+| `adapt-existing-analysis` | Copy an existing analysis project's notebooks into a document's analysis repo — the source stays untouched — and retrofit each with the `save_fig`/`save_table` setup |
+| `setup-doc-publish` | Optional, per document: `doc-publish` for a corpus, Notion wiki or Quarto site |
+| `setup-observer` | Step 0 of the setup skills: baseline the machine, log every place the guide and reality disagree, and with consent file redacted issues or PRs on the repo that owns each problem |
 
 Invoke them by their full names, e.g. `/project-workspace:setup-project-workspace`.
 
@@ -35,9 +46,12 @@ plugins/project-workspace/
   skills/
     setup-project-workspace/
       SKILL.md
-      setup_workspace.py           the step script: check, workspace, writing, analysis, root, ...
+      setup_workspace.py           the step script every skill shares: check, init, track,
+                                   add-document, add-analysis, document, sync, migrate
       test_setup_workspace.py
-      CLAUDE.writing-only.md       the workspace CLAUDE.md for the writing-only layout
+      CLAUDE.workspace.md          the workspace CLAUDE.md init writes
+    add-document/SKILL.md
+    add-analysis/SKILL.md
     adapt-existing-document/SKILL.md
     adapt-existing-analysis/
       SKILL.md
@@ -59,22 +73,17 @@ uv run --no-project --python 3.12 -m unittest discover -s plugins/project-worksp
 uv run --no-project --python 3.12 -m unittest discover -s plugins/project-workspace/skills/adapt-existing-analysis
 ```
 
-## Moving an existing workspace onto the plugin
+## Migrating a workspace made from project-workspace-template
 
-A workspace made before 2026-10-11 still carries its own copies in `.claude/skills/`. In the
-workspace root:
+Before 2026-10-12 a workspace held exactly one document, with its analysis repo beside it
+(`<doc>-writing/`, `<doc>-analysis/`), a root `pyproject.toml` and one root `.venv`; its
+`workspace.toml` has a `[workspace]` table and no `schema` key. Run
+`/project-workspace:setup-project-workspace` in it: it offers `migrate`, which nests the
+analysis repo inside the document repo, gives it its own venv, and backs up whatever it
+removes from the root to `.setup/migrate-backup/`. The decision is
+[`docs/adr/0001-project-workspace-nested-documents.md`](../../docs/adr/0001-project-workspace-nested-documents.md).
 
-1. Add `.claude/settings.json` — copy it from
-   [`project-workspace-template`](https://github.com/c-energie/project-workspace-template/blob/main/.claude/settings.json),
-   or merge its two keys into the one you have.
-2. Delete the five old skill directories: `setup-doc-workspace`, `adapt-existing-document`,
-   `adapt-existing-analysis`, `setup-doc-publish`, `setup-observer` under `.claude/skills/`.
-   Left in place, both copies show up and the old one never gets fixes.
-3. In `CLAUDE.md`, change `/setup-doc-workspace`-style names to `/project-workspace:...` and the
-   `.claude/skills/setup-doc-workspace/setup_workspace.py sync` line to the `uv sync --extra ...`
-   form the template now uses.
-4. Commit, restart Claude Code in the workspace and accept the trust prompt. `/plugin` should list
-   `project-workspace@c-energie` as enabled.
-
-`setup_workspace.py` still reads the old copy's history in such a workspace, so a `CLAUDE.md` filled
-from an earlier writing-only template is not mistaken for a hand-edited one.
+A workspace older still, carrying its own skill copies in `.claude/skills/`, deletes those five
+directories (`setup-doc-workspace`, `adapt-existing-document`, `adapt-existing-analysis`,
+`setup-doc-publish`, `setup-observer`) first: left in place, both copies show up and the old one
+never gets fixes.

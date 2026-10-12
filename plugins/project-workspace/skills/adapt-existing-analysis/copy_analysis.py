@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Copy an existing analysis project into the workspace's analysis repo. The source is read, never written.
+"""Copy an existing analysis project into a document's analysis repo. The source is read, never written.
 
 Driven by the `adapt-existing-analysis` skill. Three steps; `copy` and `verify` are safe
 to re-run, and `plan` refuses to overwrite a plan that may hold agreed placements:
 
     plan     inventory the source (every file, with its SHA-256) and write a placement plan
              to .setup/analysis-import/plan.json -- one `dest` per file, edited before copying.
+             --document picks whose analysis repo (see setup_workspace.py `document`).
              --include GLOB (repeatable) scopes it to part of a larger project: files
              matching no glob are still inventoried, but planned as `dest: null`.
              A source's own copy of doc_analysis is planned as `dest: null` too, and
              imports of doc_analysis modules the template lacks are printed as warnings.
              The source's requires-python / .python-version are printed, with a warning
-             when the workspace's .python-version falls outside requires-python (or,
+             when the analysis repo's .python-version falls outside requires-python (or,
              without one, names another minor than the source's .python-version)
     copy     copy every planned file to its `dest` inside the analysis repo
     verify   re-hash the source against the inventory, and re-list every file in it
@@ -51,14 +52,12 @@ def default_root():
 
 
 def set_root(root):
-    global ROOT, STATE_FILE, WORK_DIR, PLAN, CLONE_DIR, PYTHON_VERSION
+    global ROOT, STATE_FILE, WORK_DIR, PLAN, CLONE_DIR
     ROOT = Path(root).resolve()
     STATE_FILE = ROOT / "workspace.toml"
     WORK_DIR = ROOT / ".setup" / "analysis-import"
     PLAN = WORK_DIR / "plan.json"
     CLONE_DIR = ROOT / ".setup" / "analysis-source"
-    # The workspace's interpreter pin, written by setup-project-workspace's `root` step (#9).
-    PYTHON_VERSION = ROOT / ".python-version"
 
 
 set_root(default_root())
@@ -85,7 +84,12 @@ PIN = re.compile(r"\d+\.\d+(?:\.\d+)?")
 PATCH_MAX = 10**9
 # What a re-pin is followed by; the adapt skill spells it out the same way.
 SETUP_SCRIPT = Path(__file__).resolve().parents[1] / "setup-project-workspace" / "setup_workspace.py"
-RESYNC = f'uv run --no-project --python 3.12 "{SETUP_SCRIPT.as_posix()}" sync'
+RESYNC = f'uv run --no-project --python 3.12 "{SETUP_SCRIPT.as_posix()}" sync --document [name]'
+
+# Which document, and where its analysis repo is, is setup_workspace.py's to answer: one
+# rule for every skill. Imported from beside it, as the plugin ships both.
+sys.path.insert(0, str(SETUP_SCRIPT.parent))
+import setup_workspace  # noqa: E402
 
 
 def say(msg=""):
@@ -108,20 +112,28 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def analysis_root(override=None):
+def document_info(document=None):
+    """setup_workspace.py's description of the document acted on: the one named, else the
+    one the current directory is inside, else the only one."""
+    setup_workspace.set_root(ROOT)
+    state = setup_workspace.read_state()
+    return setup_workspace.describe(setup_workspace.find_document(state, document))
+
+
+def analysis_root(override=None, document=None):
     if override:
         return (ROOT / override).resolve()
-    if not STATE_FILE.exists():
-        sys.exit("workspace.toml missing: run /project-workspace:setup-project-workspace first, or pass --analysis-dir.")
-    state = tomllib.loads(STATE_FILE.read_text(encoding="utf-8"))["workspace"]
-    return (ROOT / state["analysis_dir"]).resolve()
+    info = document_info(document)
+    if not info["analysis_path"]:
+        sys.exit(f"{info['name']} has no analysis repo yet: run /project-workspace:add-analysis first.")
+    return Path(info["analysis_path"]).resolve()
 
 
-def writing_sections():
+def writing_sections(document=None):
     """Leaf directories under the document's Sections/, to suggest notebook folders from."""
     if not STATE_FILE.exists():
         return []
-    sections = ROOT / tomllib.loads(STATE_FILE.read_text(encoding="utf-8"))["workspace"]["writing_dir"] / "Sections"
+    sections = Path(document_info(document)["path"]) / "Sections"
     if not sections.is_dir():
         return []
     return sorted(p.relative_to(sections).as_posix() for p in sections.rglob("*")
@@ -305,7 +317,7 @@ def pin_fits(pin, requires):
 
 
 def python_report(found, pin):
-    """What `plan` says about the source's interpreter bounds against the workspace pin.
+    """What `plan` says about the source's interpreter bounds against the analysis repo's pin.
     An imported stack brings its own upper bound, and a venv already built on a newer
     interpreter cannot install it (#9)."""
     requires, version = found["requires_python"], found["python_version"]
@@ -314,18 +326,18 @@ def python_report(found, pin):
     lines = ["Source Python: " + ", ".join(
         part for part in (requires and f"requires-python {requires}",
                           version and f".python-version {version}") if part)]
-    fix = f"re-pin with `uv python pin <version>` at the workspace root, then `{RESYNC}`, before `copy`"
+    fix = f"re-pin with `uv python pin <version>` in the analysis repo, then `{RESYNC}`, before `copy`"
     if not requires:
         # Only a .python-version: the source was run on that minor, so check against it.
         requires = "==" + ".".join(version.split(".")[:2]) + ".*"
     if pin is None:
-        return lines + [f"  WARNING: the workspace has no .python-version; {fix}"]
+        return lines + [f"  WARNING: the analysis repo has no .python-version; {fix}"]
     fits = pin_fits(pin, requires)
     if fits is None:
-        return lines + [f"  could not check the workspace pin {pin} against it; compare by hand"]
+        return lines + [f"  could not check the analysis repo's pin {pin} against it; compare by hand"]
     if not fits:
-        return lines + [f"  WARNING: the workspace pin {pin} is outside it; {fix}"]
-    return lines + [f"  workspace pin {pin} fits"]
+        return lines + [f"  WARNING: the analysis repo's pin {pin} is outside it; {fix}"]
+    return lines + [f"  the analysis repo's pin {pin} fits"]
 
 
 def load_plan():
@@ -371,7 +383,7 @@ def cmd_plan(args):
             if subprocess.run(["gh", "repo", "clone", args.source, str(CLONE_DIR)]).returncode:
                 sys.exit(f"Could not clone {args.source}; give a local path instead.")
         source = CLONE_DIR.resolve()
-    target = analysis_root(args.analysis_dir)
+    target = analysis_root(args.analysis_dir, args.document)
     if source == target or source.is_relative_to(target) or target.is_relative_to(source):
         sys.exit(f"Source {source} and the analysis repo {target} overlap; they must be separate.")
 
@@ -406,7 +418,7 @@ def cmd_plan(args):
         "analysis_dir": str(target),
         "source_git_head": head.decode().strip() if head else None,
         "source_git_status": status.decode() if status is not None else None,
-        "sections": writing_sections(),
+        "sections": writing_sections(args.document),
         "include": include,
         "source_python": found,
         "all_files": every_file(source),
@@ -442,7 +454,7 @@ def cmd_plan(args):
     for src, name in fork_imports:
         say(f"  WARNING: {src} imports doc_analysis.{name}: fork-only module; "
             f"port it or keep it in your private extra")
-    for line in python_report(found, read_pin(PYTHON_VERSION)):
+    for line in python_report(found, read_pin(target / ".python-version")):
         say(line)
     if plan["sections"]:
         say("Document sections (suggested notebook folders):")
@@ -517,7 +529,9 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="step", required=True)
     p = sub.add_parser("plan")
     p.add_argument("--source", required=True, help="local path, or OWNER/NAME to clone")
-    p.add_argument("--analysis-dir", help="override workspace.toml's analysis_dir")
+    p.add_argument("--document", help="the document whose analysis repo to copy into "
+                   "(default: the one the current directory is inside, else the only one)")
+    p.add_argument("--analysis-dir", help="override: the analysis repo, relative to the root")
     p.add_argument("--include", action="append", metavar="GLOB",
                    help="repeatable; plan only files matching a glob (relative to the source, "
                         "e.g. 'results/**' or 'notebooks/2024*.ipynb') or inside a folder it "

@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
-"""Create a document workspace's member repos and wire them together.
+"""Set up a project workspace and the documents in it.
 
-The workspace (this repo) holds independent checkouts. The `full` layout has two:
+A project workspace is a folder listing its documents in workspace.toml. Each document is a
+document repo (LaTeX) with, optionally, its analysis repo nested inside it:
 
     <workspace>/
-    |-- <doc>-writing/    the LaTeX document  (from c-energie/writing-template, or your Overleaf project)
-    |-- <doc>-analysis/   figures and tables  (from c-energie/analysis-template)
-    |-- pyproject.toml    uv workspace root; the analysis repo is its one member
-    `-- .venv/            the venv notebooks, tests and console scripts use
+    |-- workspace.toml          schema = 2, one [[document]] per document
+    |-- CLAUDE.md               generic rules, plus a managed table of the documents
+    |-- thesis/                 a document repo (c-energie/writing-template, or Overleaf's sync repo)
+    |   |-- layout.toml         present once it hosts its analysis repo
+    |   `-- thesis-analysis/    the nested analysis repo, with its own .venv
+    `-- paper/                  another document, writing only
 
-The `writing-only` layout has just the writing member, and no pyproject.toml or venv
-unless doc-publish is wanted (the `publish-root` step).
+There is no Python at the workspace root. Nothing about a document's analysis is recorded
+here: its layout.toml says, and writing-template's setup-nested.sh writes it.
 
-Driven by the `setup-project-workspace` skill, which does the interview and then calls the
-steps below in order. Each step is also runnable by hand, and each refuses rather than
-overwrites when its target already exists:
+Driven by the setup-project-workspace, add-document and add-analysis skills. Each step is
+also runnable by hand, and each refuses rather than overwrites when its target exists:
 
-    check       prerequisites, with the install command for anything missing
-    workspace   make sure this repo's `origin` is yours, not the template
-    writing     create or adopt the document repo
-    analysis    create the analysis repo and run its init.py   (full layout only)
-    root        write pyproject.toml, workspace.toml, .python-version, the .gitignore block,
-                fill CLAUDE.md
-    publish-root  writing-only: a minimal pyproject.toml and .env so doc-publish installs
-    add-analysis  writing-only -> full: create the analysis repo, rewire the root
-    sync        uv sync at the root
+    check         prerequisites, with the install command for anything missing
+    init          write workspace.toml and CLAUDE.md
+    track         make the workspace a git repo (optional), and give it a GitHub remote
+    add-document  create or adopt a document repo, and list it in workspace.toml
+    add-analysis  nest an analysis repo in a document, through its setup-nested.sh
+    document      which document a skill acts on, as JSON
+    sync          uv sync a document's analysis venv with its recorded extras
+    migrate       convert a schema-1 workspace (one document, side-by-side repos)
 
 Run with uv so no system Python is needed:
 
@@ -51,47 +52,62 @@ from pathlib import Path
 
 def default_root():
     """The nearest directory at or above the current one holding workspace.toml; before
-    `root` has written it, the current directory."""
+    `init` has written it, the current directory."""
     here = Path.cwd().resolve()
     return next((d for d in (here, *here.parents) if (d / "workspace.toml").is_file()), here)
 
 
 def set_root(root):
-    global ROOT, STATE_FILE, IMPORT_DIR
+    global ROOT, STATE_FILE, SETUP_DIR
     ROOT = Path(root).resolve()
     STATE_FILE = ROOT / "workspace.toml"
-    IMPORT_DIR = ROOT / ".setup" / "import-source"
+    SETUP_DIR = ROOT / ".setup"
 
 
 set_root(default_root())
 
 ORG = "c-energie"
-WORKSPACE_TEMPLATE = f"{ORG}/project-workspace-template"
 WRITING_TEMPLATE = f"{ORG}/writing-template"
 ANALYSIS_TEMPLATE = f"{ORG}/analysis-template"
 
-# CLAUDE.md for a workspace with no analysis member. `root` puts it in place of the
-# shipped CLAUDE.md, which describes the full layout.
-WRITING_ONLY_CLAUDE_MD = Path(__file__).resolve().parent / "CLAUDE.writing-only.md"
-# Where workspaces stamped before the move to the plugin (2026-10) carried that file. Their
-# history still holds the versions their CLAUDE.md may have been filled from.
-LEGACY_WRITING_ONLY_CLAUDE_MD = ".claude/skills/setup-doc-workspace/CLAUDE.writing-only.md"
+SCHEMA = 2
+# The workspace's CLAUDE.md. `init` writes it filled in; the documents table between the
+# markers is rewritten whenever a document is added, and nothing outside them ever is.
+WORKSPACE_CLAUDE_MD = Path(__file__).resolve().parent / "CLAUDE.workspace.md"
+DOCS_START = "<!-- documents (managed by /project-workspace:add-document) -->"
+DOCS_END = "<!-- /documents -->"
 
-# The .gitignore lines naming the members live between these markers, so a re-run (or a
-# renamed member) replaces the block instead of appending a second one.
-BLOCK_START = "# >>> members (managed by setup-doc-workspace) >>>"
-BLOCK_END = "# <<< members <<<"
+# The .gitignore lines naming the documents live between these markers, so a re-run (or a
+# renamed document) replaces the block instead of appending a second one. Schema-1
+# workspaces carry the old start marker; `migrate` swaps it.
+BLOCK_START = "# >>> documents (managed by /project-workspace) >>>"
+LEGACY_BLOCK_START = "# >>> members (managed by setup-doc-workspace) >>>"
+BLOCK_END = "# <<< documents <<<"
+LEGACY_BLOCK_END = "# <<< members <<<"
+# The rest of a tracked workspace's .gitignore, written once by `track`.
+GITIGNORE_REST = """\
+# Setup scaffolding: import sources, executed notebooks, observer logs. Never commit it.
+/.setup/
 
-# Files carried from writing-template into an adopted Overleaf repo. Only the
-# agent-facing ones: the layout of an existing document is adapted by hand, never
-# overwritten (see the adapt-existing-document skill). AGENTS.md's "Agent skills" section
-# points into docs/agents/, so those files travel with it or the pointers dangle.
-OVERLAY_FILES = ("AGENTS.md", "CLAUDE.md",
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.stackdump
+"""
+
+# Files carried from writing-template into an adopted Overleaf repo. Only the agent-facing
+# ones and the nested-layout script: the layout of an existing document is adapted by hand,
+# never overwritten (see the adapt-existing-document skill). AGENTS.md's "Agent skills"
+# section points into docs/agents/, so those files travel with it or the pointers dangle.
+# .gitattributes keeps setup-nested.sh LF, without which sh fails on its first line.
+OVERLAY_FILES = ("AGENTS.md", "CLAUDE.md", "setup-nested.sh", ".gitattributes",
                  "docs/agents/issue-tracker.md", "docs/agents/triage-labels.md",
                  "docs/agents/domain.md")
 
 # Converts an import source that is a single document file (Word, ODT, Markdown, ...) to
-# LaTeX. Run through `uv run --with`, never installed globally or into the workspace venv.
+# LaTeX. Run through `uv run --with`, never installed globally or into a venv.
 # 1.17 bundles pandoc 3.9.
 PANDOC_PIN = "pypandoc_binary==1.17"
 # What the first run pulls into uv's cache; said before converting.
@@ -114,16 +130,19 @@ CAPTION_PREFIX = re.compile(
     re.IGNORECASE)
 # What `gh repo clone` takes as OWNER/NAME.
 REPO_NAME = re.compile(r"[\w.-]+/[\w.-]+")
+# A document's name and directory: one path segment, as a repo name allows.
+DOC_NAME = re.compile(r"[A-Za-z0-9][\w.-]*")
 
 MIN_PYTHON = (3, 11, 4)
-# What `root` pins the workspace venv to in .python-version unless --python says otherwise.
-# Unpinned, `uv sync` takes the newest interpreter allowed, and scientific stacks often have
-# no wheels for it yet (#9). Matches the `--python 3.12` these scripts are run with.
-WORKSPACE_PYTHON = "3.12"
+# What the add-analysis skill offers for an analysis venv's interpreter. Unpinned, `uv sync`
+# takes the newest interpreter allowed, and scientific stacks often have no wheels for it
+# yet (#9). Not a default of the step: an adopted analysis repo may pin its own.
+ANALYSIS_PYTHON = "3.12"
 # A --python value: a minor (`3.12`) or a patch release (`3.12.4`), as `uv python pin` takes.
 PYTHON_PIN = re.compile(r"\d+\.\d+(?:\.\d+)?")
 
-LAYOUTS = ("full", "writing-only")
+NESTED_LAYOUT = "writing-hosts-analysis"
+BACKENDS = ("plotly", "matplotlib")
 
 DRY_RUN = False
 
@@ -307,101 +326,179 @@ def load_state():
     return tomllib.loads(STATE_FILE.read_text(encoding="utf-8"))
 
 
+def toml_value(value):
+    """A string, list of strings or bool as TOML. json.dumps writes valid TOML for these."""
+    return json.dumps(value)
+
+
 def write_state(state):
-    write(STATE_FILE, "# Written by setup-project-workspace and read by the workspace skills.\n"
-                      "# Edit it if you rename a member directory or repo.\n\n[workspace]\n"
-                      + "".join(f"{k} = {json.dumps(v)}\n" for k, v in state.items()))
+    """workspace.toml: the schema, the workspace's name, then one [[document]] per document.
+    Each document's keys in a fixed order, so a rewrite diffs only what changed."""
+    lines = ["# Written by /project-workspace and read by its skills. Edit it by hand to",
+             "# rename a document's directory or repo, or to drop a document from the list",
+             "# (deleting its directory is up to you).", "",
+             f"schema = {SCHEMA}", f"name = {toml_value(state['name'])}"]
+    for doc in state.get("document", []):
+        lines += ["", "[[document]]"]
+        lines += [f"{key} = {toml_value(doc[key])}"
+                  for key in ("name", "dir", "repo", "extras") if key in doc]
+    write(STATE_FILE, "\n".join(lines) + "\n")
 
 
-# ---------------------------------------------------------------------------
-# steps
-# ---------------------------------------------------------------------------
-
-def cmd_check(args):
-    os_name = _os()
-    missing_required = False
-    say(f"platform: {platform.system()} ({os_name})")
-
-    py = sys.version_info[:3]
-    ok = py >= MIN_PYTHON
-    say(f"[{'ok' if ok else 'FAIL'}] python {'.'.join(map(str, py))} (need >= 3.11.4)")
-    if not ok:
-        missing_required = True
-        say("       uv python install 3.12   then re-run this script with `uv run --python 3.12`")
-
-    for tool, required in (("git", True), ("gh", True), ("uv", True),
-                           ("latexmk", False), ("make", False)):
-        found = shutil.which(tool)
-        # Found is not enough for latexmk: MiKTeX's is a Perl script that, with no Perl on
-        # PATH, prints "did not succeed" and exits non-zero, yet `which` finds it (#4). Run
-        # it. A hung or failed latexmk is still optional, so this never touches the exit code.
-        if found and tool == "latexmk" and quiet([found, "-v"], timeout=20).returncode != 0:
-            say(f"[--] latexmk  (found but does not run; it needs Perl)  ->  {INSTALL['perl'][os_name]}")
-            continue
-        tag = "ok" if found else ("FAIL" if required else "--")
-        say(f"[{tag}] {tool}{'' if found else '  ->  ' + INSTALL[tool][os_name]}")
-        missing_required |= required and not found
-
-    if shutil.which("gh"):
-        auth = quiet(["gh", "auth", "status"])
-        if auth.returncode == 0:
-            login = quiet(["gh", "api", "user", "--jq", ".login"]).stdout.strip()
-            say(f"[ok] gh authenticated as {login}")
-        else:
-            missing_required = True
-            say("[FAIL] gh not authenticated  ->  gh auth login   (choose HTTPS, and let it configure git)")
-
-    templates = [WRITING_TEMPLATE] + ([ANALYSIS_TEMPLATE] if args.layout == "full" else [])
-    for repo in templates:
-        if shutil.which("gh") and not repo_exists(repo):
-            missing_required = True
-            say(f"[FAIL] cannot see template {repo} with your gh login")
-
-    say("\nAll required prerequisites present." if not missing_required
-        else "\nInstall the FAIL items above, open a NEW terminal so PATH updates, then re-run.")
-    return 1 if missing_required else 0
+def read_state(required=True):
+    """workspace.toml at the current schema, or {} when it is missing and not `required`.
+    Stops on a schema-1 file: every step but `migrate` works on schema 2 only."""
+    state = load_state()
+    if not state:
+        if required:
+            sys.exit("workspace.toml missing: this is not a project workspace yet. "
+                     "Run /project-workspace:setup-project-workspace first.")
+        return {}
+    if is_legacy(state):
+        sys.exit("workspace.toml is from before documents were nested (schema 1). "
+                 "Run the `migrate` step first (/project-workspace:setup-project-workspace).")
+    if state.get("schema") != SCHEMA:
+        sys.exit(f"workspace.toml has schema = {state.get('schema')!r}; this plugin reads "
+                 f"{SCHEMA}. Update the plugin, or fix the file by hand.")
+    state.setdefault("document", [])
+    return state
 
 
-def cmd_workspace(args):
-    origin = origin_url(ROOT)
-    if origin and WORKSPACE_TEMPLATE.lower() not in origin.lower():
-        say(f"origin is {origin}: already your own repo. Nothing to do.")
-        return 0
-    if not args.repo:
-        say(f"origin is {origin or '(none)'}: this workspace is not yet its own repo.")
-        say("Re-run with --repo OWNER/NAME to create it and point origin at it.")
-        return 2
-    if repo_exists(args.repo):
-        sys.exit(f"{args.repo} already exists. Point origin at it by hand: "
-                 f"git remote set-url origin https://github.com/{args.repo}.git")
-    if origin:
-        # Kept, not deleted: pulling template improvements later is `git pull template main`.
-        run(["git", "remote", "rename", "origin", "template"], cwd=ROOT)
-    has_commits = quiet(["git", "rev-parse", "HEAD"], cwd=ROOT).returncode == 0
-    cmd = ["gh", "repo", "create", args.repo, f"--{args.visibility}",
-           "--source", ".", "--remote", "origin"]
-    run(cmd + (["--push"] if has_commits else []), cwd=ROOT)
-    return 0
+def is_legacy(state):
+    return "schema" not in state and "workspace" in state
 
 
-def cmd_writing(args):
-    if args.mode == "adapt":
-        # The Overleaf project's own GitHub-sync repo becomes the document repo, history
-        # and Overleaf link intact. Overleaf must create it; nothing here can.
-        if not repo_exists(args.repo):
-            sys.exit(f"{args.repo} does not exist yet. In Overleaf: Menu -> GitHub -> "
-                     f"create a repository named {args.repo.split('/')[-1]}, then re-run.")
-        wait_for_content(args.repo)
-        checkout = clone(args.repo, args.dir)
-        overlay(checkout)
+def tracked():
+    """Whether the workspace is a git repo of its own. Nothing records it but `.git`."""
+    return (ROOT / ".git").exists()
+
+
+def read_layout(document_dir):
+    """A document repo's layout.toml, or {}. Read only: setup-nested.sh owns it."""
+    layout = document_dir / "layout.toml"
+    if not layout.is_file():
+        return {}
+    try:
+        return tomllib.loads(layout.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        sys.exit(f"{layout} is not valid TOML ({exc}). Fix it before going on.")
+
+
+def analysis_dir_of(document_dir):
+    """The nested analysis repo's directory, relative to the document repo, or None."""
+    layout = read_layout(document_dir)
+    if layout.get("layout") == NESTED_LAYOUT and layout.get("nested_dir"):
+        return str(layout["nested_dir"]).rstrip("/")
+    return None
+
+
+def describe(doc):
+    """What a skill needs to know about one document, every path absolute."""
+    path = ROOT / doc["dir"]
+    analysis = analysis_dir_of(path) if path.is_dir() else None
+    return {"name": doc["name"], "dir": doc["dir"], "repo": doc["repo"],
+            "path": path.as_posix(), "exists": path.is_dir(),
+            "analysis_dir": analysis,
+            "analysis_path": (path / analysis).as_posix() if analysis else None,
+            "extras": doc.get("extras", [])}
+
+
+def find_document(state, wanted=None, cwd=None):
+    """The document a skill acts on: the one named (by name or directory); else the one
+    the current directory is inside; else the only one. Stops, listing them, otherwise."""
+    docs = state["document"]
+    if wanted:
+        for doc in docs:
+            if wanted in (doc["name"], doc["dir"]):
+                return doc
+        sys.exit(f"No document {wanted!r} in workspace.toml. Documents: "
+                 + (", ".join(d["name"] for d in docs) or "none yet"))
+    here = Path(cwd or Path.cwd()).resolve()
+    for doc in docs:
+        if here == ROOT / doc["dir"] or (ROOT / doc["dir"]) in here.parents:
+            return doc
+    if len(docs) == 1:
+        return docs[0]
+    if not docs:
+        sys.exit("workspace.toml lists no documents yet: run /project-workspace:add-document.")
+    sys.exit("More than one document; name one with --document. Documents: "
+             + ", ".join(d["name"] for d in docs))
+
+
+def render_documents_table(state):
+    rows = ["| Document | Directory | Repo | Analysis repo |", "|---|---|---|---|"]
+    for doc in state["document"]:
+        info = describe(doc)
+        analysis = f"`{doc['dir']}/{info['analysis_dir']}/`" if info["analysis_dir"] else "—"
+        rows.append(f"| {doc['name']} | `{doc['dir']}/` | `{doc['repo']}` | {analysis} |")
+    if not state["document"]:
+        rows.append("| _none yet: /project-workspace:add-document_ | | | |")
+    return "\n".join([DOCS_START, *rows, DOCS_END])
+
+
+def refresh_claude_md(state):
+    """Write CLAUDE.md from the plugin's text if it is missing; otherwise rewrite only the
+    documents table between its markers. A CLAUDE.md with no markers is the user's own and
+    is left alone."""
+    claude_md = ROOT / "CLAUDE.md"
+    table = render_documents_table(state)
+    if not claude_md.exists():
+        text = WORKSPACE_CLAUDE_MD.read_text(encoding="utf-8").replace("<<WORKSPACE>>", state["name"])
+        write(claude_md, replace_between(text, DOCS_START, DOCS_END, table))
+        return
+    text = claude_md.read_text(encoding="utf-8")
+    if DOCS_START not in text or DOCS_END not in text:
+        say("  kept  CLAUDE.md  (it has no documents table; not the plugin's text)")
+        return
+    new = replace_between(text, DOCS_START, DOCS_END, table)
+    if new != text:
+        write(claude_md, new)
+
+
+def replace_between(text, start, end, block):
+    head, _, rest = text.partition(start)
+    _, _, tail = rest.partition(end)
+    return head + block + tail
+
+
+def write_document_block(state):
+    """The .gitignore block naming every document, replaced in place if already there.
+    Only in a tracked workspace; everything outside the markers is the user's and is kept."""
+    if not tracked():
+        return
+    gitignore = ROOT / ".gitignore"
+    text = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    block = "\n".join([BLOCK_START,
+                       "# Each document is its own repo with its own remote. Tracking one here",
+                       "# would nest one history inside another.",
+                       *(f"/{doc['dir']}/" for doc in state["document"]), BLOCK_END])
+    for start, end in ((BLOCK_START, BLOCK_END), (LEGACY_BLOCK_START, LEGACY_BLOCK_END)):
+        if start in text and end in text:
+            new = replace_between(text, start, end, block)
+            break
     else:
-        create_from_template(WRITING_TEMPLATE, args.repo, args.visibility)
-        checkout = clone(args.repo, args.dir)
-        run_init(checkout, title=args.title, author=args.author)
-        if args.mode == "import":
-            stage_import_source(args.source)
-    say(f"\nDocument repo ready at {args.dir}/. Nothing has been committed in it.")
-    return 0
+        new = block + "\n\n" + (text or GITIGNORE_REST)
+    if new != text:
+        write(gitignore, new)
+
+
+def checked_python(value):
+    """A --python value, or a parser error naming what is wrong with it."""
+    if not PYTHON_PIN.fullmatch(value):
+        raise argparse.ArgumentTypeError(f"{value!r}: give a version such as 3.12 or 3.12.4")
+    # A minor pin is held to the minimum's minor: uv then picks a 3.11.x that fits.
+    pin = tuple(int(n) for n in value.split("."))
+    if pin < MIN_PYTHON[:len(pin)]:
+        raise argparse.ArgumentTypeError(
+            f"{value} is below the minimum, {'.'.join(map(str, MIN_PYTHON))}")
+    return value
+
+
+def checked_name(value):
+    if not DOC_NAME.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            f"{value!r}: one path segment of letters, digits, '.', '_' and '-'")
+    return value
 
 
 def overlay(checkout):
@@ -427,26 +524,28 @@ def overlay(checkout):
         say(f"  kept  {checkout.name}/.gitignore  (already covers the template's rules)")
 
 
-def stage_import_source(source):
+def stage_import_source(source, import_dir):
     """Put the existing document somewhere the adapt-existing-document skill can read it
-    from. Never inside a member: it is scaffolding, deleted once the import is done."""
+    from: `.setup/[document dir]/import-source/` at the workspace root. Never inside a
+    document repo: it is scaffolding, deleted once the import is done."""
+    shown = import_dir.relative_to(ROOT).as_posix() + "/"
     if not source:
-        say("No --source given; copy the existing document into .setup/import-source/ by hand.")
+        say(f"No --source given; copy the existing document into {shown} by hand.")
         return
-    if IMPORT_DIR.exists():
-        say(f".setup/import-source/ already exists; leaving it alone.")
+    if import_dir.exists():
+        say(f"{shown} already exists; leaving it alone.")
         return
     kind, where = classify_source(source)
     if kind == "document-file":
-        convert_document(where)
+        convert_document(where, import_dir)
     elif kind in ("directory", "tex-file"):
-        say(f"  copy  {where} -> .setup/import-source/")
+        say(f"  copy  {where} -> {shown}")
         if not DRY_RUN:
-            shutil.copytree(where, IMPORT_DIR, ignore=shutil.ignore_patterns(".git"))
+            shutil.copytree(where, import_dir, ignore=shutil.ignore_patterns(".git"))
     else:
         if not DRY_RUN:
-            IMPORT_DIR.parent.mkdir(parents=True, exist_ok=True)
-        run(["gh", "repo", "clone", where, str(IMPORT_DIR)], cwd=ROOT)
+            import_dir.parent.mkdir(parents=True, exist_ok=True)
+        run(["gh", "repo", "clone", where, str(import_dir)], cwd=ROOT)
 
 
 def classify_source(source):
@@ -478,26 +577,26 @@ def classify_source(source):
     return "repo", source
 
 
-def convert_document(path):
-    """Convert a single document file into .setup/import-source/<stem>.tex, its images in
+def convert_document(path, import_dir):
+    """Convert a single document file into [import_dir]/<stem>.tex, its images in
     media/ beside it. pandoc runs in that directory so the image paths it writes are
     relative. The only fix applied afterwards is stripping caption number prefixes: the
     rest is a checklist in adapt-existing-document, because it needs judgement."""
-    tex = IMPORT_DIR / f"{path.stem}.tex"
-    say(f"  convert  {path.name} -> .setup/import-source/{tex.name}  "
+    tex = import_dir / f"{path.stem}.tex"
+    say(f"  convert  {path.name} -> {tex.relative_to(ROOT).as_posix()}  "
         f"(pandoc via {PANDOC_PIN}; the first run downloads {PANDOC_DOWNLOAD})")
     if not DRY_RUN:
-        IMPORT_DIR.mkdir(parents=True)
+        import_dir.mkdir(parents=True)
     try:
         result = run(["uv", "run", "--no-project", "--with", PANDOC_PIN, "python", "-c", RUN_PANDOC,
                       "--from", PANDOC_READERS[path.suffix.lower()], "--to", "latex", "--standalone",
                       "--extract-media=media", "--output", tex.name, path.resolve()],
-                     cwd=IMPORT_DIR, check=False)
+                     cwd=import_dir, check=False)
     except OSError as exc:      # uv itself missing
         result = subprocess.CompletedProcess([], 127, "", str(exc))
     if result.returncode != 0:
         # Removed, or a re-run would find it and leave the half-made import alone.
-        shutil.rmtree(IMPORT_DIR, ignore_errors=True)
+        shutil.rmtree(import_dir, ignore_errors=True)
         sys.exit(f"\nFAILED ({result.returncode}): pandoc could not convert {path.name}.")
     if DRY_RUN:
         say("  then strip Figure/Table number prefixes from its captions")
@@ -513,355 +612,6 @@ def strip_caption_prefixes(tex):
     so a converted "Figure 3: Demand" would print as "Figure 3: Figure 3: Demand".
     Returns the new text and how many captions changed."""
     return CAPTION_PREFIX.subn(r"\1", tex)
-
-
-def cmd_analysis(args):
-    writing = ROOT / args.writing_dir
-    if not writing.is_dir():
-        sys.exit(f"{args.writing_dir}/ does not exist. Run the `writing` step first.")
-    make_analysis(args, writing)
-    say(f"\nAnalysis repo ready at {args.dir}/, with .env pointing DOC_REPO at {args.writing_dir}/.")
-    return 0
-
-
-def make_analysis(args, writing):
-    create_from_template(ANALYSIS_TEMPLATE, args.repo, args.visibility)
-    checkout = clone(args.repo, args.dir)
-    # DOC_REPO is absolute because .env is per-machine and read from wherever the cwd
-    # happens to be.
-    run_init(checkout, distribution=args.distribution, author=args.author,
-             doc_repo=writing.as_posix(), backend=args.backend)
-
-
-def analysis_distribution(analysis_dir):
-    """The analysis repo's distribution name, which its init.py wrote into pyproject.toml.
-    "DIST" on a dry run whose checkout does not exist yet."""
-    analysis_pyproject = ROOT / analysis_dir / "pyproject.toml"
-    if not analysis_pyproject.exists():
-        if DRY_RUN:
-            return "DIST"
-        sys.exit(f"{analysis_dir}/pyproject.toml missing. Run the `analysis` step first.")
-    dist = tomllib.loads(analysis_pyproject.read_text(encoding="utf-8"))["project"]["name"]
-    if dist == "PACKAGE-NAME":
-        sys.exit(f"{analysis_dir}/ is not initialised (its init.py has not run).")
-    return dist
-
-
-PYPROJECT = """\
-# The workspace root: a uv workspace whose one member is the analysis repo. Run
-# `uv sync` HERE, not inside the member, so the whole workspace shares one .venv.
-#
-# The document repo ({writing}/) is deliberately NOT a member. It is LaTeX, has no
-# Python, and the analysis repo locates it through DOC_REPO in {analysis}/.env.
-#
-# Pass every extra you want on EVERY sync: `uv sync` removes the ones you leave out.
-#
-#   uv sync --extra dev --extra notebooks --extra {backend}
-
-[project]
-name = "{name}-workspace"
-version = "0.0.0"
-description = "Workspace root for {name}. Not a distributable package."
-requires-python = ">=3.11.4"
-dependencies = ["{dist}"]
-
-[tool.uv]
-package = false
-
-[project.optional-dependencies]
-# Pass-throughs to the member's own extras, so the familiar flags read the same here.
-dev = ["{dist}[dev]"]
-notebooks = ["{dist}[notebooks]"]
-{backend} = ["{dist}[{backend}]"]
-{more}
-[tool.uv.workspace]
-members = ["{analysis}"]
-
-[tool.uv.sources]
-{dist} = {{ workspace = true }}
-"""
-
-
-PYPROJECT_WRITING_ONLY = """\
-# The workspace root of a writing-only workspace. It exists only to install doc-publish:
-# the document repo ({writing}/) is LaTeX, has no Python, and is not a member. doc-publish
-# finds it through DOC_REPO in the .env beside this file, so run it from HERE.
-#
-# Pass every extra you want on EVERY sync: `uv sync` removes the ones you leave out.
-#
-#   uv sync --extra publish
-
-[project]
-name = "{name}-workspace"
-version = "0.0.0"
-description = "Workspace root for {name}. Not a distributable package."
-requires-python = ">=3.11.4"
-dependencies = []
-
-[project.optional-dependencies]
-publish = ["doc-publish"]
-
-[tool.uv]
-package = false
-
-[tool.uv.sources]
-doc-publish = {{ git = "https://github.com/c-energie/doc-publish.git" }}
-"""
-
-
-def base_extras(backend):
-    """The extras every full workspace installs; PYPROJECT declares each of them."""
-    return ["dev", "notebooks", backend]
-
-
-def full_pyproject(name, dist, backend, writing, analysis, extras=()):
-    """The full layout's root pyproject.toml. An extra beyond the three it always has
-    passes through to the analysis repo's extra of the same name."""
-    more = "".join(f'{e} = ["{dist}[{e}]"]\n'
-                   for e in dict.fromkeys(extras) if e not in base_extras(backend))
-    return PYPROJECT.format(name=name, dist=dist, backend=backend, writing=writing,
-                            analysis=analysis, more=more)
-
-
-def write_member_block(members):
-    """The .gitignore block naming the members, replaced in place if already there.
-    Everything outside the markers is the user's and is kept."""
-    gitignore = ROOT / ".gitignore"
-    text = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    block = "\n".join([BLOCK_START,
-                       "# Each member is its own repo with its own remote. Tracking them here",
-                       "# would nest one history inside another.",
-                       *(f"/{m}/" for m in members), BLOCK_END])
-    if BLOCK_START in text and BLOCK_END in text:
-        head, _, rest = text.partition(BLOCK_START)
-        _, _, tail = rest.partition(BLOCK_END)
-        new = head + block + tail
-    else:
-        new = block + "\n\n" + text
-    if new != text:
-        write(gitignore, new)
-
-
-def fill_claude_md(content, state):
-    """Fill CLAUDE.md's <<...>> placeholders from workspace.toml's values, and drop the
-    "not set up yet" notice, which stops being true once `root` has run."""
-    for token, key in (("<<WORKSPACE>>", "name"), ("<<WRITING_DIR>>", "writing_dir"),
-                       ("<<WRITING_REPO>>", "writing_repo"),
-                       ("<<ANALYSIS_DIR>>", "analysis_dir"),
-                       ("<<ANALYSIS_REPO>>", "analysis_repo"), ("<<BACKEND>>", "backend")):
-        if state.get(key):
-            content = content.replace(token, state[key])
-    head, sep, rest = content.partition("<!-- setup-banner -->")
-    if sep:
-        content = head + rest.partition("<!-- /setup-banner -->\n")[2]
-    return content
-
-
-def cmd_root(args):
-    existing = load_state().get("workspace", {})
-    # A workspace.toml from before layouts existed is a full one.
-    previous = existing.get("layout") or ("full" if "analysis_dir" in existing else None)
-    if previous and previous != args.layout:
-        # Moving between layouts is its own step, `add-analysis` (#18).
-        sys.exit(f"workspace.toml already records layout = {previous!r}; "
-                 f"refusing to rewrite it as {args.layout!r}.")
-    state = {
-        "name": args.name,
-        "layout": args.layout,
-        "writing_dir": args.writing_dir, "writing_repo": args.writing_repo,
-        "writing_mode": args.writing_mode,
-    }
-    members = [args.writing_dir]
-    if args.layout == "full":
-        state |= {
-            "analysis_dir": args.analysis_dir, "analysis_repo": args.analysis_repo,
-            "backend": args.backend,
-            # What `sync` installs. /project-workspace:setup-doc-publish appends "publish" here.
-            "extras": base_extras(args.backend),
-        }
-        members.append(args.analysis_dir)
-        dist = state["analysis_distribution"] = analysis_distribution(args.analysis_dir)
-
-        pyproject = ROOT / "pyproject.toml"
-        if pyproject.exists():
-            say("  kept  pyproject.toml  (exists; edit it by hand, or delete it and re-run)")
-        else:
-            write(pyproject, full_pyproject(args.name, dist, args.backend,
-                                            args.writing_dir, args.analysis_dir))
-    else:
-        # Nothing to install until doc-publish is wanted: `publish-root` appends "publish".
-        state["extras"] = existing.get("extras", [])
-
-    write_state(state)
-
-    python_version = ROOT / ".python-version"
-    if python_version.exists():
-        say(f"  kept  .python-version  (exists; `uv python pin {args.python}` changes it)")
-    else:
-        write(python_version, args.python + "\n")
-
-    write_member_block(members)
-
-    claude_md = ROOT / "CLAUDE.md"
-    if claude_md.exists():
-        before = claude_md.read_text(encoding="utf-8")
-        content = before
-        if args.layout == "writing-only":
-            # Swapped only while CLAUDE.md is still the unfilled template: once filled
-            # in, it may hold the user's own edits.
-            if "<!-- setup-banner -->" in content:
-                content = WRITING_ONLY_CLAUDE_MD.read_text(encoding="utf-8")
-            else:
-                say("  kept  CLAUDE.md  (already filled in; not swapped for the writing-only text)")
-        content = fill_claude_md(content, state)
-        if content != before:
-            write(claude_md, content)
-    return 0
-
-
-def cmd_publish_root(args):
-    """What doc-publish needs in a writing-only workspace. A full workspace gets it
-    through the analysis repo's `publish` extra instead."""
-    state = load_state().get("workspace", {})
-    if not state:
-        sys.exit("workspace.toml missing. Run the `root` step first.")
-    if state.get("layout", "full") != "writing-only":
-        sys.exit("This workspace has an analysis member: doc-publish installs through its "
-                 "`publish` extra (see /project-workspace:setup-doc-publish), not this step.")
-    writing = ROOT / state["writing_dir"]
-    if not writing.is_dir():
-        sys.exit(f"{state['writing_dir']}/ does not exist. Run the `writing` step first.")
-
-    pyproject = ROOT / "pyproject.toml"
-    if pyproject.exists():
-        say("  kept  pyproject.toml  (exists; it needs a `publish` extra that installs doc-publish)")
-    else:
-        write(pyproject, PYPROJECT_WRITING_ONLY.format(name=state["name"],
-                                                       writing=state["writing_dir"]))
-
-    # Per-machine and gitignored, like the analysis repo's .env in the full layout. It may
-    # come to hold a Notion token, so an existing one is never rewritten.
-    env = ROOT / ".env"
-    if env.exists():
-        has_doc_repo = any(line.split("=", 1)[0].strip() == "DOC_REPO"
-                           for line in env.read_text(encoding="utf-8").splitlines())
-        say("  kept  .env  (exists" + ("" if has_doc_repo else
-            f"; it has no DOC_REPO, add: DOC_REPO={writing.as_posix()}") + ")")
-    else:
-        write(env, "# Per-machine; never commit. doc-publish reads the nearest .env above the cwd.\n"
-                   f"DOC_REPO={writing.as_posix()}\n")
-
-    if "publish" not in state.get("extras", []):
-        state["extras"] = state.get("extras", []) + ["publish"]
-        write_state(state)
-    return 0
-
-
-def cmd_add_analysis(args):
-    """Move a writing-only workspace to the full layout (#18): create the analysis repo
-    against the writing member already here, then rewire the root to match. The writing
-    repo is not recreated or touched. What can be checked up front is checked before the
-    analysis repo is created; a re-run reuses that repo and redoes only what is missing."""
-    state = load_state().get("workspace", {})
-    if not state:
-        sys.exit("workspace.toml missing: this workspace is not set up. "
-                 "Run /project-workspace:setup-project-workspace from the start instead.")
-    if state.get("layout", "full") == "full":
-        wanted = {"analysis_dir": args.dir, "analysis_repo": args.repo, "backend": args.backend}
-        differs = {k: state.get(k) for k, v in wanted.items() if state.get(k) != v}
-        if differs:
-            sys.exit("workspace.toml already records the full layout with "
-                     + ", ".join(f"{k} = {v!r}" for k, v in differs.items())
-                     + "; refusing to replace its analysis member.")
-    writing = ROOT / state["writing_dir"]
-    if not writing.is_dir():
-        sys.exit(f"{state['writing_dir']}/ does not exist. Clone it back first: "
-                 f"gh repo clone {state['writing_repo']} {state['writing_dir']}")
-
-    pyproject = ROOT / "pyproject.toml"
-    publish_root = PYPROJECT_WRITING_ONLY.format(name=state["name"], writing=state["writing_dir"])
-    if pyproject.exists():
-        text = pyproject.read_text(encoding="utf-8")
-        try:
-            uv = tomllib.loads(text).get("tool", {}).get("uv", {})
-        except tomllib.TOMLDecodeError as exc:
-            sys.exit(f"pyproject.toml is not valid TOML ({exc}). Fix or delete it, then re-run.")
-        if uv.get("workspace", {}).get("members") == [args.dir]:
-            replace_pyproject = False
-        elif text == publish_root:
-            replace_pyproject = True    # publish-root's, unedited: its `publish` extra carries over
-        else:
-            sys.exit("pyproject.toml exists and is not the one `publish-root` writes, so it "
-                     "may hold your own edits. Delete it (its extras are kept in "
-                     "workspace.toml) or make it list the member by hand, then re-run.")
-    else:
-        replace_pyproject = True
-
-    checkout = ROOT / args.dir
-    if checkout.exists() and any(checkout.iterdir()) and not (checkout / ".git").exists():
-        sys.exit(f"{args.dir}/ exists and is not empty. Move it aside, then re-run.")
-
-    # Fetched now, so a gh failure stops the step before the analysis repo exists rather
-    # than after workspace.toml already says "full".
-    claude_md = ROOT / "CLAUDE.md"
-    current = claude_md.read_text(encoding="utf-8") if claude_md.exists() else None
-    swap_claude_md = current is None or current in writing_only_claude_mds(state)
-    full_claude_md = gh_raw(WORKSPACE_TEMPLATE, "CLAUDE.md") if swap_claude_md else None
-
-    make_analysis(args, writing)
-
-    dist = analysis_distribution(args.dir)
-    extras = state.get("extras", [])
-    if state.get("layout") == "writing-only":
-        extras = list(dict.fromkeys([*base_extras(args.backend), *extras]))
-    # Dropped and re-added rather than updated, so workspace.toml lists its keys in the
-    # same order as one `root` writes for the full layout.
-    state = {k: v for k, v in state.items()
-             if k not in ("analysis_dir", "analysis_repo", "backend", "extras",
-                          "analysis_distribution")}
-    state |= {"layout": "full", "analysis_dir": args.dir, "analysis_repo": args.repo,
-              "backend": args.backend, "extras": extras, "analysis_distribution": dist}
-
-    if replace_pyproject:
-        write(pyproject, full_pyproject(state["name"], dist, args.backend,
-                                        state["writing_dir"], args.dir, extras))
-    else:
-        say("  kept  pyproject.toml  (already lists the member)")
-    write_state(state)
-    write_member_block([state["writing_dir"], args.dir])
-
-    if (ROOT / ".env").exists():
-        say(f"  kept  .env  (doc-publish now runs from {args.dir}/ and reads {args.dir}/.env: "
-            f"move anything there but DOC_REPO, a Notion token say, then delete this one)")
-
-    if swap_claude_md:
-        write(claude_md, fill_claude_md(full_claude_md, state))
-    elif f"{args.dir}/" in current:
-        say(f"  kept  CLAUDE.md  (already names {args.dir}/)")
-    else:
-        say(f"  kept  CLAUDE.md  (edited since setup, so not swapped for the full layout's; "
-            f"merge in https://github.com/{WORKSPACE_TEMPLATE}/blob/main/CLAUDE.md by hand)")
-
-    say("\nDocument checks:")
-    for problem in document_problems(writing) or ["ok: every Sections/<Name>/Figures/ "
-                                                  "is in \\graphicspath"]:
-        say(f"  {problem}")
-    say(f"\nAnalysis repo ready at {args.dir}/. Next: `sync`, then the §7 proof.")
-    return 0
-
-
-def writing_only_claude_mds(state):
-    """CLAUDE.md as `root` would have filled it for a writing-only workspace: from the
-    template beside this script, and from every version a pre-plugin workspace carried in
-    its own history. A template updated since setup must not make an untouched CLAUDE.md
-    look edited."""
-    texts = [WRITING_ONLY_CLAUDE_MD.read_text(encoding="utf-8")]
-    path = LEGACY_WRITING_ONLY_CLAUDE_MD
-    for commit in quiet(["git", "log", "--format=%H", "--", path], cwd=ROOT).stdout.split():
-        shown = quiet(["git", "show", f"{commit}:{path}"], cwd=ROOT)
-        if shown.returncode == 0:
-            texts.append(shown.stdout)
-    return {fill_claude_md(text, state) for text in texts}
 
 
 def graphicspath_entries(writing):
@@ -885,7 +635,7 @@ def document_problems(writing):
     sections = writing / "Sections"
     if not sections.is_dir():
         return ["no Sections/ yet: document_repo() raises until /project-workspace:adapt-existing-document "
-                "moves the first section in (#3). The §7 proof waits for that."]
+                "moves the first section in (#3). The add-analysis proof waits for that."]
     entries = {e.removeprefix("./").rstrip("/") + "/" for e in graphicspath_entries(writing)}
     if not entries:
         return ["no \\graphicspath in a root-level .sty or .tex: generated figures will not "
@@ -902,21 +652,403 @@ def document_problems(writing):
     return problems
 
 
-def cmd_sync(args):
-    state = load_state().get("workspace", {})
-    if not (ROOT / "pyproject.toml").exists():
-        if state.get("layout") == "writing-only":
-            say("Writing-only workspace with no pyproject.toml: nothing to install. "
-                "Run `publish-root` first if you want doc-publish.")
-            return 0
-        sys.exit("pyproject.toml missing. Run the `root` step first.")
-    default = [] if state.get("layout") == "writing-only" else base_extras("plotly")
-    extras = state.get("extras", default) + (args.extra or [])
-    cmd = ["uv", "sync"]
-    for extra in dict.fromkeys(extras):
-        cmd += ["--extra", extra]
-    run(cmd, cwd=ROOT)
+# ---------------------------------------------------------------------------
+# steps
+# ---------------------------------------------------------------------------
+
+def cmd_check(args):
+    os_name = _os()
+    missing_required = False
+    say(f"platform: {platform.system()} ({os_name})")
+
+    py = sys.version_info[:3]
+    ok = py >= MIN_PYTHON
+    say(f"[{'ok' if ok else 'FAIL'}] python {'.'.join(map(str, py))} (need >= 3.11.4)")
+    if not ok:
+        missing_required = True
+        say("       uv python install 3.12   then re-run this script with `uv run --python 3.12`")
+
+    for tool, required in (("git", True), ("gh", True), ("uv", True),
+                           ("latexmk", False), ("make", False)):
+        found = shutil.which(tool)
+        # Found is not enough for latexmk: MiKTeX's is a Perl script that, with no Perl on
+        # PATH, prints "did not succeed" and exits non-zero, yet `which` finds it (#4). Run
+        # it. A hung or failed latexmk is still optional, so this never touches the exit code.
+        if found and tool == "latexmk" and quiet([found, "-v"], timeout=20).returncode != 0:
+            say(f"[--] latexmk  (found but does not run; it needs Perl)  ->  {INSTALL['perl'][os_name]}")
+            continue
+        tag = "ok" if found else ("FAIL" if required else "--")
+        say(f"[{tag}] {tool}{'' if found else '  ->  ' + INSTALL[tool][os_name]}")
+        missing_required |= required and not found
+
+    if args.analysis:
+        # setup-nested.sh is POSIX sh: Git Bash's on Windows, which need not be on PATH.
+        sh = find_sh()
+        say(f"[{'ok' if sh else 'FAIL'}] sh{'' if sh else '  ->  ' + INSTALL['git'][os_name] + '   (Git for Windows ships it)'}")
+        missing_required |= not sh
+
+    if shutil.which("gh"):
+        auth = quiet(["gh", "auth", "status"])
+        if auth.returncode == 0:
+            login = quiet(["gh", "api", "user", "--jq", ".login"]).stdout.strip()
+            say(f"[ok] gh authenticated as {login}")
+        else:
+            missing_required = True
+            say("[FAIL] gh not authenticated  ->  gh auth login   (choose HTTPS, and let it configure git)")
+
+    templates = [WRITING_TEMPLATE] + ([ANALYSIS_TEMPLATE] if args.analysis else [])
+    for repo in templates:
+        if shutil.which("gh") and not repo_exists(repo):
+            missing_required = True
+            say(f"[FAIL] cannot see template {repo} with your gh login")
+
+    say("\nAll required prerequisites present." if not missing_required
+        else "\nInstall the FAIL items above, open a NEW terminal so PATH updates, then re-run.")
+    return 1 if missing_required else 0
+
+
+def find_sh():
+    """A POSIX sh: on PATH, else the one beside Git for Windows' git.exe (Git/bin/sh.exe),
+    which a PowerShell or cmd session does not have on PATH."""
+    found = shutil.which("sh")
+    if found:
+        return found
+    git = shutil.which("git")
+    if not git:
+        return None
+    for parent in Path(git).resolve().parents:
+        for candidate in (parent / "bin" / "sh.exe", parent / "usr" / "bin" / "sh.exe"):
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+def cmd_init(args):
+    """Make this folder a project workspace: workspace.toml and CLAUDE.md. Safe to re-run."""
+    state = load_state()
+    if is_legacy(state):
+        sys.exit("workspace.toml is from before documents were nested (schema 1): run "
+                 "`migrate` instead of `init`.")
+    if state:
+        state = read_state()
+        say(f"workspace.toml exists (name = {state['name']!r}, "
+            f"{len(state['document'])} document(s)); keeping it.")
+    else:
+        state = {"name": args.name or ROOT.name, "document": []}
+        write_state(state)
+    refresh_claude_md(state)
+    write_document_block(state)
+    say(f"\nProject workspace ready at {ROOT}. "
+        + ("It is a git repo." if tracked() else "It is not a git repo (`track` makes it one)."))
     return 0
+
+
+def cmd_track(args):
+    """Optional: make the workspace a git repo, ignoring every document, and give it a
+    GitHub remote if --repo is given. It never commits."""
+    state = read_state()
+    if not tracked():
+        run(["git", "init"], cwd=ROOT)
+    write_document_block(state)
+    if not args.repo:
+        origin = origin_url(ROOT)
+        say(f"origin is {origin}." if origin else
+            "No origin. Re-run with --repo OWNER/NAME to create one on GitHub.")
+        return 0
+    origin = origin_url(ROOT)
+    if origin:
+        say(f"origin is already {origin}; leaving it.")
+        return 0
+    if repo_exists(args.repo):
+        sys.exit(f"{args.repo} already exists. Point origin at it by hand: "
+                 f"git remote add origin https://github.com/{args.repo}.git")
+    has_commits = quiet(["git", "rev-parse", "HEAD"], cwd=ROOT).returncode == 0
+    cmd = ["gh", "repo", "create", args.repo, f"--{args.visibility}",
+           "--source", ".", "--remote", "origin"]
+    run(cmd + (["--push"] if has_commits else []), cwd=ROOT)
+    return 0
+
+
+def cmd_add_document(args):
+    """Create or adopt one document repo inside the workspace, and list it."""
+    state = read_state()
+    name = args.name or args.dir
+    for doc in state["document"]:
+        if doc["name"] == name or doc["dir"] == args.dir:
+            if (doc["name"], doc["dir"], doc["repo"]) != (name, args.dir, args.repo):
+                sys.exit(f"workspace.toml already lists document {doc['name']!r} in "
+                         f"{doc['dir']}/ from {doc['repo']}; refusing to replace it.")
+    checkout = ROOT / args.dir
+    if checkout.exists() and any(checkout.iterdir()) and not (checkout / ".git").exists():
+        sys.exit(f"{args.dir}/ exists and is not empty. Move it aside, then re-run.")
+
+    if args.mode == "adapt":
+        # The Overleaf project's own GitHub-sync repo (or a repo already made from
+        # writing-template) becomes the document repo, history intact. Nothing here creates it.
+        if not repo_exists(args.repo):
+            sys.exit(f"{args.repo} does not exist yet. In Overleaf: Menu -> GitHub -> "
+                     f"create a repository named {args.repo.split('/')[-1]}, then re-run.")
+        wait_for_content(args.repo)
+        checkout = clone(args.repo, args.dir)
+        overlay(checkout)
+    else:
+        create_from_template(WRITING_TEMPLATE, args.repo, args.visibility)
+        checkout = clone(args.repo, args.dir)
+        run_init(checkout, title=args.title, author=args.author)
+        if args.mode == "import":
+            stage_import_source(args.source, SETUP_DIR / args.dir / "import-source")
+
+    if not any(doc["dir"] == args.dir for doc in state["document"]):
+        state["document"].append({"name": name, "dir": args.dir, "repo": args.repo})
+        write_state(state)
+    refresh_claude_md(state)
+    write_document_block(state)
+    say(f"\nDocument {name!r} ready at {args.dir}/. Nothing has been committed in it.")
+    return 0
+
+
+def cmd_add_analysis(args):
+    """Nest an analysis repo in one document, through that document's own setup-nested.sh:
+    create it from analysis-template, adopt one with --from, or restore it from layout.toml.
+    The document repo carries the script (writing-template ships it; `add-document --mode
+    adapt` copies it in), so one implementation serves this skill and a lone checkout."""
+    state = read_state()
+    doc = find_document(state, args.document)
+    document = ROOT / doc["dir"]
+    if not document.is_dir():
+        sys.exit(f"{doc['dir']}/ does not exist. Clone it back first: "
+                 f"gh repo clone {doc['repo']} {doc['dir']}")
+    script = document / "setup-nested.sh"
+    if not script.is_file():
+        # A document repo stamped before the script existed, or adopted before the overlay
+        # carried it. Added as a file of the document repo, to commit there.
+        write(script, gh_raw(WRITING_TEMPLATE, "setup-nested.sh"))
+        if not (document / ".gitattributes").exists():
+            write(document / ".gitattributes", gh_raw(WRITING_TEMPLATE, ".gitattributes"))
+        say(f"  (commit setup-nested.sh in {doc['dir']}/: it restores the analysis repo on a fresh clone)")
+    sh = find_sh()
+    if not sh:
+        sys.exit("No POSIX sh found. On Windows it comes with Git for Windows: "
+                 + INSTALL["git"]["windows"])
+
+    flags = ["--backend", args.backend]
+    for flag, value in (("--from", args.source), ("--dir", args.dir), ("--owner", args.owner),
+                        ("--name", args.repo_name), ("--python", args.python)):
+        if value:
+            flags += [flag, value]
+    if args.public:
+        flags.append("--public")
+    init_flags = [f"--{k}={v}" for k, v in (("distribution", args.distribution),
+                                            ("author", args.author)) if v]
+    run([sh, "setup-nested.sh", *flags, *(["--", *init_flags] if init_flags else [])],
+        cwd=document, env=os.environ | {"PYTHONIOENCODING": "utf-8"})
+
+    extras = list(dict.fromkeys(["dev", "notebooks", args.backend, *doc.get("extras", [])]))
+    if doc.get("extras") != extras:
+        doc["extras"] = extras
+        write_state(state)
+    refresh_claude_md(state)
+    analysis = analysis_dir_of(document) if not DRY_RUN else (args.dir or "ANALYSIS_DIR")
+    say("\nDocument checks:")
+    for problem in document_problems(document) or ["ok: every Sections/<Name>/Figures/ "
+                                                   "is in \\graphicspath"]:
+        say(f"  {problem}")
+    say(f"\nAnalysis repo ready at {doc['dir']}/{analysis}/, with its own venv. "
+        "Next: the plotly check and the proof (add-analysis, §4).")
+    return 0
+
+
+def cmd_document(args):
+    """Print the document a skill should act on, or every document with --all, as JSON."""
+    state = read_state()
+    if args.all:
+        print(json.dumps([describe(doc) for doc in state["document"]], indent=2))
+    else:
+        print(json.dumps(describe(find_document(state, args.document)), indent=2))
+    return 0
+
+
+def cmd_sync(args):
+    """uv sync in a document's analysis repo, passing every extra workspace.toml records
+    for it: a bare `uv sync` removes the extras it is not given. --extra adds one and
+    records it."""
+    state = read_state()
+    doc = find_document(state, args.document)
+    info = describe(doc)
+    if not info["analysis_path"]:
+        sys.exit(f"{doc['name']} has no analysis repo, so no venv: nothing to sync. "
+                 "(doc-publish for it runs through uvx; see /project-workspace:setup-doc-publish.)")
+    extras = list(dict.fromkeys([*doc.get("extras", []), *(args.extra or [])]))
+    if not extras:
+        sys.exit(f"workspace.toml records no extras for {doc['name']}. Pass them: "
+                 "--extra dev --extra notebooks --extra plotly")
+    if extras != doc.get("extras"):
+        doc["extras"] = extras
+        write_state(state)
+    cmd = ["uv", "sync"]
+    for extra in extras:
+        cmd += ["--extra", extra]
+    run(cmd, cwd=Path(info["analysis_path"]))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# migrate: schema 1 (one document, side-by-side members, root venv) -> schema 2
+# ---------------------------------------------------------------------------
+
+# What schema 1 kept at the root and schema 2 does not. Backed up to .setup/migrate-backup/
+# before deletion, never just deleted: either may hold the user's own edits.
+LEGACY_ROOT_FILES = ("pyproject.toml", "uv.lock", ".python-version")
+
+
+def migrate_plan(legacy):
+    """Everything `migrate` will do, as a list of lines, and the stops that prevent it."""
+    layout = legacy.get("layout") or ("full" if "analysis_dir" in legacy else "writing-only")
+    writing = legacy.get("writing_dir")
+    stops, plan = [], []
+    if not writing or not (ROOT / writing / ".git").exists():
+        stops.append(f"the document repo {writing or '(writing_dir unset)'}/ is not a checkout here")
+    analysis = legacy.get("analysis_dir") if layout == "full" else None
+    if analysis:
+        source = ROOT / analysis
+        target = ROOT / writing / analysis
+        if not (source / ".git").exists():
+            if (target / ".git").exists():
+                plan.append(f"{analysis}/ is already inside {writing}/; not moved again")
+            else:
+                stops.append(f"the analysis repo {analysis}/ is not a checkout here")
+        else:
+            if target.exists():
+                stops.append(f"{writing}/{analysis} already exists; cannot move {analysis}/ there")
+            if not origin_url(source):
+                stops.append(f"{analysis}/ has no origin remote; nested_remote needs one")
+            plan.append(f"move {analysis}/ -> {writing}/{analysis}/  (close Jupyter, IDEs and "
+                        "terminals inside it first: Windows will not move an open directory)")
+        plan.append(f"run {writing}/setup-nested.sh --dir {analysis}: gitignore it, write "
+                    f"layout.toml, build its own .venv")
+        plan.append(f"uv sync there with the extras {legacy.get('extras', [])}")
+    for name in LEGACY_ROOT_FILES:
+        if (ROOT / name).exists():
+            plan.append(f"back up and remove {name}  (-> .setup/migrate-backup/)")
+    if (ROOT / ".venv").exists():
+        plan.append("delete the root .venv")
+    if (ROOT / ".env").exists():
+        plan.append("keep the root .env; doc-publish settings in it move per document "
+                    "(/project-workspace:setup-doc-publish)")
+    plan.append("rewrite workspace.toml as schema 2, listing one document")
+    plan.append("back up CLAUDE.md and write the plugin's workspace text in its place")
+    if tracked():
+        plan.append("rewrite the .gitignore member block as a documents block")
+    return layout, plan, stops
+
+
+def cmd_migrate(args):
+    state = load_state()
+    if not state:
+        sys.exit("workspace.toml missing: nothing to migrate. Use `init`.")
+    if not is_legacy(state):
+        say(f"workspace.toml is already schema {state.get('schema')}; nothing to migrate.")
+        leftovers = [n for n in (*LEGACY_ROOT_FILES, ".venv") if (ROOT / n).exists()]
+        if leftovers:
+            say(f"Left at the root from schema 1: {', '.join(leftovers)}. A migrate that "
+                "stopped part-way leaves these; once `add-analysis` and `sync` have run for "
+                "the document, back them up and delete them.")
+        return 0
+    legacy = state["workspace"]
+    layout, plan, stops = migrate_plan(legacy)
+    say(f"Migrating the {layout} workspace {legacy.get('name')!r}:")
+    for line in plan:
+        say(f"  - {line}")
+    if stops:
+        sys.exit("\nCannot migrate:\n" + "\n".join(f"  - {s}" for s in stops))
+    if DRY_RUN:
+        return 0
+
+    writing = legacy["writing_dir"]
+    document = ROOT / writing
+    backup = SETUP_DIR / "migrate-backup"
+    # The root pin becomes the analysis repo's. A re-run after a stop finds it backed up.
+    python = None
+    for pin in (ROOT / ".python-version", backup / ".python-version"):
+        if pin.exists():
+            python = pin.read_text(encoding="utf-8").strip() or None
+            break
+
+    # Replaced, not merged: the old text describes the side-by-side layout. Out of the way
+    # first, so every step below that refreshes CLAUDE.md writes the new one.
+    claude_md = ROOT / "CLAUDE.md"
+    if claude_md.exists():
+        backup_file(claude_md, backup)
+        claude_md.unlink()
+
+    analysis = legacy.get("analysis_dir") if layout == "full" else None
+    if analysis:
+        # The root venv goes first: it is what an IDE or kernel most often holds open.
+        remove_tree(ROOT / ".venv")
+        if (ROOT / analysis / ".git").exists():
+            say(f"  move  {analysis}/ -> {writing}/{analysis}/")
+            try:
+                shutil.move(str(ROOT / analysis), str(document / analysis))
+            except OSError as exc:
+                sys.exit(f"Could not move {analysis}/ ({exc}). Close whatever has it open, "
+                         "then re-run `migrate`: nothing else has changed yet.")
+        # Before any uv runs in the analysis repo: uv looks upward for a workspace root, and
+        # would find the old one here and sync into it.
+        remove_legacy_root(backup)
+        args_ns = argparse.Namespace(
+            document=None, source=None, dir=analysis, owner=None, repo_name=None, public=False,
+            backend=legacy.get("backend", "plotly"), python=python, distribution=None,
+            author=None)
+        # add-analysis reads schema 2, so workspace.toml is rewritten first.
+        new_state = {"name": legacy.get("name") or ROOT.name,
+                     "document": [{"name": legacy.get("name") or writing, "dir": writing,
+                                   "repo": legacy.get("writing_repo", ""),
+                                   "extras": legacy.get("extras", [])}]}
+        backup_file(STATE_FILE, backup)
+        write_state(new_state)
+        cmd_add_analysis(args_ns)
+        state = read_state()
+        cmd_sync(argparse.Namespace(document=None, extra=None))
+    else:
+        backup_file(STATE_FILE, backup)
+        state = {"name": legacy.get("name") or ROOT.name,
+                 "document": [{"name": legacy.get("name") or writing, "dir": writing,
+                               "repo": legacy.get("writing_repo", "")}]}
+        write_state(state)
+
+    remove_legacy_root(backup)
+    refresh_claude_md(state)
+    write_document_block(state)
+    say(f"\nMigrated. Backups are in .setup/migrate-backup/: merge anything of yours from the "
+        f"old CLAUDE.md into the new one, then delete them."
+        + ("\nCommit at the root: workspace.toml, CLAUDE.md, .gitignore, and the removals."
+           if tracked() else ""))
+    return 0
+
+
+def remove_legacy_root(backup):
+    """Back up and remove the root pyproject.toml, uv.lock and .python-version, and delete
+    the root .venv: schema 2 has no Python at the root."""
+    for name in LEGACY_ROOT_FILES:
+        if (ROOT / name).exists():
+            backup_file(ROOT / name, backup)
+            say(f"  remove {name}")
+            (ROOT / name).unlink()
+    remove_tree(ROOT / ".venv")
+
+
+def backup_file(path, backup):
+    say(f"  back up {path.relative_to(ROOT)} -> {backup.relative_to(ROOT)}/")
+    if not DRY_RUN:
+        backup.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, backup / path.name)
+
+
+def remove_tree(path):
+    if path.exists():
+        say(f"  delete {path.relative_to(ROOT)}/")
+        if not DRY_RUN:
+            shutil.rmtree(path)
 
 
 # ---------------------------------------------------------------------------
@@ -930,84 +1062,69 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="step", required=True)
 
     p = sub.add_parser("check")
-    p.add_argument("--layout", choices=LAYOUTS, default="full",
-                   help="writing-only does not need the analysis template")
+    p.add_argument("--analysis", action="store_true",
+                   help="also what add-analysis needs: sh, and the analysis template")
 
-    p = sub.add_parser("workspace")
-    p.add_argument("--repo", help="OWNER/NAME for this workspace's own repo")
+    p = sub.add_parser("init")
+    p.add_argument("--name", help="the workspace's name (default: this folder's)")
+
+    p = sub.add_parser("track")
+    p.add_argument("--repo", help="OWNER/NAME to create on GitHub as this workspace's origin")
     p.add_argument("--visibility", choices=("private", "public"), default="private")
 
-    p = sub.add_parser("writing")
+    p = sub.add_parser("add-document")
     p.add_argument("--mode", choices=("adapt", "import", "fresh"), required=True)
     p.add_argument("--repo", required=True)
-    p.add_argument("--dir", required=True)
+    p.add_argument("--dir", type=checked_name, help="default: the repo's name")
+    p.add_argument("--name", type=checked_name, help="default: the directory's name")
     p.add_argument("--title")
     p.add_argument("--author")
     p.add_argument("--source", help="import mode: OWNER/NAME, a local folder or .tex file, or a "
                         "document file (.docx, .odt, .md, ...) to convert with pandoc")
     p.add_argument("--visibility", choices=("private", "public"), default="private")
 
-    p = sub.add_parser("analysis")
-    p.add_argument("--repo", required=True)
-    p.add_argument("--dir", required=True)
-    p.add_argument("--writing-dir", required=True)
-    p.add_argument("--distribution", required=True)
-    p.add_argument("--author", required=True)
-    p.add_argument("--backend", choices=("plotly", "matplotlib"), default="plotly")
-    p.add_argument("--visibility", choices=("private", "public"), default="private")
+    p = sub.add_parser("add-analysis")
+    p.add_argument("--document", help="name or directory (default: see `document`)")
+    p.add_argument("--from", dest="source", help="adopt this repo (anything git clone takes)")
+    p.add_argument("--dir", help="inside the document repo (default: [document repo]-analysis)")
+    p.add_argument("--owner")
+    p.add_argument("--repo-name", help="the new repo's name (default: [document repo]-analysis)")
+    p.add_argument("--public", action="store_true")
+    p.add_argument("--backend", choices=BACKENDS, default="plotly")
+    p.add_argument("--python", type=checked_python,
+                   help=f"written to the analysis repo's .python-version (offer {ANALYSIS_PYTHON}; "
+                        "left out, an existing pin is kept)")
+    p.add_argument("--distribution", help="the analysis repo's distribution name")
+    p.add_argument("--author")
 
-    p = sub.add_parser("root")
-    p.add_argument("--name", required=True)
-    p.add_argument("--writing-dir", required=True)
-    p.add_argument("--writing-repo", required=True)
-    p.add_argument("--writing-mode", choices=("adapt", "import", "fresh"), required=True)
-    p.add_argument("--layout", choices=LAYOUTS, default="full")
-    p.add_argument("--analysis-dir", help="required for --layout full")
-    p.add_argument("--analysis-repo", help="required for --layout full")
-    p.add_argument("--backend", choices=("plotly", "matplotlib"),
-                   help="--layout full only (default plotly)")
-    p.add_argument("--python", default=WORKSPACE_PYTHON,
-                   help=f"the venv's interpreter, written to .python-version "
-                        f"(default {WORKSPACE_PYTHON})")
-
-    sub.add_parser("publish-root")
-
-    p = sub.add_parser("add-analysis", help="writing-only -> full")
-    p.add_argument("--repo", required=True)
-    p.add_argument("--dir", required=True)
-    p.add_argument("--distribution", required=True)
-    p.add_argument("--author", required=True)
-    p.add_argument("--backend", choices=("plotly", "matplotlib"), default="plotly")
-    p.add_argument("--visibility", choices=("private", "public"), default="private")
+    p = sub.add_parser("document")
+    p.add_argument("--document", help="name or directory")
+    p.add_argument("--all", action="store_true", help="every document")
 
     p = sub.add_parser("sync")
-    p.add_argument("--extra", action="append", help="an extra beyond workspace.toml's `extras`")
+    p.add_argument("--document", help="name or directory")
+    p.add_argument("--extra", action="append", help="an extra to add, and record")
+
+    sub.add_parser("migrate")
 
     args = ap.parse_args(argv)
     DRY_RUN = args.dry_run
     if args.root:
         set_root(args.root)
-    if args.step == "writing" and args.mode != "adapt" and not (args.title and args.author):
-        ap.error("--title and --author are required unless --mode adapt")
-    if args.step == "root":
-        if not PYTHON_PIN.fullmatch(args.python):
-            ap.error(f"--python {args.python!r}: give a version such as 3.12 or 3.12.4")
-        # A minor pin is held to the minimum's minor: uv then picks a 3.11.x that fits.
-        pin = tuple(int(n) for n in args.python.split("."))
-        if pin < MIN_PYTHON[:len(pin)]:
-            ap.error(f"--python {args.python} is below the minimum, "
-                     f"{'.'.join(map(str, MIN_PYTHON))}")
-        if args.layout == "full":
-            if not (args.analysis_dir and args.analysis_repo):
-                ap.error("--analysis-dir and --analysis-repo are required for --layout full")
-            args.backend = args.backend or "plotly"
-        elif args.analysis_dir or args.analysis_repo or args.backend:
-            ap.error("--analysis-dir, --analysis-repo and --backend do not apply to "
-                     "--layout writing-only")
+    if args.step == "add-document":
+        if args.mode != "adapt" and not (args.title and args.author):
+            ap.error("--title and --author are required unless --mode adapt")
+        if not REPO_NAME.fullmatch(args.repo):
+            ap.error(f"--repo {args.repo!r}: give OWNER/NAME")
+        if not args.dir:
+            try:
+                args.dir = checked_name(args.repo.split("/")[-1])
+            except argparse.ArgumentTypeError as exc:
+                ap.error(f"--dir: {exc}")
 
-    return {"check": cmd_check, "workspace": cmd_workspace, "writing": cmd_writing,
-            "analysis": cmd_analysis, "root": cmd_root, "publish-root": cmd_publish_root,
-            "add-analysis": cmd_add_analysis, "sync": cmd_sync}[args.step](args)
+    return {"check": cmd_check, "init": cmd_init, "track": cmd_track,
+            "add-document": cmd_add_document, "add-analysis": cmd_add_analysis,
+            "document": cmd_document, "sync": cmd_sync, "migrate": cmd_migrate}[args.step](args)
 
 
 if __name__ == "__main__":
