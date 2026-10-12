@@ -1,6 +1,6 @@
 ---
 name: adapt-existing-analysis
-description: Copy an existing analysis project's notebooks into the workspace's analysis repo, placed by document section, and retrofit each with the save_fig/save_table setup. Use after setup-project-workspace names an existing analysis, or when asked to bring old notebooks in.
+description: Copy an existing analysis project's notebooks into a document's analysis repo, placed by document section, and retrofit each with the save_fig/save_table setup. Use after add-analysis names an existing analysis, or when asked to bring old notebooks in.
 ---
 
 # Adapt an existing analysis project
@@ -24,10 +24,12 @@ and as it is; all work happens on the copies inside `<analysis_dir>/`.
 
 ## Setup
 
-Read `workspace.toml` at the workspace root for `analysis_dir`, `writing_dir`, `backend`.
-If it records `layout = "writing-only"`, stop: there is no analysis repo to copy into.
-Offer to add one first: `/project-workspace:setup-project-workspace`, "Adding analysis later" (#18). Carry on
-here once `workspace.toml` records `layout = "full"`.
+Find the document: `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" document`
+prints it as JSON — the one this session is inside, else the only one; with several it
+lists them: ask, then pass `--document <name>` to it and to `COPY plan`. Below,
+`<writing_dir>` is its `path` and `<analysis_dir>` its `analysis_path`. A null
+`analysis_path` means the document has no analysis repo to copy into: stop, and offer
+`/project-workspace:add-analysis` first.
 Read `<analysis_dir>/AGENTS.md`: it is the authority on the saver conventions.
 
 ```bash
@@ -45,10 +47,10 @@ whose section does not exist yet goes to `notebooks/unsorted/`.
 ## 1. Inventory
 
 Ask where the existing project is: a local path, or `OWNER/NAME` (cloned into
-`.setup/analysis-source/`). Then `COPY plan --source <it>`.
+`.setup/analysis-source/`). Then `COPY plan --source <it> [--document <name>]`.
 
-**Only part of a larger project?** Ask which notebooks or folders (setup-project-workspace
-question 10 may already have the answer), and pass each as `--include <glob>`, repeated:
+**Only part of a larger project?** Ask which notebooks or folders (add-analysis question 6
+may already have the answer), and pass each as `--include <glob>`, repeated:
 `COPY plan --source <it> --include 'results/**' --include 'notebooks/2024-*.ipynb'`.
 Globs are relative to the source, with `/` separators; `*` stays within one folder, `**`
 spans folders, and naming a folder (`results`) takes everything in it. Quote each glob so
@@ -72,19 +74,21 @@ It also lists the document's sections.
 
 **Interpreter range.** The source may pin its own Python: `plan` prints its
 `requires-python` and `.python-version` (also saved as `source_python` in `plan.json`) and
-checks the workspace's `.python-version` against the range — or, when the source declares
-no range, against the minor its `.python-version` names. The workspace venv is built on that
-pin, so a stack whose range excludes it will not install. If `plan` warns that the pin is
-outside the range, or could not check it, or the workspace has no `.python-version`:
+checks the analysis repo's `.python-version` against the range — or, when the source
+declares no range, against the minor its `.python-version` names. The analysis repo's venv
+is built on that pin, so a stack whose range excludes it will not install. If `plan` warns
+that the pin is outside the range, or could not check it, or there is no `.python-version`:
 
 1. Pick a version inside the source's `requires-python`, preferring its `.python-version`.
    Confirm it with the user.
-2. At the workspace root, `uv python pin <version>`, then re-sync:
-   `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync`.
+2. In `<analysis_dir>/`, `uv python pin <version>`, then re-sync:
+   `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync --document <name>`
+   (it passes every extra the document records; a bare `uv sync` removes the others).
+   Commit the new `.python-version` in the analysis repo (ask).
 3. Do this **before** step 3: the copies' dependencies go into the re-pinned venv.
 
 Done when `plan` printed `Inventoried N file(s) in <the path given>`, with `--include`
-every glob matched, and the workspace pin fits the source's `requires-python` (or the
+every glob matched, and the analysis repo's pin fits the source's `requires-python` (or the
 source declares none).
 
 ## 2. Placement
@@ -143,8 +147,8 @@ For each placed notebook (`notebooks/unsorted/` ones wait until they have a sect
    flags; `figures_config.toml` decides now. Pin each figure's size as `AGENTS.md` says;
    for a committed PNG, inches = its pixels ÷ `PRINT_DPI` (in `doc_analysis/style.py`).
 4. Run it from `<analysis_dir>/`:
-   `uv run jupyter nbconvert --to notebook --execute <notebook> --output-dir ../.setup/executed --ExecutePreprocessor.timeout=1800`.
-   - The executed copy goes to the workspace's gitignored `.setup/executed/`, never back
+   `uv run jupyter nbconvert --to notebook --execute <notebook> --output-dir <workspace>/.setup/<document dir>/executed --ExecutePreprocessor.timeout=1800`.
+   - The executed copy goes to the workspace's `.setup/<document dir>/executed/`, never back
      over the notebook: `--output <notebook file name>` wrote megabytes of output into the
      tracked copy (#10). The command is the same in bash and PowerShell; the kernel still
      runs in the notebook's own directory. The copy is overwritten by the next notebook of
@@ -157,7 +161,7 @@ For each placed notebook (`notebooks/unsorted/` ones wait until they have a sect
      memory — two at once would only make that likelier.
 5. Done when the notebook runs clean, each converted figure is in
    `<writing_dir>/Sections/<Section>/Figures/` (report the document repo's `git status`),
-   the notebook in `notebooks/` holds no output from this run (only `.setup/executed/` does), and
+   the notebook in `notebooks/` holds no output from this run (only `.setup/` does), and
    `COPY verify` prints `OK`. Then the next notebook.
 
 ### Source already on an older `doc_analysis`
@@ -198,9 +202,9 @@ deciding what it meant. Fix each call by hand:
 ## 5. Finish
 
 1. From `<analysis_dir>/`: `uv run check-figure-parity --snapshot`.
-2. Ask before each commit and push, in the analysis repo and then the writing repo.
+2. Ask before each commit and push, in the analysis repo and then the document repo.
 3. Tell the user which notebooks are still in `notebooks/unsorted/` and which files were
    left in the source (`dest: null`).
 4. Last `COPY verify`. Once it prints `OK` and nothing is left in `unsorted/`,
-   `.setup/analysis-import/`, `.setup/executed/` and any `.setup/analysis-source/` clone
-   can be deleted.
+   `.setup/analysis-import/`, `.setup/<document dir>/executed/` and any
+   `.setup/analysis-source/` clone can be deleted.

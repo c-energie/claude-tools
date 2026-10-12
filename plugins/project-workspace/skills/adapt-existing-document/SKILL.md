@@ -1,6 +1,6 @@
 ---
 name: adapt-existing-document
-description: Adapt an existing LaTeX document to the conventions the figure tooling needs (Sections/[Name]/Figures, \graphicspath, bare filenames, labels mirroring filenames), one section at a time — in place, or moved from .setup/import-source/ into the template. Use after setup-project-workspace in adapt or import mode, or when generated figures aren't found by the document.
+description: Adapt an existing LaTeX document to the conventions the figure tooling needs (Sections/[Name]/Figures, \graphicspath, bare filenames, labels mirroring filenames), one section at a time — in place, or moved from .setup/[document]/import-source/ into the template. Use after add-document in adapt or import mode, or when generated figures aren't found by the document.
 ---
 
 # Adapt an existing document
@@ -8,11 +8,15 @@ description: Adapt an existing LaTeX document to the conventions the figure tool
 **First, invoke `/project-workspace:setup-observer`** (once per session): it records where this guide and
 reality disagree, so the maintainer can fix the guide.
 
-Read `workspace.toml` at the workspace root for `writing_dir`, `analysis_dir` and
-`writing_mode` (and `layout`). **Writing-only layout** (`layout = "writing-only"`): there
-is no analysis repo, so skip every step that runs one (the generated-figure proof, deleting
-the example notebook, `check-figure-parity`) — a section is proved when the document
-compiles. `DOC_MAIN_TEX` goes in the workspace root's `.env`, not `<analysis_dir>/.env`.
+Find the document: `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" document`
+prints it as JSON — the one this session is inside, else the only one; with several it lists
+them: ask, then pass `--document <name>`. Below, `<writing_dir>` is its `path`,
+`<analysis_dir>` its `analysis_path`, and the mode is `import` if
+`.setup/<dir>/import-source/` exists at the workspace root, else `adapt`. **No analysis
+repo** (`analysis_path` null): skip every step that runs one (the generated-figure proof,
+deleting the example notebook, `check-figure-parity`) — a section is proved when the
+document compiles. `DOC_MAIN_TEX` then goes in `<writing_dir>/.env` (gitignored there),
+else in `<analysis_dir>/.env`.
 Then read `<writing_dir>/AGENTS.md` and the template's
 [SETUP.md](https://github.com/c-energie/writing-template/blob/main/SETUP.md) section
 "Adapting an existing document" — that is the authority; this skill is the procedure.
@@ -24,7 +28,7 @@ Rules:
   push followed by "Pull GitHub changes into Overleaf" is what makes a change real there.
 - You cannot see a rendered PDF. What you can check: balanced braces, every
   `\subfile`/`\input`/`\include`/`\includegraphics`/`\ref` target exists. If the user has
-  latexmk (`make` in the writing dir), use it; otherwise ask them to recompile on Overleaf
+  latexmk (`make` in the document repo), use it; otherwise ask them to recompile on Overleaf
   after each section and report errors back.
 
 ## What is required, and what is not
@@ -92,23 +96,24 @@ bibliography location, whether a glossary exists, `\chapter` vs `\section`.
    **uncomment that block once and recompile**: it is the only check that `\width`, `float`
    and the `\graphicspath` entry from step 3 work, because the block compiles nowhere while
    it is commented. Re-comment it afterwards if the figure is not meant to appear yet.
-   **After the first section only** (full layout), finish the workspace-root proof that
-   `setup-project-workspace` §7 deferred — it could not run while the document had no
-   `Sections/` (#3). At the workspace root:
+   **After the first section only** (with an analysis repo), finish the proof that
+   `add-analysis` §4 deferred — it could not run while the document had no `Sections/` (#3).
+   From `<analysis_dir>/`:
    `uv run python -c "import sys; from doc_analysis import notebook_setup, document_repo; notebook_setup(); print(sys.executable); print(document_repo())"`.
-   Expect the root `.venv`'s interpreter, then the absolute path of the writing repo.
-   Anything else is a deviation to log with `/project-workspace:setup-observer`.
-6. **Commit** in the writing repo (ask), push, then Overleaf → Pull GitHub changes.
+   Expect the analysis repo's `.venv` interpreter, then the absolute path of the document
+   repo. Anything else is a deviation to log with `/project-workspace:setup-observer`.
+6. **Commit** in the document repo (ask), push, then Overleaf → Pull GitHub changes.
 7. Repeat for the next section. Sections that will never hold generated figures may stay
    where they are.
 
 ## Mode `import` — move into the template layout
 
-The new writing repo is the initialised template; the old document is in
-`.setup/import-source/` (read-only reference — never edit it, never commit it).
+The new document repo is the initialised template; the old document is in
+`.setup/<dir>/import-source/` at the workspace root (read-only reference — never edit it,
+never commit it).
 
 **If the source was a document file** (Word, ODT, Markdown, …), setup converted it with
-pandoc: `.setup/import-source/` holds one `<name>.tex` and a `media/` folder, and its
+pandoc: `.setup/<dir>/import-source/` holds one `<name>.tex` and a `media/` folder, and its
 captions have already lost any `Figure 3:` / `Table 1.` prefix. Nothing else was fixed.
 Work through this list as each section moves in (step 4):
 
@@ -138,7 +143,7 @@ Work through this list as each section moves in (step 4):
    `Sections/Example/example.tex`. Apply the bare-filename and label rules above as you go.
 5. Once the first real section compiles and a generated figure lands in it, remove the
    example — all of it, because every leftover is still indexed by name somewhere.
-   1. **In the writing repo, delete `Sections/Example/`**, its `\subfile` line and its
+   1. **In the document repo, delete `Sections/Example/`**, its `\subfile` line and its
       `\graphicspath` entry. A plain `git rm -r` refuses: the setup proof run rewrote
       `tables.tex`, so the tracked files carry local modifications. And `git rm` only
       touches tracked files, leaving the generated `Figures/example_scatter.png` behind —
@@ -178,11 +183,11 @@ Work through this list as each section moves in (step 4):
       If it still lists one, something in step 5.3 survived: find it rather than editing
       the baseline by hand.
 
-   Writing-only layout: do 5.1 only — there is no analysis repo.
+   No analysis repo: do 5.1 only.
 6. Diff the old and new document for lost content: every `\label` in the old should exist
    in the new. Report any that don't.
 7. Commit (ask), push, then Overleaf **New Project → Import from GitHub**. Delete
-   `.setup/import-source/` at the workspace root.
+   `.setup/<dir>/import-source/` at the workspace root.
 
 ## Finish
 
