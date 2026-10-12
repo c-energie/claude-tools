@@ -11,7 +11,8 @@ The analysis repo is **nested inside its document repo**: a separate repo with i
 remote, gitignored by the document repo and recorded in its `layout.toml`
 (`writing-hosts-analysis`). It has its own `.venv`. It finds the document from `layout.toml`,
 so no `DOC_REPO` is set anywhere. The work is done by the document repo's own
-`setup-nested.sh` (writing-template ships it; the step adds it if missing); this skill does
+`setup-nested.sh` (writing-template ships it; the step adds it if missing, or replaces a
+copy too old to know `--python` and in-place `--dir`); this skill does
 the interview, the proof and the hand-offs.
 
 Prerequisite: `workspace.toml` with `schema = 2` listing the document. Otherwise →
@@ -131,7 +132,7 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
   `Sections/`, because notebooks are placed by section.
 - Commits, asking before each commit and push: in the **analysis repo**, its initial commit
   (`init.py`'s changes, `.python-version`, the baseline); in the **document repo**,
-  `layout.toml`, `.gitignore` (and `setup-nested.sh`/`.gitattributes` if the step added
+  `layout.toml`, `.gitignore` (and `setup-nested.sh`/`.gitattributes` if the step added or updated
   them) and the example figure; at a tracked workspace root, `workspace.toml` and `CLAUDE.md`.
 - Delete `.setup/<document dir>/executed/`.
 - Offer **`/project-workspace:setup-doc-publish`** (corpus, Notion wiki, Quarto site).
