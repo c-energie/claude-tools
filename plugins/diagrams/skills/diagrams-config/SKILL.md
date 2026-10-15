@@ -1,6 +1,6 @@
 ---
 name: diagrams-config
-description: How the diagrams skills find a project's diagram store — the context.json state.diagrams contract, why there is deliberately no default store, the append-only index.jsonl schema, and the taxonomy's absent/empty/present rule. Background knowledge for save-diagram and browse-diagrams; not a task to run.
+description: How the diagrams skills find a project's diagram store — the DIAGRAMS_STORE / .diagrams.json / context.json ladder, the org-boundary check, why there is deliberately no default store, the append-only index.jsonl schema, and the taxonomy's absent/empty/present rule. Background knowledge for save-diagram and browse-diagrams; not a task to run.
 user-invocable: false
 ---
 
@@ -16,31 +16,42 @@ file is the one place that procedure lives.
 node "${CLAUDE_PLUGIN_ROOT}/scripts/diagram-store.mjs" where
 ```
 
-That reads the project's `context.json` (via `context-repo.sh`, or `CONTEXT_CONFIG` when you
-already hold the path) and prints the store repo, its checkout, the org and the project.
+That prints the store repo, its checkout, the org, the project, **which rung named it**, and the
+org-boundary result. The store is named in the first of:
+
+| # | Where | Needs context-kit? |
+|---|---|---|
+| 1 | `DIAGRAMS_STORE=owner/repo` (with `DIAGRAMS_CROSS_ORG=1` to declare a cross-org store) | no |
+| 2 | `.diagrams.json` at the root of the repo being worked in | no |
+| 3 | the project's `context.json`, `state.diagrams` | yes — a context repo |
+
+The context.json rung is found via `context-repo.sh`, or `CONTEXT_CONFIG` when you already hold
+the path. `.diagrams.json` and `state.diagrams` take the same block:
 
 ```json
-{
-  "project": "Acme",
-  "contextRepo": "acme-co/context",
-  "state": {
-    "diagrams": { "repo": "acme-co/diagrams" }
-  }
-}
+{ "repo": "acme-co/diagrams", "project": "Acme" }
 ```
 
-- **`state.diagrams.repo`** — `owner/repo` of the store. Required.
-- **`state.diagrams.dir`** — optional explicit checkout path. Otherwise `~/[owner]/[repo]`, its
+- **`repo`** — `owner/repo` of the store. Required.
+- **`project`** — `.diagrams.json` only (context.json has its own); else the repo directory name.
+- **`dir`** — optional explicit checkout path. Otherwise `~/[owner]/[repo]`, its
   own root — deliberately not `~/.context`, which is reserved for context repos. A store is a
   separate repo with its own access, and a separate root keeps context-repo tooling (the
   session-start hook, `context-repo.sh`) from ever resolving a store by accident.
-- **`state.diagrams.org`** — optional override for the `org` recorded on each row. Defaults to
+- **`org`** — optional override for the `org` recorded on each row. Defaults to
   the store repo's owner, which is right almost always.
 
 ## 2. There is no default store, and that is the design
 
-A project with no `state.diagrams.repo` **fails, naming the missing key**. Do not fall back to
-another store, do not pick "the one that exists on this machine", do not offer to guess.
+A project that names no store on any rung **fails, listing the three places**. Do not fall back
+to another store, do not pick "the one that exists on this machine". The error may *suggest*
+`[origin owner]/diagrams`; that is a question for the user, never an answer.
+
+**The org boundary is enforced on every resolve.** The work's org is the current repo's origin
+owner, else the context repo's owner. A store in another org is refused unless the block says
+`"crossOrg": true` (or `DIAGRAMS_CROSS_ORG=1` beside `DIAGRAMS_STORE`) — the record that someone
+decided it, for a personal fork or one person owning both orgs. Set it only on the user's word.
+`boundary unchecked` from `where` means nothing to compare against; say so when reporting.
 
 The stores are per-org because they are a **permission boundary** — read on the plugin catalog
 covers skill code and nothing a plugin reaches. A default would mean an unconfigured net-flex

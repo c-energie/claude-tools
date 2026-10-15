@@ -4,8 +4,8 @@ Diagrams Claude draws are worth keeping, and a chat log is not where they keep. 
 them in a **per-org git store** — source committed as text, one append-only index line each — and
 reads them back through a single self-contained HTML gallery.
 
-Install alongside `context-kit-core` (same catalog); it uses the core layer's context-repo
-resolver to find which store this project belongs to. It needs no Notion and no Slack.
+Works on its own or alongside `context-kit-core` (same catalog): a repo can name its store in a
+`.diagrams.json`, and a project with a context repo can name it in `context.json` instead. It needs no Notion and no Slack.
 
 ## The three parts, and why they are one plugin
 
@@ -21,24 +21,41 @@ both the writer and the reader import it. Split across plugins, the writer and t
 agree only by convention, and would stop agreeing the first time a field was added; the symptom
 is a gallery quietly missing rows, which nobody notices because it still renders.
 
-## The contract: what it reads from `context.json`
+## The contract: where the store is named
+
+First match wins:
+
+| # | Where | Needs context-kit? |
+|---|---|---|
+| 1 | `DIAGRAMS_STORE=owner/repo` (with `DIAGRAMS_CROSS_ORG=1` to declare a cross-org store) | no |
+| 2 | `.diagrams.json` at the root of the repo being worked in | no |
+| 3 | the project's `context.json`, `state.diagrams` | yes — a context repo |
+
+`.diagrams.json` and `state.diagrams` take the same block:
 
 ```json
-{
-  "project": "Acme",
-  "state": {
-    "diagrams": { "repo": "acme-co/diagrams" }
-  }
-}
+{ "repo": "acme-co/diagrams", "project": "Acme" }
 ```
 
-- **`state.diagrams.repo`** — `owner/repo` of the store. Checked out at `~/[owner]/[repo]`
-  unless `state.diagrams.dir` says otherwise.
-- **`state.diagrams.org`** — optional; overrides the `org` recorded on each row, which otherwise
-  is the store repo's owner.
+- **`repo`** — `owner/repo` of the store. Checked out at `~/[owner]/[repo]` unless `dir` (or
+  `DIAGRAM_STORE_DIR`) says otherwise.
+- **`org`** — optional; overrides the `org` recorded on each row, which otherwise is the store
+  repo's owner.
+- **`project`** — `.diagrams.json` only; context.json uses its own top-level `project`. Falls back
+  to the repo directory's name.
+- **`crossOrg`** — `true` only when the store deliberately belongs to another org than the work
+  (a personal fork, one person owning both orgs). Without it that is refused — see below.
 
-**There is deliberately no default store.** A project that declares none gets an error naming the
-missing key. The stores are per-org because they are a *permission* boundary — read on this plugin
+So the plugin runs with or without `context-kit-core`: a repo can carry its own `.diagrams.json`,
+and a context repo's `state.diagrams` is the third rung, not a requirement.
+
+**There is deliberately no default store.** A project that names none gets an error listing the
+three places — suggesting `[origin owner]/diagrams` when the repo has a GitHub origin, never
+assuming it.
+
+**The org boundary is checked on every resolve.** The work's org is the current repo's origin
+owner, else the context repo's owner. A store owned by anyone else is refused unless `crossOrg`
+records the decision; with nothing to compare against, `where` reports the boundary `unchecked`. The stores are per-org because they are a *permission* boundary — read on this plugin
 catalog covers skill code and nothing a plugin reaches — and a default would mean an unconfigured
 project writing into another org's store: the boundary breached by the tool built to hold it,
 silently, and unrecoverable once it is in the history. Same rule, for the same reason, as

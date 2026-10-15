@@ -21,8 +21,9 @@ node scripts/save-diagram.mjs pic.svg --title "…" --type architecture --dry-ru
 node scripts/gallery-build.mjs [store] [store] --out ~/Desktop/diagrams.html --today 2026-08-31
 ```
 
-`CONTEXT_CONFIG=path/to/context.json` pins the config, so every script runs with no git and no
-context repo — which is how they are tested. `--today` and `--date` pin dates so output can be
+`DIAGRAMS_STORE=owner/repo` or `CONTEXT_CONFIG=path/to/context.json` pins the config, so every
+script runs with no context repo. `node --test scripts/diagram-store.test.mjs` covers the resolver
+offline (env, cwd, context and origin owner are injected). `--today` and `--date` pin dates so output can be
 compared.
 
 ## Invariants (all load-bearing)
@@ -31,12 +32,19 @@ compared.
   `index.jsonl` through it and `gallery-build.mjs` reads through it. Never add a field to one
   side: a writer and a reader agreeing only by convention stop agreeing the first time the record
   changes, and the symptom is a gallery quietly missing rows while still rendering.
-- **No default store, ever.** `state.diagrams.repo` absent is an **error naming the key** — never
-  a fallback, never "the store that exists on this machine", never a guess. The stores are a
+- **No default store, ever.** The store is named by `DIAGRAMS_STORE`, else the repo's
+  `.diagrams.json`, else `context.json` `state.diagrams.repo` (`locateStore`); none is an
+  **error listing all three** — never a fallback, never "the store that exists on this machine",
+  never inferred from the origin owner (the error may *suggest* it). The ladder made context-kit
+  optional (2026-10-15); it added no default. The stores are a
   permission boundary between orgs; a default means an unconfigured project writing into another
   org's store, silently, and it is in the history by the time anyone notices. Same shape as the
   core layer's rule for `PROJECT_CONTEXT_REPO`, and for the same reason: *configured*,
   *unconfigured* and *opted out* must stay three distinguishable outcomes.
+- **The org boundary is checked on every resolve, not once at setup.** Home is the cwd repo's
+  origin owner, else the context repo's owner; a store in another org throws unless the block
+  carries `crossOrg: true` (`DIAGRAMS_CROSS_ORG=1` for the env rung). A config file travels
+  between repos, so the check travels with the use. No home → `unchecked`, reported, not refused.
 - **`index.jsonl` is append-only.** One line per diagram, so concurrent saves conflict on
   nothing — the closing bracket of a JSON array is a merge conflict on every write. A malformed
   line is reported and skipped, never fatal: one bad append must not make the store unreadable.

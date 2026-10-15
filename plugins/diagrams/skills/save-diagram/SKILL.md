@@ -24,9 +24,10 @@ default, what a record holds, and what the taxonomy's absent/empty/present state
 node "${CLAUDE_PLUGIN_ROOT}/scripts/diagram-store.mjs" where
 ```
 
-If this fails saying the project declares no `state.diagrams.repo`, **stop and say so.** That is
-the designed outcome, not an obstacle to work around: name the missing key, offer the one-line
-edit, and never pick another store. Writing a net-flex diagram into the c-energie store is the
+If this fails saying no diagram store is named, **stop and say so.** That is the designed
+outcome, not an obstacle to work around: relay the three places it lists, offer the one-line
+edit, and never pick another store. If it refuses a cross-org store, stop too — `crossOrg` is
+the user's decision to record, not yours. Writing a net-flex diagram into the c-energie store is the
 failure this plugin is shaped to prevent.
 
 If it resolves but the checkout is missing, print the `git clone` line and stop. The script never

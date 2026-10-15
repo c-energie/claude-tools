@@ -7,8 +7,9 @@
 // drift the first time a field is added, and the symptom is a gallery quietly missing rows.
 //
 // Nothing here knows an org, a repo name or a tag. The store is named by the PROJECT
-// (state.diagrams.repo in its context.json) and the vocabulary by the STORE (its own
-// taxonomy.json). Both are read at runtime; neither has a default.
+// (DIAGRAMS_STORE, the repo's .diagrams.json, or state.diagrams.repo in its context.json — see
+// locateStore) and the vocabulary by the STORE (its own taxonomy.json). Both are read at
+// runtime; neither has a default.
 //
 //   node diagram-store.mjs where          # resolve and print the store, or say what is missing
 //   node diagram-store.mjs taxonomy       # the vocabulary in force, and where it came from
@@ -19,7 +20,7 @@
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { bashBin, bashPath, NO_BASH } from './bash-bin.mjs';
 
@@ -37,7 +38,7 @@ export const FIELDS = [
   'id',                   // stable, derived from the path — what a comment or a link refers to
   'date',                 // YYYY-MM-DD, the day it was captured
   'org',                  // which store this came from; the gallery's cross-store filter facet
-  'project',              // the project whose session drew it (context.json `project`)
+  'project',              // the project whose session drew it (see resolveStore)
   'title',                // human label, shown in the gallery
   'type',                 // one of the taxonomy's types
   'tags',                 // array, each from the taxonomy's tags
@@ -74,32 +75,128 @@ export function readConfig() {
   return { path, json: JSON.parse(readFileSync(path, 'utf8')) };
 }
 
+/** The context repo is OPTIONAL: a project with no context repo names its store some other way.
+ *  So an unresolvable context repo is a null here, with the reason kept for the error message —
+ *  except when CONTEXT_CONFIG is set, where a missing file is the caller's mistake and says so. */
+export function readConfigSoft() {
+  if (process.env.CONTEXT_CONFIG) return { cfg: readConfig(), why: null };
+  try { return { cfg: readConfig(), why: null }; } catch (e) {
+    return { cfg: null, why: String(e.message ?? e).split('\n')[0] };
+  }
+}
+
+export const REPO_FILE = '.diagrams.json';
+
+/** Walk up from `cwd` to the enclosing repo root, returning the first `.diagrams.json` on the
+ *  way. A walk rather than `git rev-parse` because Cowork has no git; stopping at the first
+ *  `.git` keeps an outer repo's file from claiming an inner one that declares nothing. */
+export function findRepoFile(cwd = process.cwd()) {
+  let dir = cwd;
+  for (;;) {
+    const file = join(dir, REPO_FILE);
+    if (existsSync(file)) return { path: file, root: dir, json: JSON.parse(readFileSync(file, 'utf8')) };
+    if (existsSync(join(dir, '.git'))) return { path: null, root: dir, json: null };
+    const up = dirname(dir);
+    if (up === dir) return { path: null, root: null, json: null };
+    dir = up;
+  }
+}
+
+/** The owner of the repo being worked in — the org a diagram drawn here belongs to. Null when
+ *  there is no git, no repo or no origin: the boundary then cannot be checked, and is reported
+ *  rather than assumed either way. */
+export function originOwner(cwd = process.cwd()) {
+  try {
+    const url = execFileSync('git', ['-C', cwd, 'config', '--get', 'remote.origin.url'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return url.match(/github\.com[:/]([^/]+)\//)?.[1] ?? null;
+  } catch { return null; }
+}
+
+/** Where this project's store is named, first match wins:
+ *    1. DIAGRAMS_STORE=owner/repo           — one shell or session; tests; Cowork
+ *    2. .diagrams.json in the current repo  — ties the store to the repo, no context repo needed
+ *    3. context.json state.diagrams         — the context-kit route
+ *  None of them → an error naming all three. The ladder makes context-kit optional; it does NOT
+ *  add a default: nothing is inferred from an origin owner or from what exists on disk. */
+export function locateStore({ env = process.env, cwd = process.cwd(), context = readConfigSoft, owner = originOwner } = {}) {
+  if (env.DIAGRAMS_STORE) {
+    return {
+      source: 'env',
+      configPath: 'DIAGRAMS_STORE',
+      block: { repo: env.DIAGRAMS_STORE, crossOrg: env.DIAGRAMS_CROSS_ORG === '1' },
+      project: null,
+      repoRoot: findRepoFile(cwd).root,
+      contextOwner: null,
+    };
+  }
+  const rf = findRepoFile(cwd);
+  if (rf.json) {
+    return {
+      source: 'repo-file', configPath: rf.path, block: rf.json,
+      project: rf.json.project ?? null, repoRoot: rf.root, contextOwner: null,
+    };
+  }
+  const { cfg, why } = context();
+  const d = cfg?.json?.state?.diagrams ?? null;
+  if (d?.repo) {
+    return {
+      source: 'context.json', configPath: cfg.path, block: d,
+      project: cfg.json.project ?? cfg.json.contextRepo ?? null,
+      repoRoot: rf.root,
+      contextOwner: cfg.json.contextRepo?.split('/')[0] ?? null,
+    };
+  }
+  const suggest = owner(cwd);
+  throw new Error(
+    'No diagram store is named for this project. Name one in any of:\n'
+    + '  1. DIAGRAMS_STORE=[owner]/[repo]               (this shell only)\n'
+    + `  2. ${REPO_FILE} at the repo root:  { "repo": "[owner]/[repo]" }\n`
+    + `  3. context.json:  "state": { "diagrams": { "repo": "[owner]/[repo]" } }`
+    + (cfg ? `   (${cfg.path} has none)` : `   (no context repo: ${why})`)
+    + '\n'
+    + (suggest ? `This repo's owner is ${suggest}, so ${suggest}/diagrams is the likely store — confirm it, it is not assumed.\n` : '')
+    + 'There is no default on purpose: a default would let this project write into another '
+    + "org's store, which is exactly the boundary the per-org stores exist to hold.",
+  );
+}
+
 // ---------------------------------------------------------------- the store
 
 /** Where this project's diagrams live. There is deliberately NO DEFAULT.
  *
- *  A default here would be the whole design failing at once: a net-flex project with no
- *  `state.diagrams` block would silently write into whichever store the default named, and the
- *  org boundary this store exists to hold would be breached by the tool meant to hold it. So an
- *  unconfigured project is an error naming the missing key — loud, one-line to fix, and
- *  impossible to mistake for "saved somewhere". */
-export function resolveStore({ config = null, mustExist = true } = {}) {
-  const cfg = config ?? readConfig();
-  const d = cfg.json?.state?.diagrams ?? null;
-  const repo = d?.repo ?? null;
+ *  A default here would be the whole design failing at once: a net-flex project that named no
+ *  store would silently write into whichever store the default named, and the org boundary this
+ *  store exists to hold would be breached by the tool meant to hold it. So an unconfigured
+ *  project is an error naming the three places a store can be named — loud, one line to fix,
+ *  and impossible to mistake for "saved somewhere". A named store owned by another org than the
+ *  work is refused too, unless `crossOrg: true` records that it is deliberate. */
+export function resolveStore({ mustExist = true, env = process.env, cwd = process.cwd(), context = readConfigSoft, owner = originOwner } = {}) {
+  const loc = locateStore({ env, cwd, context, owner });
+  const d = loc.block;
+  const repo = d.repo;
 
-  if (!repo) {
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+    throw new Error(`${loc.configPath} names the store "${repo}" — expected owner/repo`);
+  }
+
+  // The org boundary, checked on every resolve rather than once at setup: a config file is
+  // copied between repos, and the check must travel with the use, not with the writing.
+  // "Home" is the repo being worked in; a workspace that is not a repo falls back to the
+  // context repo's owner. Unknown is reported, not refused — there is nothing to compare.
+  const storeOwner = repo.split('/')[0];
+  const home = owner(cwd) ?? loc.contextOwner
+    ?? (loc.source === 'context.json' ? null : context().cfg?.json?.contextRepo?.split('/')[0] ?? null);
+  if (home && home.toLowerCase() !== storeOwner.toLowerCase() && d.crossOrg !== true) {
     throw new Error(
-      `${cfg.path} declares no state.diagrams.repo — this project has no diagram store.\n`
-      + 'Add one (the per-org store repo this project\'s diagrams belong in):\n'
-      + '  "state": { "diagrams": { "repo": "[owner]/[repo]" } }\n'
-      + 'There is no default on purpose: a default would let this project write into another '
-      + "org's store, which is exactly the boundary the per-org stores exist to hold.",
+      `${loc.configPath} names the store ${repo}, but this work belongs to ${home}.\n`
+      + `Diagrams saved here would be readable by everyone with access to ${repo}.\n`
+      + 'If that is deliberate (a personal fork, one person owning both orgs), record it:\n'
+      + `  "crossOrg": true   next to "repo" — or DIAGRAMS_CROSS_ORG=1 with DIAGRAMS_STORE.`,
     );
   }
-  if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) {
-    throw new Error(`state.diagrams.repo is "${repo}" — expected owner/repo`);
-  }
+  const boundary = !home ? 'unchecked' : (home.toLowerCase() === storeOwner.toLowerCase() ? 'same-org' : 'cross-org (declared)');
 
   // Own root, not ~/.context: that root is for context repos specifically, and a store living
   // there would say nothing false, but would invite the same tooling that resolves context repos
@@ -123,9 +220,12 @@ export function resolveStore({ config = null, mustExist = true } = {}) {
     // The org is the facet the gallery filters on when it is showing more than one store, so it
     // is recorded on every row rather than inferred at read time — a row must still say which
     // store it came from once it has been merged with rows from another.
-    org: d.org ?? repo.split('/')[0],
-    project: cfg.json?.project ?? cfg.json?.contextRepo ?? null,
-    configPath: cfg.path,
+    org: d.org ?? storeOwner,
+    project: loc.project ?? (loc.repoRoot ? basename(loc.repoRoot) : null),
+    configPath: loc.configPath,
+    source: loc.source,
+    home,
+    boundary,
   };
 }
 
@@ -346,7 +446,8 @@ if (isMain) {
       console.log(`checkout ${s.dir}${existsSync(join(s.dir, '.git')) ? '' : '   (NOT CLONED)'}`);
       console.log(`org      ${s.org}`);
       console.log(`project  ${s.project ?? '(unnamed)'}`);
-      console.log(`config   ${s.configPath}`);
+      console.log(`config   ${s.configPath}  (${s.source})`);
+      console.log(`boundary ${s.boundary}${s.home ? ` — this work belongs to ${s.home}` : ' — no origin or context repo to compare against'}`);
     } else if (cmd === 'taxonomy') {
       const s = resolveStore();
       const t = readTaxonomy(s.dir);
