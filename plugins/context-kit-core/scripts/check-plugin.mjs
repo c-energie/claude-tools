@@ -187,8 +187,8 @@ const COPIES = [
   // The step-0 setup observer. Its master is an inert asset in `skills` (scaffold.mjs copies it
   // into repos); project-workspace ships it as a live skill, so the copy sits at another path
   // (`to`). Both files are copied whole — neither has a banner — so any difference is drift.
-  { file: 'assets/setup-observer/SKILL.md',   to: 'skills/setup-observer/SKILL.md',   origin: 'skills', copies: ['project-workspace'] },
-  { file: 'assets/setup-observer/observe.py', to: 'skills/setup-observer/observe.py', origin: 'skills', copies: ['project-workspace'] },
+  { file: 'assets/setup-observer/SKILL.md',   to: 'skills/setup-observer/SKILL.md',   origin: 'skills', copies: ['project-workspace', 'diagrams'] },
+  { file: 'assets/setup-observer/observe.py', to: 'skills/setup-observer/observe.py', origin: 'skills', copies: ['project-workspace', 'diagrams'] },
 ];
 
 // Drop the shebang and the contiguous comment block at the top, then compare what is left.
