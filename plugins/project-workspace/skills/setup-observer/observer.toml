@@ -16,11 +16,7 @@ state_files = ["workspace.toml", "CLAUDE.md", ".git", "pyproject.toml", ".python
 
 [[owners]]
 repo = "c-energie/claude-tools"
-covers = "these skills and their scripts (plugins/project-workspace), and the observer itself"
-
-[[owners]]
-repo = "c-energie/project-workspace-template"
-covers = "retired 2026-10: only a schema-1 workspace's original shell files, ahead of migrate"
+covers = "these skills and their scripts (plugins/project-workspace), the observer itself, and a schema-1 workspace's shell files ahead of migrate (project-workspace-template, deleted 2026-10-15)"
 
 [[owners]]
 repo = "c-energie/analysis-template"
