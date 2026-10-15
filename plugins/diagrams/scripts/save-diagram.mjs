@@ -9,7 +9,7 @@
 //   --no-commit        write the files, leave them unstaged
 //   --status draft     default: current
 //   --date YYYY-MM-DD  default: today (pins output for testing)
-//   --project NAME     default: the project's own context.json `project`
+//   --project NAME     default: the resolved project (see resolveStore)
 //   --force-tags       record tags the taxonomy rejects anyway, and say so in the report
 //
 // The schema, the store resolution and the vocabulary all come from diagram-store.mjs. This

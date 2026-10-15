@@ -75,5 +75,5 @@ It reports its own gaps rather than hiding them, and they are worth passing on:
 
 `gallery.html` is build output and is gitignored in a stamped store. Rebuild it; do not commit it.
 
-**Not this skill:** capturing a new diagram is `save-diagram`. Setting a store up for a project
-that has none is the `state.diagrams.repo` block described in `diagrams-config`.
+**Not this skill:** capturing a new diagram is `save-diagram`. Naming a store for a project
+that has none is described in `diagrams-config`.
