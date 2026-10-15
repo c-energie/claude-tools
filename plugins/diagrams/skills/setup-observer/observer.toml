@@ -1,0 +1,18 @@
+# Everything setup-observer knows about the projects setup-diagram-store sets up. Its SKILL.md and
+# observe.py are verbatim copies of the master in the skills@c-energie plugin
+# (assets/setup-observer/); edit this file, not those. check-plugin.mjs errors on drift.
+
+# Extra tools to record versions of (git, gh, uv, python, node and claude always are).
+tools = []
+# Env vars whose presence before setup is a deviation-in-waiting: each one changes which store
+# resolves, or where its checkout is looked for.
+env_vars = ["DIAGRAMS_STORE", "DIAGRAMS_CROSS_ORG", "DIAGRAM_STORE_DIR", "CONTEXT_CONFIG", "PROJECT_CONTEXT_REPO"]
+secret_vars = []
+# Files at the project root whose presence the baseline records.
+state_files = [".diagrams.json", ".git", "context.json"]
+
+# Which repo a deviation is reported on. `upstream` and `this machine only` are implicit.
+
+[[owners]]
+repo = "c-energie/claude-tools"
+covers = "setup-diagram-store, the diagrams scripts and store template (plugins/diagrams), and the observer itself"

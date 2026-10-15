@@ -18,6 +18,8 @@ node scripts/diagram-store.mjs taxonomy           # the vocabulary in force
 node scripts/diagram-store.mjs tags-in-use        # what has actually accumulated
 node scripts/diagram-store.mjs init [dir]         # stamp the house files (--taxonomy for a starter)
 node scripts/save-diagram.mjs pic.svg --title "…" --type architecture --dry-run
+node scripts/setup-diagram-store.mjs --dry-run --root . check|store|stamp|…|prove   # setup steps
+bash scripts/setup-diagram-store.smoke.sh        # setup steps twice + every guardrail, in mktemp
 node scripts/gallery-build.mjs [store] [store] --out ~/Desktop/diagrams.html --today 2026-08-31
 ```
 
@@ -45,6 +47,11 @@ compared.
   origin owner, else the context repo's owner; a store in another org throws unless the block
   carries `crossOrg: true` (`DIAGRAMS_CROSS_ORG=1` for the env rung). A config file travels
   between repos, so the check travels with the use. No home → `unchecked`, reported, not refused.
+- **`setup-diagram-store` creates stores private (and refuses to adopt a public one without
+  `--public-ok`), never nests a checkout in a work tree, commits and pushes only its own files,
+  and never writes a checkout path into a config.** `.diagrams.json` and `context.json` are shared; `dir` there is one machine's fact
+  (`DIAGRAM_STORE_DIR` is the per-machine override). `config` refuses `--dir` for that reason.
+  Its `setup-observer/` is a verbatim copy of skills@c-energie's master (`check-plugin` checks).
 - **`index.jsonl` is append-only.** One line per diagram, so concurrent saves conflict on
   nothing — the closing bracket of a JSON array is a merge conflict on every write. A malformed
   line is reported and skipped, never fatal: one bad append must not make the store unreadable.

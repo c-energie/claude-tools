@@ -12,6 +12,7 @@ Works on its own or alongside `context-kit-core` (same catalog): a repo can name
 | Part | What it does |
 | --- | --- |
 | `save-diagram` (skill + `scripts/save-diagram.mjs`) | writes the source, appends the index line, commits locally, never pushes |
+| `setup-diagram-store` (skill + `scripts/setup-diagram-store.mjs`) | first run: create or adopt the private store, stamp it, name it in `.diagrams.json` or `context.json`, prove a save and a gallery build |
 | `browse-diagrams` (skill + `scripts/gallery-build.mjs`) | answers "have we drawn this before" from the index; builds the gallery when someone wants pictures |
 | the vocabulary guard (`taxonomy.json`, in the **store**) | rejects a tag outside the agreed list, naming the near misses |
 
@@ -71,7 +72,8 @@ diagrams/<year>/*.png     optional rasters — build output, never the artifact
 gallery.html              built, gitignored
 ```
 
-Stamp the house files into a fresh checkout:
+`setup-diagram-store` does all of this. By hand, stamp the house files (and an empty
+`index.jsonl`) into a fresh checkout:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/diagram-store.mjs" init [checkout]
@@ -138,12 +140,15 @@ was drawn to hold. That constraint is written into `gallery-build.mjs`'s own hea
 ```
 plugins/diagrams/
   skills/
+    setup-diagram-store/ first run — asks before every commit, push and repo create
+    setup-observer/     step 0 of setup; verbatim copy of skills@c-energie's master + observer.toml
     save-diagram/       capture — disable-model-invocation, asks before any push
     browse-diagrams/    find and build
     diagrams-config/    the contract (reference only, not user-invocable)
   scripts/
     diagram-store.mjs   THE SCHEMA — store resolution, fields, taxonomy, text extraction
     save-diagram.mjs    write + append + local commit
+    setup-diagram-store.mjs  the setup steps: check, store, stamp, push-store, config, commit-config, push-config, prove
     gallery-build.mjs   N stores in, one self-contained HTML out
     context-repo.sh     copy of context-kit-core's — see the marketplace CLAUDE.md
     dates.mjs           copy of context-kit-core's

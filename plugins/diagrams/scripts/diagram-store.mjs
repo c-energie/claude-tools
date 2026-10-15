@@ -72,7 +72,8 @@ export function readConfig() {
     }).trim();
     return join(posixToNative(root), 'context.json');
   })();
-  return { path, json: JSON.parse(readFileSync(path, 'utf8')) };
+  // A BOM is what PowerShell's Set-Content leaves behind; JSON.parse rejects it.
+  return { path, json: JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) };
 }
 
 /** The context repo is OPTIONAL: a project with no context repo names its store some other way.
@@ -94,7 +95,7 @@ export function findRepoFile(cwd = process.cwd()) {
   let dir = cwd;
   for (;;) {
     const file = join(dir, REPO_FILE);
-    if (existsSync(file)) return { path: file, root: dir, json: JSON.parse(readFileSync(file, 'utf8')) };
+    if (existsSync(file)) return { path: file, root: dir, json: JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) };
     if (existsSync(join(dir, '.git'))) return { path: null, root: dir, json: null };
     const up = dirname(dir);
     if (up === dir) return { path: null, root: null, json: null };
@@ -202,7 +203,7 @@ export function resolveStore({ mustExist = true, env = process.env, cwd = proces
   // there would say nothing false, but would invite the same tooling that resolves context repos
   // to resolve stores too, blurring a boundary that is deliberately separate.
   const dir = d.dir
-    ?? process.env.DIAGRAM_STORE_DIR
+    ?? (process.env.DIAGRAM_STORE_DIR || null)   // empty means unset, not the cwd
     ?? join(homedir(), ...repo.split('/'));
 
   if (mustExist && !existsSync(join(dir, '.git'))) {
@@ -413,6 +414,9 @@ export function initStore(dir, { taxonomy = false } = {}) {
   place('README.md', 'README.md');
   place('.gitattributes', '.gitattributes');
   place('gitignore', '.gitignore');   // shipped unprefixed so it is not applied to this repo
+  // An empty index, so a new store is a store: the gallery refuses a directory without one.
+  if (existsSync(indexPath(dir))) skipped.push('index.jsonl');
+  else { writeFileSync(indexPath(dir), '', 'utf8'); written.push('index.jsonl'); }
 
   if (taxonomy) {
     const target = join(dir, 'taxonomy.json');
