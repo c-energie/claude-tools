@@ -1,0 +1,29 @@
+# Workspaces replace context repos
+
+A project's shared context — memory, glossary, threads, meetings, the Notion queue — lived in a separate context repo, resolved by name (`PROJECT_CONTEXT_REPO`) and cloned under `~/.context`. With Claude Code's own `CLAUDE.md` loading (cwd and every parent, plus `@` imports), its built-in memory, and `docs/adr/` + glossary conventions from the domain-modeling skills, most of that machinery duplicates something the project's own repo can now hold. Projects are also converging on workspaces: a git repo at the root that either is a monorepo or wraps the member repos as gitignored nested clones. We decided context lives **in the workspace**, found by walking up to the nearest `.claude/workspace.json`, and context repos are retired.
+
+## Decision
+
+- **Marker and config: `.claude/workspace.json`**, replacing both `context.json` and project-workspace's `workspace.toml`. JSON because the core plugins are stdlib Node and bash, which have no TOML parser; Python reads either. Each top-level key has one writing owner: `schema` / `name` / `repo` / `members[]` (`dir`, `repo`, `kind` = `code` | `document` | `analysis`) — the workspace plugin; `connections` — setup-connectors; each `state.*` block — the plugin that reads it.
+- **One level, nearest wins.** No merging between levels. Content decides what a directory is: the file, never the folder or repo name.
+- **Naming.** An org workspace is `<org>/workspace` on GitHub, checked out as the org's clone root (`~/c-energie`, `~/net-flex`).
+- **Layout.** `CLAUDE.md` imports `@docs/memory.md`; `GLOSSARY.md` at the root; `docs/threads/`, `docs/meetings/`, `docs/adr/`; machine state committed under `.context/pending/` and `.context/notion/`; `teaching/[slug]/` by convention for `/teach`.
+- **Personal layer.** `~/gh-orgs` (`corson94/workspace`) holds the second brain, loaded everywhere by `@~/gh-orgs/docs/memory.md` in the user-level `~/.claude/CLAUDE.md` — so it does not depend on the org roots being moved beneath it (corson94/workspace#1). No `~/gh-orgs/corson94` workspace until it has context of its own.
+- **Plugins.** project-workspace is generalised into a `workspace` plugin owning `workspace.json`, membership and setup. context-kit-core keeps the connector gate (policy found by walk-up), setup-connectors, `save-thread` (→ `docs/threads/`), doctor, status and memory-triage (→ `docs/memory.md`); the session-start loader becomes a fetch-only check that warns when the workspace is behind origin. context-notion and context-slack change paths only; diagrams already walks up.
+
+## Considered Options
+
+- **Keep context repos, add a third thread target (`root`)**: rejected — two homes for context doubles every resolver and doctor check, and the context repo becomes a thin shell around Notion config.
+- **Keep context repos as an option beside workspaces**: rejected — the cases that seemed to need one (private context beside public code; a project spanning orgs) are met by a private wrapper workspace and by choosing one home workspace.
+- **Fold Notion, Slack and connectors into project-workspace**: rejected — two concerns, *what is in the workspace* and *how Claude reaches outside it*; and project-workspace's rule that one piece of code knows the workspace file survives only if the connector code stays out.
+- **Config in `workspace.toml`**: rejected — needs a TOML parser in stdlib-only Node.
+- **Two levels (org root above project monorepos), nearest wins**: rejected for one level — the workspace is the unit; the personal layer is the only thing above it, and it loads through user-level `CLAUDE.md`, not a walk.
+- **Wait for the org roots to move under `~/gh-orgs`**: rejected — that move (worktrees, venvs, `.claude.json` keys, project memory dirs, secret-sync, PyCharm) is its own job, and the user-level import makes it cosmetic.
+
+## Consequences
+
+- **Retired:** `include`, `handoff/`, assistants / roles / supervisors / lessons (never used), `teach-workspace`, `init-context`'s second-brain bootstrap, `PROJECT_CONTEXT_REPO` / `PROJECT_CONTEXT_THREADS` and the marker, the full loader, both `Start-ContextSession` launchers, and `c-energie/context-template` (archived).
+- **Transition:** the resolver tries `workspace.json` first and falls back to the context repo until the last one is migrated; the fallback is then deleted. Without it every unmigrated project breaks on release.
+- **Migration order:** smeter-validation (pilot; converts its `workspace.toml`), then bea and pcb, then thesis-context into `corson94/thesis` (converts its `workspace.toml`), then second-brain into `corson94/workspace`, and net-flex last, with the team. net-flex keeps Notion as the glossary's source of truth — `GLOSSARY.md` is marked generated and the domain-modeling skill is told to add terms in Notion — and its `sync-glossary` / `notify-pending` workflows, the `NOTION_TOKEN` secret and the Claudia agent are repointed to `net-flex/workspace`.
+- **Anyone cloning a workspace gets its context.** A workspace repo that holds meetings and the Notion queue must be private, even when its members are public.
+- **Cowork** (no shell; GitHub connector and uploaded folder) is best-effort: the gate fails open there until it can find `workspace.json` in a sandbox.
