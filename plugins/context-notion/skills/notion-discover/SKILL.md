@@ -34,7 +34,9 @@ every property as `"Name": "type — options/notes"`:
 - **Reproduce property names EXACTLY** — odd spellings, capitalisation, trailing spaces.
   "Fixing" a name here writes the trap into config and every skill inherits it silently.
 - List select/status options verbatim, and note the sensible default where one is obvious.
-- Note date properties as `date — YYYY-MM-DD with is_datetime 0`.
+- Note date properties as `date — YYYY-MM-DD (shape per notion-config)`. Name no tool's wire
+  form here: the flattened and REST tools want different shapes, and a line written for one
+  is copied into every new project and breaks every write through the other.
 
 ## 4. Propose the mapping — the judgement step
 

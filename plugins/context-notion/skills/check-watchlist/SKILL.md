@@ -59,8 +59,9 @@ Triggers: "remind me to check X weekly", "add a watch item", "watch this round".
 2. Get the next-check date from `dates.mjs add [cadence]`.
 3. Create the page in the actions database — `pageParents.actions` as the parent (see
    `notion-config` on the two ids) — with the status set to `Watching`, the title as
-   `Watch: [thing]`, the due date property as `start` **plus** `is_datetime` = `0`, and the body
-   template. Owner from the roster only; unspecified → the user, or omit it.
+   `Watch: [thing]`, the due date property in the calling tool's date shape (`notion-config` —
+   it differs per tool), and the body template. Owner from the roster only; unspecified → the
+   user, or omit it.
 4. Report the new page URL and the next-check date.
 
 ## Mode B — review (the default)

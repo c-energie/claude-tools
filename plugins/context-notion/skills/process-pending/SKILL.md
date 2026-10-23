@@ -54,8 +54,8 @@ an explicit yes before writing** — there is no delete tool on this connection.
 
 Per the sibling skills' rules (`add-action`, `log-decision`, `add-open-question`) and the
 schema: title is the title only; `ownerResolved` IDs for person fields (empty → omit);
-every date as `start` + `is_datetime` = `0`; `notes` lands in the row's notes/description
-property rather than being dropped. The create's parent id comes from `pageParents.<key>`,
+every date in the calling tool's shape (`notion-config`); `notes` lands in the row's
+notes/description property rather than being dropped. The create's parent id comes from `pageParents.<key>`,
 never `databases.<key>` — the two-ids rule, and the missing-`pageParents` runtime fallback,
 in `notion-config` apply here unchanged. Batch per database; keep the returned URLs.
 

@@ -52,7 +52,10 @@ via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_REPO`).
   Read skills fall back to the context repo's `notion/` mirror labelled with its `syncedOn`;
   write skills fall back to `add-pending`.
 - **Follow `schemas` exactly, including odd property names** (trailing spaces exist — never
-  trim). Every date property needs both `date:Name:start` and `date:Name:is_datetime` = 0.
+  trim). A date's wire shape depends on the tool — flattened `notion-create-pages` keys vs the
+  REST `API-post-page` body, which 400s on the flattened form's extra key — so `notion-config`
+  §5 owns the one date rule, split by tool the way the two-ids rule is, and no other skill
+  restates a single-tool form.
   Owners/dates/statuses go in properties, never in a title.
 - **`databases` and `pageParents` hold different Notion IDs** — data source vs database — and are
   not interchangeable. A create handed a data source ID 404s claiming the database is not shared

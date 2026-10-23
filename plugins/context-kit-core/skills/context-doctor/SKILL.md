@@ -91,7 +91,13 @@ Settings are read at session start, so a settings fix lands next session.
 - **Whether a declared connection actually works.** `connections` naming an MCP server that is
   absent is a live-session question — `context-setup` owns the connector gate.
 - **Anything backend-specific.** `state.notion` shapes belong to context-notion, not to core;
-  this plugin is not allowed to know them.
+  this plugin is not allowed to know them. **One exception, deliberately thin:** a
+  `state.notion.schemas` line containing `is_datetime` is reported as a `warn`
+  (`notion-dates`). Older `notion-discover` runs stamped that key into every date property's
+  schema line; it is right for the hosted `notion-create-pages` tool and a 400 through
+  `API-post-page`. The doctor only spots the retired token, the way it spots a retired catalog
+  name. It says nothing about what the line *should* be (context-notion's `notion-config` owns
+  that rule) and never fixes it: the user edits the line.
 - **Whether the content is any good.** Staleness is measured in dates, never in judgement.
 
 **Not this skill:** wiring a project to its context repo, or diagnosing why the context did not

@@ -96,10 +96,29 @@ return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
 
 - **The title is the title.** Owners, dates, statuses go in properties, never in the title
   text — "Sam — chase the supplier — 5 Aug" arrives as an unfilterable row.
-- **Every date property needs both** `date:Name:start` (`YYYY-MM-DD`) **and**
-  `date:Name:is_datetime` = `0`. Compute dates with
+- **A date's shape depends on the tool, exactly as the parent id does (§2).** This is the one
+  date rule; every other skill points here. The value is always a `YYYY-MM-DD` computed with
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs"` (`today`, `add 3d`, `add weekly`) — never
-  work out "next Friday" by hand.
+  work out "next Friday" by hand. What carries it differs per tool family:
+  - **`notion-create-pages`-style tools** (the hosted connector's flattened property keys, and
+    its `notion-update-page` sibling) — send both `date:Name:start` and
+    `date:Name:is_datetime` = `0`:
+    `{ "date:Due date:start": "2026-08-07", "date:Due date:is_datetime": 0 }`
+  - **`API-post-page` / `API-patch-page`** (the REST-shaped server — raw Notion API JSON) — the
+    date is an object under the property name, holding `start` and nothing else:
+    `{ "Due date": { "date": { "start": "2026-08-07" } } }`
+
+  Handing the REST tool the flattened form's extra key fails like this:
+
+  ```
+  400 validation_error
+  body failed validation: body.properties.Date.date.is_datetime should be not present, instead was `0`.
+  ```
+
+  **That means wrong tool contract, not a schema problem**: the property and its type are fine.
+  Never respond by editing the schema or the property — use the REST form above. A
+  `state.notion` schema line prescribing one tool's date form for all tools is stale guidance
+  from an older `notion-discover`; `context-doctor` flags it, and the user edits the line.
 - **Use existing select/status options only** (the schema lists them) unless the user
   explicitly asks to add a new option.
 - **There is no delete tool** on this connection. A wrong row must be removed by hand in the
