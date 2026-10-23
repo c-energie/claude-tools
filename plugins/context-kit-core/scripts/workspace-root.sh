@@ -58,7 +58,7 @@ dir="$(cd "$cwd" 2>/dev/null && pwd)" || dir=""
 why="no .claude/workspace.json above the working directory"
 while [ -n "$dir" ]; do
   file="$dir/.claude/workspace.json"
-  if [ -f "$file" ]; then
+  if [ -e "$file" ]; then   # -e, not -f: existsSync is true for a directory too, and the twins must agree
     verdict="$(check_json "$file")"
     case "$verdict" in
       ok\ *)

@@ -152,6 +152,15 @@ test('a malformed inner workspace never falls through to the outer one', () => {
   assert.equal(api.route, 'context-repo', 'skipping to the outer workspace would load the wrong context');
 });
 
+test('a directory named workspace.json is malformed to both twins, not skipped past', () => {
+  const base = scratch();
+  const clone = legacyClone(base);
+  const outer = workspace(deep(base, 'outer'));
+  const inner = deep(outer, 'inner', '.claude', 'workspace.json');
+  const { api } = both(dirname(dirname(inner)), envFor(base, clone));
+  assert.equal(api.route, 'context-repo');
+});
+
 test('an unknown schema is reported but still resolves', () => {
   const root = workspace(scratch(), { schema: 2 });
   const { api, mjs, sh } = both(root, envFor(root));
