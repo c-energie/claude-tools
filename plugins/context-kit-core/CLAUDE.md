@@ -21,6 +21,8 @@ node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json
 node --test scripts/workspace.test.mjs   # the workspace resolver and its bash twin; stdlib only, no network
 node scripts/workspace.mjs --no-pull     # the nearest .claude/workspace.json's root, else the context repo (--json)
 bash scripts/workspace-root.sh --no-pull # the same, in bash, for hooks
+node scripts/thread-target.mjs           # where save-thread writes: docs/threads/ in a workspace (+ member repo), else context-repo
+node --test scripts/thread-target.test.mjs scripts/memory-triage.test.mjs   # workspace thread/memory targets; offline
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
 bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
 bash hooks/load-context.sh --refresh     # exactly what refresh-context runs, against $PWD
@@ -38,7 +40,7 @@ node scripts/context-doctor.mjs "$ROOT" --include   # health-check a context rep
 node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every queue (--json, --role, --no-memory)
 node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
 node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not yet distilled
-node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion
+node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion (workspace root -> docs/memory.md)
 node scripts/teaching-workspace.mjs resolve --json               # which context repo, or WHY not (no network)
 node scripts/teaching-workspace.mjs roster "$ROOT"                # the teaching workspaces it DECLARES (--json)
 node scripts/teaching-workspace.mjs scaffold "$ROOT" "deep learning"   # PLAN a workspace; --yes --audience writes it
@@ -214,4 +216,19 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   carry kind-specific fields only project-workspace defines, and every writer preserves keys it
   does not know at both levels. `scripts/workspace-root.sh` is its bash **twin** for hooks, not a
   copy — `workspace.test.mjs` runs both against the same fixtures. Change both, or neither.
+- **Inside a workspace, threads and memory have ONE home: the workspace root** (ADR 0002,
+  #51). `save-thread` writes `docs/threads/YYYY-MM-DD-topic.md` and regenerates the committed
+  `docs/threads/INDEX.md` (`thread-index.mjs --dir docs/threads`), so the workspace's `CLAUDE.md`
+  can point at one file; `memory-triage` promotes into `docs/memory.md`, the file `CLAUDE.md`
+  imports. From a member that is still the workspace root — never the member's
+  `.claude/threads/` or `.claude/memory.md`, the second home the ADR retires — and no routing
+  question is asked: `PROJECT_CONTEXT_THREADS` is not consulted in a workspace at all. The
+  member is recorded instead, as `repo: owner/name` front-matter, decided by
+  `scripts/thread-target.mjs` (declared `members[]` entry first, then a nested clone's origin;
+  null for the workspace's own repo) — a script, because two sessions in one directory must
+  record the same provenance. It finds the workspace with `workspace.mjs`'s `findWorkspace()`
+  rather than a walk of its own, so a thread can never be routed to a different home from the
+  context the session loaded. A workspace is never the cross-project layer for
+  `memory-triage.mjs` (`include` is retired). Both skills ask before pushing; outside a
+  workspace both behave as before.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).

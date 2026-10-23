@@ -1,6 +1,6 @@
 ---
 name: memory-triage
-description: Drain Claude's own per-directory memory into the shared context layers — promoting a preference into the personal layer, a project fact into the context repo, a transferable claim into an assistant's LESSONS.md, and leaving genuinely machine-local notes alone. Triggers like "triage my memory", "drain claude's memory into the context repo", "what has claude remembered that should be shared", "my memories are scattered across projects", "promote my memories".
+description: Drain Claude's own per-directory memory into the shared context layers — promoting a preference into the personal layer, a project fact into the workspace's docs/memory.md (or the context repo outside a workspace), a transferable claim into an assistant's LESSONS.md, and leaving genuinely machine-local notes alone. Triggers like "triage my memory", "drain claude's memory into the context repo", "what has claude remembered that should be shared", "my memories are scattered across projects", "promote my memories".
 disable-model-invocation: true
 ---
 
@@ -20,19 +20,25 @@ Where each fact belongs:
 | --- | --- | --- |
 | machine-local | leave it in native memory | nobody: this laptop, this path |
 | repo | that repo's `CLAUDE.md` | anyone who clones the code |
-| project | the context repo's `memory.md` | the project's people |
+| project | the workspace's `docs/memory.md` — outside a workspace, the context repo's `memory.md` | the project's people |
 | role, across projects | `assistants/[role]/LESSONS.md` | every project with that role, via its supervisor |
 | personal | the cross-project layer's `memory.md` | you |
 
 > **Rewrites a durable layer and stamps files outside any repo — run only when asked.**
-> `disable-model-invocation: true`.
+> `disable-model-invocation: true`, and it asks before every push.
 
 ## 1. Scan
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/memory-triage.mjs" scan "$ROOT"
 ```
+
+`workspace.mjs` names its route on stderr. **`route=workspace`**: `ROOT` is the nearest
+`.claude/workspace.json`'s directory and project facts go to `$ROOT/docs/memory.md` — the file
+the workspace's `CLAUDE.md` imports. **`route=context-repo`**: no workspace, and everything below
+applies to the context repo's `memory.md` exactly as before. The scan prints which file it means
+(`project facts go to:`); trust that line rather than re-deriving it.
 
 The scan is **asymmetric**, and this is the part to understand before reading its output:
 
@@ -42,6 +48,8 @@ The scan is **asymmetric**, and this is the part to understand before reading it
 - **In the cross-project layer** (a repo whose `context.json` declares `include`) it reads
   *every* store on the machine but surfaces only personal-layer entries. Those belong to the
   person rather than to the folder they were captured in, so no mapping is needed.
+- **A workspace is always a project here**, never the cross-project layer: ADR 0002 retires
+  `include`, so nothing in `workspace.json` says a workspace is entitled to read every store.
 
 Entries already stamped `promotedTo` are skipped.
 
@@ -76,6 +84,13 @@ Watch for these too:
 Write each promoted fact into **the repo this session is in**. Never into another repo, whatever
 the clone on disk permits: from the cross-project layer, included repos are read-only.
 
+**In a workspace, "this repo" is the workspace's**, even when the session is in a member: a
+project fact goes to `$ROOT/docs/memory.md`, never to a member's `.claude/memory.md`. Create
+`docs/memory.md` if it is absent, and if the workspace's `CLAUDE.md` does not import it
+(`@docs/memory.md`), offer that line rather than writing it — an unimported memory file is one no
+session loads. A **code convention** still belongs to the `CLAUDE.md` of the member whose code it
+governs.
+
 A personal entry found from a *project* session is therefore a finding, not a task. It needs no
 handoff — the cross-project layer reads every store, so a run there will pick it up. Say so and
 move on.
@@ -97,7 +112,19 @@ The entry itself is left in place rather than deleted: it holds the reasoning be
 and the destination holds only the conclusion. Deleting is a separate decision — offer it if an
 entry is now wrong, not merely promoted.
 
-## 5. Report
+## 5. Commit — and ask before pushing
+
+Stage only the file(s) you promoted into and commit, in the destination repo:
+
+```bash
+git -C "$ROOT" add docs/memory.md && git -C "$ROOT" commit -m "memory: promote from native memory"
+```
+
+(`memory.md` outside a workspace.) Show the user the diff and **ask before pushing** — a durable
+layer is loaded by every session, everyone's. Push (`git -C "$ROOT" push`) only on an explicit
+yes; otherwise leave the commit local and say so.
+
+## 6. Report
 
 Say what moved where, what you deliberately left local and why, and what you could not place.
 An entry nobody can classify should stay where it is and be named — a fact filed under a guess
