@@ -185,3 +185,43 @@ test('unknown options are refused with exit 2, as context-repo.sh does', () => {
   assert.equal(spawnSync(process.execPath, [MJS, '--bogus'], { cwd: root, env }).status, 2);
   assert.equal(spawnSync('bash', [SH, '--bogus'], { cwd: root, env }).status, 2);
 });
+
+// --no-fallback is how the session-start hook asks "is this a workspace?" without the question
+// itself running context-repo.sh — which, configured, may clone a repo just to answer no.
+test('--no-fallback: a workspace still resolves, and with none the legacy route is never asked', () => {
+  const root = workspace(scratch());
+  const env = envFor(root);
+  assert.equal(resolveWorkspace({ cwd: root, env, fallback: false }).root, root);
+  assert.equal(spawnSync('bash', [SH, '--no-fallback'], { cwd: root, env, encoding: 'utf8' }).stdout.trim(), root);
+
+  // A configured legacy checkout that the default resolves to — and --no-fallback must not.
+  const base = scratch();
+  const clone = legacyClone(base);
+  const cwd = deep(base, 'project');
+  const legacyEnv = envFor(base, clone);
+  assert.equal(both(cwd, legacyEnv).api.route, 'context-repo', 'the control: the fallback would answer');
+  const api = resolveWorkspace({ cwd, args: ['--no-pull'], env: legacyEnv, fallback: false });
+  const mjs = spawnSync(process.execPath, [MJS, '--no-fallback'], { cwd, env: legacyEnv, encoding: 'utf8' });
+  const sh = spawnSync('bash', [SH, '--no-fallback'], { cwd, env: legacyEnv, encoding: 'utf8' });
+  assert.equal(api.root, null);
+  assert.equal(api.route, null);
+  for (const r of [mjs, sh]) {
+    assert.equal(r.status, 1);
+    assert.equal(r.stdout.trim(), '');
+    assert.match(r.stderr, /route=none .*--no-fallback/);
+    assert.doesNotMatch(r.stderr, /context-repo\.sh:/, 'context-repo.sh was not run');
+  }
+});
+
+test('--no-fallback: a malformed nearest file is still reported, and still not skipped past', () => {
+  const base = scratch();
+  const outer = workspace(deep(base, 'outer'));
+  const inner = workspace(deep(outer, 'inner'), 'not json');
+  const env = envFor(base);
+  const api = resolveWorkspace({ cwd: inner, env, fallback: false });
+  const sh = spawnSync('bash', [SH, '--no-fallback'], { cwd: inner, env, encoding: 'utf8' });
+  assert.equal(api.root, null);
+  assert.equal(sh.stdout.trim(), '');
+  assert.match(api.messages.join('\n'), /malformed/);
+  assert.match(sh.stderr, /malformed/);
+});

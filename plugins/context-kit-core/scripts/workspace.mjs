@@ -7,6 +7,7 @@
 //   node workspace.mjs --no-pull       # ...passed to the fallback only (the workspace route
 //   node workspace.mjs --writable      #    does no network at all, so has nothing to skip)
 //   node workspace.mjs --json          # {root, route, file} on stdout instead of the bare path
+//   node workspace.mjs --no-fallback   # the workspace route only: never run context-repo.sh
 //
 // stdout is the absolute root and nothing else, so `ROOT="$(node workspace.mjs)"` works as it
 // does for context-repo.sh. stderr always carries one `workspace.mjs: route=...` line saying
@@ -14,6 +15,11 @@
 // first question anyone debugging it asks, and silence would make the two routes look alike.
 // Exit 1 when neither route resolves, with the reason on stderr; callers decide whether that is
 // fatal, exactly as they already do for context-repo.sh. Never prompts, never throws.
+//
+// --no-fallback is for a caller that only wants to know WHETHER this is a workspace — the
+// session-start hook, which runs its own legacy loader when it is not. Without it, asking that
+// question outside a workspace runs context-repo.sh, which may clone a context repo just to
+// answer "no".
 //
 // THE FILE — `.claude/workspace.json`, schema 1 (ADR 0002):
 //
@@ -105,7 +111,7 @@ function legacyRoot(cwd, args, env) {
 /** Resolve the workspace root. Never throws.
  *  -> { root, route: 'workspace' | 'context-repo' | null, file, messages[] }
  *  `messages` is everything worth putting on stderr, in order; the CLI prints them. */
-export function resolveWorkspace({ cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd(), args = [], env = process.env } = {}) {
+export function resolveWorkspace({ cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd(), args = [], env = process.env, fallback = true } = {}) {
   const messages = [];
   const start = resolve(cwd);
   const found = findWorkspace(start);
@@ -117,6 +123,10 @@ export function resolveWorkspace({ cwd = process.env.CLAUDE_PROJECT_DIR || proce
     return { root: found.root, route: 'workspace', file: found.file, messages };
   }
   if (found?.error) messages.push(`${found.file}: malformed, ignored — ${found.error}`);
+  if (!fallback) {
+    messages.push(`route=none — ${found?.error ? 'the nearest .claude/workspace.json is malformed' : 'no .claude/workspace.json above the working directory'}, and --no-fallback skips the context repo`);
+    return { root: null, route: null, file: found?.file ?? null, messages };
+  }
   const legacy = legacyRoot(start, args, env);
   // context-repo.sh's own lines already name their source; they are relayed as written.
   if (legacy.stderr) messages.push(...legacy.stderr.split('\n'));
@@ -130,13 +140,14 @@ export function resolveWorkspace({ cwd = process.env.CLAUDE_PROJECT_DIR || proce
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const passThrough = [];
-  let json = false;
+  let json = false, fallback = true;
   for (const a of process.argv.slice(2)) {
     if (a === '--json') json = true;
+    else if (a === '--no-fallback') fallback = false;
     else if (a === '--no-pull' || a === '--writable') passThrough.push(a);
     else { console.error(`workspace.mjs: unknown option ${a}`); process.exit(2); }
   }
-  const r = resolveWorkspace({ args: passThrough });
+  const r = resolveWorkspace({ args: passThrough, fallback });
   for (const m of r.messages) console.error(m.startsWith('context-repo.sh: ') ? m : `workspace.mjs: ${m}`);
   if (json) console.log(JSON.stringify({ root: r.root, route: r.route, file: r.file }));
   else if (r.root) console.log(r.root);
