@@ -116,10 +116,11 @@ Not every plugin in this catalog is part of the context stack.
 
 ## project workspace
 
-A local folder holding one or more [documents](#document), each in its own repos, listed in a
-`workspace.toml` at its root; made and extended by the `project-workspace` plugin's skills. It may
-be a git repo of its own — tracking only `workspace.toml`, `CLAUDE.md` and `.gitignore`, never a
-document — but need not be. No Python lives at its root.
+A local folder holding one or more [documents](#document), each in its own repos, listed as
+`members` of the `.claude/workspace.json` at its root (a `workspace.toml` before it is migrated);
+made and extended by the `project-workspace` plugin's skills. It may be a git repo of its own —
+tracking only `.claude/workspace.json`, `CLAUDE.md` and `.gitignore`, never a member — but need
+not be. No Python lives at its root.
 
 Not a [teaching workspace](#teaching-workspace): always say "project workspace" in full.
 _Avoid_: doc workspace, shell (as a noun), monorepo
@@ -128,8 +129,8 @@ _Avoid_: doc workspace, shell (as a noun), monorepo
 
 One deliverable — a thesis, paper or report — inside a project workspace: one
 [document repo](#document-repo) and, optionally, the [analysis repo](#analysis-repo) nested
-inside it. What a document's analysis is lives in that document repo's `layout.toml`, never in
-`workspace.toml`.
+inside it. Where a document's analysis lives is that document repo's `layout.toml`'s to say;
+`workspace.json` records the analysis repo only as a member naming the document it feeds.
 _Avoid_: project (a context repo's sense), writing project
 
 ## document repo

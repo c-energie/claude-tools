@@ -1,0 +1,20 @@
+# STAND-IN for corson94/thesis's workspace.toml: the real file was not readable from the
+# sandbox that wrote these tests. Replace this file with a verbatim copy (keep the name) and
+# re-run the suite; the test asserts every document, extra and nested analysis survives.
+# Written by /project-workspace and read by its skills. Edit it by hand to
+# rename a document's directory or repo, or to drop a document from the list
+# (deleting its directory is up to you).
+
+schema = 2
+name = "thesis"
+
+[[document]]
+name = "thesis"
+dir = "thesis"
+repo = "corson94/thesis-writing"
+extras = ["dev", "notebooks", "matplotlib", "publish"]
+
+[[document]]
+name = "paper-flex"
+dir = "paper"
+repo = "corson94/paper-flex"

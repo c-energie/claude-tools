@@ -1,6 +1,6 @@
 ---
 name: setup-project-workspace
-description: Make a folder a project workspace — workspace.toml and CLAUDE.md, optionally its own git repo — then hand off to add-document; or migrate an old single-document workspace (a workspace.toml with no schema key). Use when the user asks to set up a project workspace, start a thesis or paper workspace, track the workspace in git, or migrate a workspace made from project-workspace-template.
+description: Make a folder a project workspace — .claude/workspace.json and CLAUDE.md, optionally its own git repo — then hand off to add-document; or migrate a workspace still described by workspace.toml (schema 2, or the single-document schema 1) into workspace.json. Use when the user asks to set up a project workspace, start a thesis or paper workspace, track the workspace in git, convert or migrate workspace.toml, or migrate a workspace made from project-workspace-template.
 ---
 
 # Set up a project workspace
@@ -8,12 +8,12 @@ description: Make a folder a project workspace — workspace.toml and CLAUDE.md,
 **First, invoke `/project-workspace:setup-observer`** (once per session): it records where this
 guide and reality disagree, so the maintainer can fix the guide.
 
-A **project workspace** is a folder listing its **documents** in `workspace.toml`. Each
-document is a document repo with, optionally, an analysis repo nested inside it:
+A **project workspace** is a folder listing its **members** in `.claude/workspace.json`.
+Each **document** is a document repo with, optionally, an analysis repo nested inside it:
 
 ```
 <workspace>/
-|-- workspace.toml        schema = 2; one [[document]] per document
+|-- .claude/workspace.json  schema 1; name, repo, one members entry per repo
 |-- CLAUDE.md             generic rules + a managed table of the documents
 |-- thesis/               a document repo            (add-document)
 |   `-- thesis-analysis/  its nested analysis repo   (add-analysis)
@@ -35,14 +35,20 @@ without asking.
 
 ## 0. Which branch
 
-Read `workspace.toml` at the root, if any:
+Look at the root:
 
-- **Missing** → a new workspace: §1 onwards.
-- **Has `[workspace]` and no `schema`** → made from `project-workspace-template`, one document
-  with its repos side by side: [Migrating](#migrating) instead.
-- **`schema = 2`** → already set up. Say what it lists (`SETUP document --all`), offer
-  `track` if `.git` is missing, and otherwise route: a new document → add-document, analysis
-  for one → add-analysis.
+- **`.claude/workspace.json` with `members`** → already set up. Say what it lists
+  (`SETUP document --all`), offer `track` if `.git` is missing, and otherwise route: a new
+  document → add-document, analysis for one → add-analysis. A `workspace.toml` still beside it
+  is a leftover: `SETUP migrate` says so, and it is deleted by hand once compared.
+- **`workspace.toml` with `schema = 2`** (and no `workspace.json`, or one without `members`) →
+  [Converting workspace.toml](#converting-workspacetoml). Every other step refuses until then.
+- **`workspace.toml` with `[workspace]` and no `schema`** → made from
+  `project-workspace-template`, one document with its repos side by side:
+  [Migrating](#migrating) instead.
+- **Neither** → a new workspace: §1 onwards.
+- **A malformed `workspace.json`** → every step stops naming the file and the parse error.
+  Fix it by hand with the user: other plugins own keys in it, so nothing rewrites it whole.
 
 ## 1. Prerequisites
 
@@ -69,7 +75,7 @@ install is there but its latexmk cannot start — install Perl only for local bu
 
 1. **Workspace name** — default this folder's name.
 2. **Track the workspace in git?** Default **no**. A yes makes the folder a repo tracking
-   only `workspace.toml`, `CLAUDE.md` and `.gitignore`, ignoring every document — what it
+   only `.claude/workspace.json`, `CLAUDE.md` and `.gitignore`, ignoring every member — what it
    buys is restoring the set of documents on a second machine. If yes: **a GitHub repo for
    it?** owner (default the `gh` login), name (default the workspace name), visibility
    (default private). Confirm before creating it: it is outward-facing.
@@ -81,11 +87,19 @@ SETUP init --name <name>
 SETUP track [--repo <owner>/<name> --visibility private]     # only on a yes
 ```
 
-`init` writes `workspace.toml` (schema 2, no documents yet) and `CLAUDE.md` from
-`CLAUDE.workspace.md` beside this file. A `CLAUDE.md` already there is kept; only its
-documents table, between the `<!-- documents ... -->` markers, is ever rewritten.
-`track` runs `git init` and writes `.gitignore` with a managed documents block; with
-`--repo` it creates the GitHub repo as `origin` (and pushes if there are commits).
+`init` writes `.claude/workspace.json` (`schema: 1`, the name, no members yet) and `CLAUDE.md`
+from `CLAUDE.workspace.md` beside this file. A `workspace.json` already there (setup-connectors
+may have made one) keeps every key it has and gains only `schema`, `name` and `members`. A
+`CLAUDE.md` already there is kept; only its documents table, between the
+`<!-- documents ... -->` markers, is ever rewritten.
+
+**`.gitignore`: `init` edits it too when the root is already a git repo**, and `track`,
+`add-document` and `migrate` do whenever it is one: each writes the managed members block
+(`/<dir>/` for every member not nested in another). A line the user already has for a member
+outside the block is not repeated — the step prints `note .gitignore already ignores ...`
+instead. `track` runs `git init` first; with `--repo` it creates the GitHub repo as `origin`
+(and pushes if there are commits), and records it as `repo` in `workspace.json` (an existing
+GitHub `origin` is recorded the same way).
 
 ## 4. Hand off
 
@@ -93,8 +107,33 @@ Ask: **add a document now?** On a yes, invoke **`/project-workspace:add-document
 offers add-analysis at its end. On a no, say both skills can be run any time from this
 folder.
 
-If tracked, propose the first commit at the root — `workspace.toml`, `CLAUDE.md`,
+If tracked, propose the first commit at the root — `.claude/workspace.json`, `CLAUDE.md`,
 `.gitignore` — and ask before committing and before pushing.
+
+## Converting workspace.toml
+
+A schema-2 `workspace.toml` lists `[[document]]`s; `.claude/workspace.json` replaced it
+(ADR 0002). Converting moves nothing and touches nothing at the root but the two manifests,
+`CLAUDE.md`'s documents table and the `.gitignore` members block — a root `pyproject.toml`
+is never removed.
+
+1. Show the plan: `SETUP --dry-run migrate`. It prints every line it will act on and the
+   whole `workspace.json` it will write. Walk the user through it: every document is there
+   with its `name`, `repo` and `extras` (and any other key it had); each document hosting an
+   analysis repo (its `layout.toml` says so) is followed by an `analysis` member feeding it;
+   a top-level `workspace.toml` key with no place in `workspace.json` is listed as not carried
+   over. A document not on disk has its nested analysis recorded only once `add-analysis`
+   restores it.
+2. On an explicit yes: `SETUP migrate`. It writes `workspace.json` first, then backs up
+   `workspace.toml` to `.setup/migrate-backup/` and removes it.
+3. If `CLAUDE.md` still names `workspace.toml` outside its table (the plan says so), that text
+   is the user's: offer to update it, with them.
+4. If tracked, propose the commit at the root — `.claude/workspace.json`, the removal of
+   `workspace.toml`, `CLAUDE.md`, `.gitignore` — asking before committing and pushing. Delete
+   the backup once the user is satisfied.
+
+A `workspace.json` that already lists `members` next to a `workspace.toml` is refused, not
+merged: compare the two with the user and delete the TOML by hand.
 
 ## Migrating
 
@@ -106,25 +145,32 @@ renames a repo or a document directory: Overleaf's sync and IDE configs point at
 
 1. `SETUP check --analysis`, then show the plan: `SETUP --dry-run migrate`. Walk the user
    through every line. Stops it reports (a target taken, an analysis repo with no `origin`)
-   are fixed first.
+   are fixed first. One stop is not a fix but a different route: a root `pyproject.toml`
+   that is load-bearing beyond the analysis repo — other uv workspace members, sources from
+   outside, extras of its own — is never deleted (#34). Then nest by hand, as the stop says,
+   and repoint the root's member path.
 2. Ask them to **close Jupyter, IDEs and terminals inside the analysis repo and the root
    `.venv`**: Windows will not move or delete an open directory.
 3. On an explicit yes: `SETUP migrate`. First, before anything moves, it adds or updates the
    document repo's `setup-nested.sh` from writing-template if it is missing or predates
    in-place `--dir` (a `gh` failure there stops it with nothing changed). It then moves the
    analysis checkout in (its `.env` travels unchanged: the document repo has not moved, so a
-   `DOC_REPO` there is still right), runs `setup-nested.sh --dir <analysis>`, syncs the new venv with the old `extras`, and backs up `pyproject.toml`,
-   `uv.lock`, `.python-version`, `workspace.toml` and `CLAUDE.md` to
-   `.setup/migrate-backup/` before replacing or removing them.
+   `DOC_REPO` there is still right), runs `git worktree repair` for every linked worktree the
+   analysis repo had (the move leaves their links naming the old path, #35), runs
+   `setup-nested.sh --dir <analysis>`, syncs the new venv with the old `extras`, and backs up
+   `pyproject.toml`, `uv.lock`, `.python-version`, `workspace.toml` and `CLAUDE.md` to
+   `.setup/migrate-backup/` before replacing or removing them. It writes
+   `.claude/workspace.json` with the document and its analysis repo as members.
 4. Merge anything of the user's from `.setup/migrate-backup/CLAUDE.md` into the new
    `CLAUDE.md`, with them. Then delete the backups.
 5. Re-point anything at the old venv: the IDE interpreter and notebook kernel are now
    `<doc>-writing/<doc>-analysis/.venv`. Prove it as add-analysis §4 does.
 6. Commits, asking before each: in the document repo, `layout.toml`, `.gitignore`,
    `setup-nested.sh`/`.gitattributes` if added; in the analysis repo, `.python-version`; at
-   the root (if tracked), `workspace.toml`, `CLAUDE.md`, `.gitignore` and the removals.
+   the root (if tracked), `.claude/workspace.json`, `CLAUDE.md`, `.gitignore` and the removals
+   (`workspace.toml` among them).
 
-A migrate that stops before `workspace.toml` is rewritten is resumed by re-running it. One
+A migrate that stops before `workspace.json` is written is resumed by re-running it. One
 that stops after (in `setup-nested.sh` or the sync) is finished with
 `SETUP add-analysis --dir <analysis> --backend <backend>` and `SETUP sync`; `SETUP migrate`
 then lists the root leftovers to back up and delete.

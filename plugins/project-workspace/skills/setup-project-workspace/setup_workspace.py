@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 """Set up a project workspace and the documents in it.
 
-A project workspace is a folder listing its documents in workspace.toml. Each document is a
-document repo (LaTeX) with, optionally, its analysis repo nested inside it:
+A project workspace is a folder listing its members in .claude/workspace.json. Each document
+is a document repo (LaTeX) with, optionally, its analysis repo nested inside it:
 
     <workspace>/
-    |-- workspace.toml          schema = 2, one [[document]] per document
+    |-- .claude/workspace.json  schema 1: name, repo, and one `members` entry per repo
     |-- CLAUDE.md               generic rules, plus a managed table of the documents
     |-- thesis/                 a document repo (c-energie/writing-template, or Overleaf's sync repo)
     |   |-- layout.toml         present once it hosts its analysis repo
     |   `-- thesis-analysis/    the nested analysis repo, with its own .venv
     `-- paper/                  another document, writing only
 
-There is no Python at the workspace root. Nothing about a document's analysis is recorded
-here: its layout.toml says, and writing-template's setup-nested.sh writes it.
+There is no Python at the workspace root. How a document hosts its analysis is its own
+layout.toml's to say (writing-template's setup-nested.sh writes it); workspace.json records
+the analysis repo only as a member, `kind = "analysis"`, naming the document it feeds.
 
 Driven by the setup-project-workspace, add-document and add-analysis skills. Each step is
 also runnable by hand, and each refuses rather than overwrites when its target exists:
 
     check         prerequisites, with the install command for anything missing
-    init          write workspace.toml and CLAUDE.md
+    init          write .claude/workspace.json and CLAUDE.md
     track         make the workspace a git repo (optional), and give it a GitHub remote
-    add-document  create or adopt a document repo, and list it in workspace.toml
+    add-document  create or adopt a document repo, and record it as a member
     add-analysis  nest an analysis repo in a document, through its setup-nested.sh
     document      which document a skill acts on, as JSON
     sync          uv sync a document's analysis venv with its recorded extras
-    migrate       convert a schema-1 workspace (one document, side-by-side repos)
+    migrate       convert workspace.toml: schema 2 (several documents) or schema 1 (one
+                  document, side-by-side repos) into .claude/workspace.json
 
 Run with uv so no system Python is needed:
 
@@ -33,7 +35,8 @@ Run with uv so no system Python is needed:
 
 The script ships in the project-workspace@c-energie plugin, nowhere near the workspace, so
 the skill passes --root (its ${CLAUDE_PROJECT_DIR}). Without it, the root is the nearest
-directory at or above the current one holding workspace.toml, else the current directory.
+directory at or above the current one holding .claude/workspace.json (or, until it is
+migrated, workspace.toml), else the current directory.
 
 Stdlib only.
 """
@@ -50,17 +53,75 @@ import tomllib
 from pathlib import Path
 
 
+# ---------------------------------------------------------------------------
+# where the workspace is
+# ---------------------------------------------------------------------------
+
+# The marker and the config in one file (ADR 0002). Its top-level keys each have one writing
+# owner: schema / name / repo / members are this script's, and nothing else here may write
+# any other key -- connections is setup-connectors', each state.* block its plugin's.
+WORKSPACE_FILE = Path(".claude") / "workspace.json"
+# What workspace.json replaced. Only `migrate` reads it; every other step refuses while it is
+# the only manifest, rather than dual-writing two files that would drift apart.
+LEGACY_FILE = "workspace.toml"
+
+
+def parse_workspace(file):
+    """A workspace.json as (config, None), or (None, why it is malformed). A directory of
+    that name is malformed too, not absent: skipping it would load an outer workspace."""
+    try:
+        config = json.loads(Path(file).read_text(encoding="utf-8").removeprefix("\ufeff"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return None, str(exc).splitlines()[0]
+    # An array or a bare string parses, but has no keys for any owner to write to.
+    if not isinstance(config, dict):
+        return None, "top level is not a JSON object"
+    return config, None
+
+
+def find_workspace(start):
+    """The nearest .claude/workspace.json at or above `start`. A Python PORT of
+    findWorkspace() in context-kit-core's scripts/workspace.mjs, not a copy (a skill may only
+    call scripts inside its own plugin, and the drift rule cannot compare Python with Node),
+    held to the same rules and tested against the same cases:
+
+      - nearest wins, and levels never merge;
+      - the walk does not stop at a .git: members are nested clones, so a session inside one
+        is inside a .git that is not the workspace;
+      - a malformed nearest file stops the walk and is reported, never skipped past: a typo in
+        this workspace must not silently load an outer one.
+
+    -> None, or {"root", "file", "config"}, or {"root": None, "file", "error"}."""
+    here = Path(start).resolve()
+    for d in (here, *here.parents):
+        file = d / WORKSPACE_FILE
+        if file.exists():
+            config, error = parse_workspace(file)
+            if error:
+                return {"root": None, "file": file, "error": error}
+            return {"root": d, "file": file, "config": config}
+    return None
+
+
 def default_root():
-    """The nearest directory at or above the current one holding workspace.toml; before
-    `init` has written it, the current directory."""
+    """The nearest directory at or above the current one holding .claude/workspace.json --
+    malformed or not: read_state() reports it there -- or an unmigrated workspace.toml, so
+    that `migrate` and the steps refusing until it has run find it. Before `init`, the
+    current directory. Never exits: this runs at import."""
     here = Path.cwd().resolve()
-    return next((d for d in (here, *here.parents) if (d / "workspace.toml").is_file()), here)
+    found = find_workspace(here)
+    candidates = [d for d in (
+        found and Path(found["file"]).parent.parent,
+        next((d for d in (here, *here.parents) if (d / LEGACY_FILE).is_file()), None)) if d]
+    # Both are ancestors of `here`, so the one with more parts is the nearer.
+    return max(candidates, key=lambda d: len(d.parts)) if candidates else here
 
 
 def set_root(root):
-    global ROOT, STATE_FILE, SETUP_DIR
+    global ROOT, STATE_FILE, LEGACY_STATE_FILE, SETUP_DIR
     ROOT = Path(root).resolve()
-    STATE_FILE = ROOT / "workspace.toml"
+    STATE_FILE = ROOT / WORKSPACE_FILE
+    LEGACY_STATE_FILE = ROOT / LEGACY_FILE
     SETUP_DIR = ROOT / ".setup"
 
 
@@ -70,7 +131,16 @@ ORG = "c-energie"
 WRITING_TEMPLATE = f"{ORG}/writing-template"
 ANALYSIS_TEMPLATE = f"{ORG}/analysis-template"
 
-SCHEMA = 2
+# workspace.json's schema, and the keys of it this script writes -- the only ones. Every
+# other key, top level or inside a member entry, is carried through every write untouched.
+SCHEMA = 1
+OWNED_KEYS = ("schema", "name", "repo", "members")
+MEMBER_KINDS = ("code", "document", "analysis")
+# The last workspace.toml schema, the one with [[document]] tables. `migrate` converts it.
+TOML_SCHEMA = 2
+# A JSON value rendered on one line when it fits in this many columns, else one entry per
+# line: json-block.mjs's rule, so a file both write to reads as if one hand formatted it.
+JSON_WIDTH = 110
 # The workspace's CLAUDE.md. `init` writes it filled in; the documents table between the
 # markers is rewritten whenever a document is added, and nothing outside them ever is.
 WORKSPACE_CLAUDE_MD = Path(__file__).resolve().parent / "CLAUDE.workspace.md"
@@ -324,52 +394,197 @@ def origin_url(path):
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def github_repo(url):
+    """OWNER/NAME from a GitHub remote URL (https or ssh); any other remote, verbatim --
+    `gh repo clone` and `git clone` both take it, so a member stays restorable."""
+    match = re.search(r"github\.com[:/]+([\w.-]+/[\w.-]+?)(?:\.git)?/?$", url or "")
+    return match.group(1) if match else (url or "")
+
+
+# ---------------------------------------------------------------------------
+# .claude/workspace.json -- the one place that reads or writes it
+# ---------------------------------------------------------------------------
+
 def load_state():
+    """workspace.json exactly as parsed -- every key, including the ones this script does not
+    own -- or {} when there is none. A malformed one stops with its path and the parse error:
+    "fixing" it would mean rewriting keys other plugins own."""
     if not STATE_FILE.exists():
         return {}
-    return tomllib.loads(STATE_FILE.read_text(encoding="utf-8"))
+    config, error = parse_workspace(STATE_FILE)
+    if error:
+        sys.exit(f"{STATE_FILE}: malformed ({error}). Fix it by hand; nothing was changed.")
+    return config
 
 
-def toml_value(value):
-    """A string, list of strings or bool as TOML. json.dumps writes valid TOML for these."""
-    return json.dumps(value)
+def load_legacy():
+    """workspace.toml, or {} when there is none. Read by `migrate` and by nothing else."""
+    if not LEGACY_STATE_FILE.is_file():
+        return {}
+    try:
+        return tomllib.loads(LEGACY_STATE_FILE.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        sys.exit(f"{LEGACY_STATE_FILE}: not valid TOML ({exc}). Fix it, then run `migrate`.")
 
 
-def write_state(state):
-    """workspace.toml: the schema, the workspace's name, then one [[document]] per document.
-    Each document's keys in a fixed order, so a rewrite diffs only what changed."""
-    lines = ["# Written by /project-workspace and read by its skills. Edit it by hand to",
-             "# rename a document's directory or repo, or to drop a document from the list",
-             "# (deleting its directory is up to you).", "",
-             f"schema = {SCHEMA}", f"name = {toml_value(state['name'])}"]
-    for doc in state.get("document", []):
-        lines += ["", "[[document]]"]
-        lines += [f"{key} = {toml_value(doc[key])}"
-                  for key in ("name", "dir", "repo", "extras") if key in doc]
-    write(STATE_FILE, "\n".join(lines) + "\n")
+def needs_migrate(state):
+    """Whether workspace.toml still holds the members: it is there, and workspace.json is
+    absent or lists none (setup-connectors may have made one first, for `connections` alone)."""
+    return LEGACY_STATE_FILE.is_file() and "members" not in state
+
+
+MIGRATE_FIRST = (f"{LEGACY_FILE} is this workspace's manifest still: run "
+                 "`migrate` first (/project-workspace:setup-project-workspace).")
 
 
 def read_state(required=True):
-    """workspace.toml at the current schema, or {} when it is missing and not `required`.
-    Stops on a schema-1 file: every step but `migrate` works on schema 2 only."""
+    """workspace.json at the current schema, `members` always present; or {} when there is
+    none and it is not `required`. Stops while workspace.toml is still the manifest: no step
+    writes both, and one written to while the other is read is how they would drift."""
     state = load_state()
+    if needs_migrate(state):
+        sys.exit(MIGRATE_FIRST)
     if not state:
         if required:
-            sys.exit("workspace.toml missing: this is not a project workspace yet. "
-                     "Run /project-workspace:setup-project-workspace first.")
+            sys.exit(f"{WORKSPACE_FILE.as_posix()} missing: this is not a project workspace "
+                     "yet. Run /project-workspace:setup-project-workspace first.")
         return {}
-    if is_legacy(state):
-        sys.exit("workspace.toml is from before documents were nested (schema 1). "
-                 "Run the `migrate` step first (/project-workspace:setup-project-workspace).")
     if state.get("schema") != SCHEMA:
-        sys.exit(f"workspace.toml has schema = {state.get('schema')!r}; this plugin reads "
+        sys.exit(f"{STATE_FILE} has schema {state.get('schema')!r}; this plugin writes "
                  f"{SCHEMA}. Update the plugin, or fix the file by hand.")
-    state.setdefault("document", [])
+    members = state.setdefault("members", [])
+    if not isinstance(members, list) or not all(isinstance(m, dict) for m in members):
+        sys.exit(f"{STATE_FILE}: `members` is not a list of objects. Fix it by hand.")
     return state
 
 
+def documents(state):
+    """The document members, in file order. The dicts themselves, not copies: a step that
+    records extras on one is editing the member that write_state() then writes."""
+    return [m for m in state["members"] if m.get("kind") == "document"]
+
+
+def doc_name(doc):
+    """A document's name: its own `name`, else its directory."""
+    return doc.get("name") or doc["dir"]
+
+
 def is_legacy(state):
+    """A schema-1 workspace.toml: one document, [workspace] table, no schema key."""
     return "schema" not in state and "workspace" in state
+
+
+def state_text(state):
+    """(current text, new text) of workspace.json with this script's keys of `state` in it,
+    and nothing else changed: each owned key whose value changed has only its value span
+    replaced (or is appended), so every byte of every other block -- its formatting, its key
+    order, a `_comment_` above it -- survives, as json-block.mjs guarantees for the Node
+    writers. The current text is None when there is no file yet."""
+    if STATE_FILE.exists():
+        # Untranslated: read_text() would fold CRLF to LF, and the rewrite would then change
+        # every line of a file committed from a Windows checkout.
+        with open(STATE_FILE, encoding="utf-8", newline="") as handle:
+            raw = handle.read()
+        before = load_state()
+    else:
+        raw, before = None, {}
+    text = raw or "{}\n"
+    try:
+        for key in OWNED_KEYS:
+            if key in state and (key not in before or before[key] != state[key]):
+                text = upsert_json_key(text, key, state[key])
+    except ValueError as exc:
+        sys.exit(f"{STATE_FILE}: cannot edit it safely ({exc}); nothing written.")
+    # Never hand back a file that says something other than what was asked: a rendering bug
+    # becomes a refusal, not a workspace.json with another plugin's block damaged.
+    expected = {**before, **{k: state[k] for k in OWNED_KEYS if k in state}}
+    if json.loads(text.removeprefix("\ufeff")) != expected:
+        sys.exit(f"Writing {STATE_FILE} did not round-trip; nothing written. This is a bug.")
+    return raw, text
+
+
+def write_state(state):
+    """Write this script's keys of `state` into workspace.json and nothing else (see
+    state_text). An unchanged state writes nothing, so a re-run leaves no diff."""
+    raw, text = state_text(state)
+    if text != raw:
+        write(STATE_FILE, text)
+
+
+def render_json(value, indent, unit):
+    """json-block.mjs's renderValue: inline when it fits in JSON_WIDTH, else one entry per
+    line, recursively, so a long `members` is one member to a line."""
+    one = inline_json(value)
+    # A long string has no expanded form: wrapping it would change its value.
+    if len(indent) + len(one) <= JSON_WIDTH or not value or not isinstance(value, (dict, list)):
+        return one
+    pad = indent + unit
+    if isinstance(value, list):
+        return "[\n" + ",\n".join(pad + render_json(v, pad, unit) for v in value) + f"\n{indent}]"
+    return ("{\n" + ",\n".join(f"{pad}{json.dumps(k, ensure_ascii=False)}: {render_json(v, pad, unit)}"
+                               for k, v in value.items()) + f"\n{indent}}}")
+
+
+def inline_json(value):
+    """One line, with json-block.mjs's spacing (`{ "a": 1 }`, `[1, 2]`), not json.dumps's."""
+    if isinstance(value, list):
+        return "[" + ", ".join(inline_json(v) for v in value) + "]" if value else "[]"
+    if isinstance(value, dict):
+        return ("{ " + ", ".join(f"{json.dumps(k, ensure_ascii=False)}: {inline_json(v)}"
+                                 for k, v in value.items()) + " }") if value else "{}"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def scan_top_level(raw):
+    """The top-level object's span and each entry's (key, key_start, value_start, value_end),
+    in file order. Values are delimited by the JSON decoder itself, so a brace inside a string
+    can never be mistaken for structure."""
+    decoder = json.JSONDecoder()
+    ws = re.compile(r"[ \t\r\n]*")
+    i = ws.match(raw, 1 if raw.startswith("\ufeff") else 0).end()
+    if raw[i:i + 1] != "{":
+        raise ValueError("top level is not an object")
+    start, i, entries = i, i + 1, []
+    while True:
+        i = ws.match(raw, i).end()
+        if raw[i:i + 1] == ",":
+            i = ws.match(raw, i + 1).end()
+        if raw[i:i + 1] == "}":
+            return start, i, entries
+        key_start = i
+        key, i = decoder.raw_decode(raw, i)
+        i = ws.match(raw, i).end()
+        if raw[i:i + 1] != ":":
+            raise ValueError(f"no ':' after top-level key {key!r}")
+        value_start = ws.match(raw, i + 1).end()
+        _, i = decoder.raw_decode(raw, value_start)
+        entries.append((key, key_start, value_start, i))
+
+
+def upsert_json_key(raw, key, value):
+    """json-block.mjs's upsertBlock, for one key: replace its value span, or append it as the
+    last top-level entry, in the file's own indent and line endings (they are committed from
+    Windows checkouts as CRLF; splicing in bare LFs would leave the file mixed)."""
+    start, end, entries = scan_top_level(raw)
+    eol = "\r\n" if "\r\n" in raw else "\n"
+
+    def line_indent(at):
+        line = raw[raw.rfind("\n", 0, at) + 1:at]
+        return re.match(r"[ \t]*", line).group(0)
+    unit = next((line_indent(k) for _, k, _, _ in entries if line_indent(k)), "  ")
+    found = next((e for e in entries if e[0] == key), None)
+    if found:
+        _, key_start, value_start, value_end = found
+        rendered = render_json(value, line_indent(key_start), unit).replace("\n", eol)
+        return raw[:value_start] + rendered + raw[value_end:]
+    if not entries:
+        rendered = render_json(value, unit, unit)
+        inner = f"\n{unit}{json.dumps(key)}: {rendered}\n".replace("\n", eol)
+        return raw[:start + 1] + inner + raw[end:]
+    _, last_key, _, last_end = entries[-1]
+    indent = line_indent(last_key)
+    entry = f",\n{indent}{json.dumps(key)}: {render_json(value, indent, unit)}".replace("\n", eol)
+    return raw[:last_end] + entry + raw[last_end:]
 
 
 def tracked():
@@ -400,7 +615,7 @@ def describe(doc):
     """What a skill needs to know about one document, every path absolute."""
     path = ROOT / doc["dir"]
     analysis = analysis_dir_of(path) if path.is_dir() else None
-    return {"name": doc["name"], "dir": doc["dir"], "repo": doc["repo"],
+    return {"name": doc_name(doc), "dir": doc["dir"], "repo": doc.get("repo", ""),
             "path": path.as_posix(), "exists": path.is_dir(),
             "analysis_dir": analysis,
             "analysis_path": (path / analysis).as_posix() if analysis else None,
@@ -410,13 +625,13 @@ def describe(doc):
 def find_document(state, wanted=None, cwd=None):
     """The document a skill acts on: the one named (by name or directory); else the one
     the current directory is inside; else the only one. Stops, listing them, otherwise."""
-    docs = state["document"]
+    docs = documents(state)
     if wanted:
         for doc in docs:
-            if wanted in (doc["name"], doc["dir"]):
+            if wanted in (doc_name(doc), doc["dir"]):
                 return doc
-        sys.exit(f"No document {wanted!r} in workspace.toml. Documents: "
-                 + (", ".join(d["name"] for d in docs) or "none yet"))
+        sys.exit(f"No document {wanted!r} in {WORKSPACE_FILE.as_posix()}. Documents: "
+                 + (", ".join(doc_name(d) for d in docs) or "none yet"))
     here = Path(cwd or Path.cwd()).resolve()
     for doc in docs:
         if here == ROOT / doc["dir"] or (ROOT / doc["dir"]) in here.parents:
@@ -424,18 +639,19 @@ def find_document(state, wanted=None, cwd=None):
     if len(docs) == 1:
         return docs[0]
     if not docs:
-        sys.exit("workspace.toml lists no documents yet: run /project-workspace:add-document.")
+        sys.exit(f"{WORKSPACE_FILE.as_posix()} lists no documents yet: run "
+                 "/project-workspace:add-document.")
     sys.exit("More than one document; name one with --document. Documents: "
-             + ", ".join(d["name"] for d in docs))
+             + ", ".join(doc_name(d) for d in docs))
 
 
 def render_documents_table(state):
     rows = ["| Document | Directory | Repo | Analysis repo |", "|---|---|---|---|"]
-    for doc in state["document"]:
+    for doc in documents(state):
         info = describe(doc)
         analysis = f"`{doc['dir']}/{info['analysis_dir']}/`" if info["analysis_dir"] else "—"
-        rows.append(f"| {doc['name']} | `{doc['dir']}/` | `{doc['repo']}` | {analysis} |")
-    if not state["document"]:
+        rows.append(f"| {info['name']} | `{doc['dir']}/` | `{info['repo']}` | {analysis} |")
+    if not documents(state):
         rows.append("| _none yet: /project-workspace:add-document_ | | | |")
     return "\n".join([DOCS_START, *rows, DOCS_END])
 
@@ -465,17 +681,46 @@ def replace_between(text, start, end, block):
     return head + block + tail
 
 
+def top_level_member_dirs(state):
+    """Every member's dir that is not inside another member's: a nested analysis is
+    already ignored with the document repo holding it."""
+    dirs = [m["dir"].strip("/") for m in state["members"] if m.get("dir")]
+    return list(dict.fromkeys(d for d in dirs
+                              if not any(d.startswith(other + "/") for other in dirs)))
+
+
+def ignore_line_variants(directory):
+    """The spellings of a line ignoring `directory` at the root, as people write them."""
+    return {f"/{directory}/", f"{directory}/", f"/{directory}", directory}
+
+
 def write_document_block(state):
-    """The .gitignore block naming every document, replaced in place if already there.
-    Only in a tracked workspace; everything outside the markers is the user's and is kept."""
+    """The .gitignore block naming every top-level member, replaced in place if already
+    there. Only in a tracked workspace -- `init`, `track`, `add-document` and `migrate` all
+    call it, which their SKILL.md sections say -- and everything outside the markers is the
+    user's and is kept. A member the user already ignores outside the block is left out of
+    it, with a warning, rather than written a second time (#37)."""
     if not tracked():
         return
     gitignore = ROOT / ".gitignore"
     text = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    outside = text
+    for start, end in ((BLOCK_START, BLOCK_END), (LEGACY_BLOCK_START, LEGACY_BLOCK_END)):
+        if start in outside and end in outside:
+            outside = replace_between(outside, start, end, "")
+    own = {line.strip() for line in outside.splitlines()}
+    lines = []
+    for directory in top_level_member_dirs(state):
+        already = sorted(ignore_line_variants(directory) & own)
+        if already:
+            say(f"  note  .gitignore already ignores {directory}/ outside the managed block "
+                f"(`{already[0]}`); not adding a second line for it")
+        else:
+            lines.append(f"/{directory}/")
     block = "\n".join([BLOCK_START,
-                       "# Each document is its own repo with its own remote. Tracking one here",
+                       "# Each member is its own repo with its own remote. Tracking one here",
                        "# would nest one history inside another.",
-                       *(f"/{doc['dir']}/" for doc in state["document"]), BLOCK_END])
+                       *lines, BLOCK_END])
     for start, end in ((BLOCK_START, BLOCK_END), (LEGACY_BLOCK_START, LEGACY_BLOCK_END)):
         if start in text and end in text:
             new = replace_between(text, start, end, block)
@@ -728,17 +973,23 @@ def find_sh():
 
 
 def cmd_init(args):
-    """Make this folder a project workspace: workspace.toml and CLAUDE.md. Safe to re-run."""
+    """Make this folder a project workspace: .claude/workspace.json and CLAUDE.md. Safe to
+    re-run. In a tracked workspace it also writes the .gitignore members block."""
     state = load_state()
-    if is_legacy(state):
-        sys.exit("workspace.toml is from before documents were nested (schema 1): run "
-                 "`migrate` instead of `init`.")
-    if state:
+    if needs_migrate(state):
+        sys.exit(MIGRATE_FIRST)
+    if "members" in state:
         state = read_state()
-        say(f"workspace.toml exists (name = {state['name']!r}, "
-            f"{len(state['document'])} document(s)); keeping it.")
+        say(f"{WORKSPACE_FILE.as_posix()} exists (name = {state.get('name')!r}, "
+            f"{len(state['members'])} member(s)); keeping it.")
     else:
-        state = {"name": args.name or ROOT.name, "document": []}
+        # A workspace.json another owner made first (setup-connectors, for `connections`)
+        # gains this script's keys; whatever else it holds is kept as it is.
+        state = {**state, "schema": state.get("schema", SCHEMA),
+                 "name": state.get("name") or args.name or ROOT.name, "members": []}
+        if state["schema"] != SCHEMA:
+            sys.exit(f"{STATE_FILE} has schema {state['schema']!r}; this plugin writes "
+                     f"{SCHEMA}. Update the plugin, or fix the file by hand.")
         write_state(state)
     refresh_claude_md(state)
     write_document_block(state)
@@ -748,20 +999,20 @@ def cmd_init(args):
 
 
 def cmd_track(args):
-    """Optional: make the workspace a git repo, ignoring every document, and give it a
-    GitHub remote if --repo is given. It never commits."""
+    """Optional: make the workspace a git repo, ignoring every member, and give it a
+    GitHub remote if --repo is given. It never commits. The GitHub repo, once there is one,
+    is recorded as workspace.json's `repo`."""
     state = read_state()
     if not tracked():
         run(["git", "init"], cwd=ROOT)
     write_document_block(state)
-    if not args.repo:
-        origin = origin_url(ROOT)
-        say(f"origin is {origin}." if origin else
-            "No origin. Re-run with --repo OWNER/NAME to create one on GitHub.")
-        return 0
     origin = origin_url(ROOT)
-    if origin:
-        say(f"origin is already {origin}; leaving it.")
+    if origin or not args.repo:
+        if origin:
+            say(f"origin is {'already ' if args.repo else ''}{origin}; leaving it.")
+            record_repo(state, github_repo(origin))
+        else:
+            say("No origin. Re-run with --repo OWNER/NAME to create one on GitHub.")
         return 0
     if repo_exists(args.repo):
         sys.exit(f"{args.repo} already exists. Point origin at it by hand: "
@@ -770,18 +1021,33 @@ def cmd_track(args):
     cmd = ["gh", "repo", "create", args.repo, f"--{args.visibility}",
            "--source", ".", "--remote", "origin"]
     run(cmd + (["--push"] if has_commits else []), cwd=ROOT)
+    record_repo(state, args.repo)
     return 0
 
 
+def record_repo(state, repo):
+    """The workspace's own repo, as `repo`: GitHub's OWNER/NAME only, since it is what a
+    session with no shell reaches the workspace through (ADR 0002). One recorded by hand is
+    never overwritten."""
+    if REPO_NAME.fullmatch(repo or "") and not state.get("repo"):
+        state["repo"] = repo
+        write_state(state)
+
+
 def cmd_add_document(args):
-    """Create or adopt one document repo inside the workspace, and list it."""
+    """Create or adopt one document repo inside the workspace, and record it as a member."""
     state = read_state()
     name = args.name or args.dir
-    for doc in state["document"]:
-        if doc["name"] == name or doc["dir"] == args.dir:
-            if (doc["name"], doc["dir"], doc["repo"]) != (name, args.dir, args.repo):
-                sys.exit(f"workspace.toml already lists document {doc['name']!r} in "
-                         f"{doc['dir']}/ from {doc['repo']}; refusing to replace it.")
+    for member in state["members"]:
+        if member.get("dir") == args.dir and member.get("kind") != "document":
+            sys.exit(f"{WORKSPACE_FILE.as_posix()} already has a {member.get('kind')} member "
+                     f"in {args.dir}/; refusing to replace it.")
+    for doc in documents(state):
+        if doc_name(doc) == name or doc["dir"] == args.dir:
+            if (doc_name(doc), doc["dir"], doc.get("repo")) != (name, args.dir, args.repo):
+                sys.exit(f"{WORKSPACE_FILE.as_posix()} already lists document "
+                         f"{doc_name(doc)!r} in {doc['dir']}/ from {doc.get('repo')}; "
+                         "refusing to replace it.")
     checkout = ROOT / args.dir
     if checkout.exists() and any(checkout.iterdir()) and not (checkout / ".git").exists():
         sys.exit(f"{args.dir}/ exists and is not empty. Move it aside, then re-run.")
@@ -802,8 +1068,9 @@ def cmd_add_document(args):
         if args.mode == "import":
             stage_import_source(args.source, SETUP_DIR / args.dir / "import-source")
 
-    if not any(doc["dir"] == args.dir for doc in state["document"]):
-        state["document"].append({"name": name, "dir": args.dir, "repo": args.repo})
+    if not any(doc["dir"] == args.dir for doc in documents(state)):
+        state["members"].append({"dir": args.dir, "repo": args.repo, "kind": "document",
+                                 "name": name})
         write_state(state)
     refresh_claude_md(state)
     write_document_block(state)
@@ -821,7 +1088,7 @@ def cmd_add_analysis(args):
     document = ROOT / doc["dir"]
     if not document.is_dir():
         sys.exit(f"{doc['dir']}/ does not exist. Clone it back first: "
-                 f"gh repo clone {doc['repo']} {doc['dir']}")
+                 f"gh repo clone {doc.get('repo')} {doc['dir']}")
     install_setup_nested(document, fetch_setup_nested(document))
     sh = find_sh()
     if not sh:
@@ -841,8 +1108,10 @@ def cmd_add_analysis(args):
         cwd=document, env=os.environ | {"PYTHONIOENCODING": "utf-8"})
 
     extras = list(dict.fromkeys(["dev", "notebooks", args.backend, *doc.get("extras", [])]))
-    if doc.get("extras") != extras:
-        doc["extras"] = extras
+    changed = doc.get("extras") != extras
+    doc["extras"] = extras
+    changed |= record_nested_analysis(state, doc)
+    if changed:
         write_state(state)
     refresh_claude_md(state)
     analysis = analysis_dir_of(document) if not DRY_RUN else (args.dir or "ANALYSIS_DIR")
@@ -853,6 +1122,50 @@ def cmd_add_analysis(args):
     say(f"\nAnalysis repo ready at {doc['dir']}/{analysis}/, with its own venv. "
         "Next: the plotly check and the proof (add-analysis, §4).")
     return 0
+
+
+def nested_analysis_member(doc):
+    """The `analysis` member a document's nested analysis repo is recorded as, from its
+    layout.toml and checkout; None when it hosts none. The repo is the checkout's origin,
+    else layout.toml's nested_remote (a fresh clone has no checkout yet), as OWNER/NAME."""
+    document = ROOT / doc["dir"]
+    analysis = analysis_dir_of(document) if document.is_dir() else None
+    if not analysis:
+        return None
+    # Only a checkout of its own: in a bare directory, git would walk up and answer with the
+    # document repo's origin, recording the document as its own analysis repo.
+    checkout = document / analysis
+    remote = ((origin_url(checkout) if (checkout / ".git").exists() else "")
+              or str(read_layout(document).get("nested_remote", "")))
+    return {"dir": f"{doc['dir']}/{analysis}", "repo": github_repo(remote), "kind": "analysis",
+            "documents": [doc["dir"]]}
+
+
+def record_nested_analysis(state, doc):
+    """Record a document's nested analysis repo as an `analysis` member, or bring an existing
+    entry for it up to date -- its repo, the document in its `documents` -- keeping every
+    other field of it. True when the state changed. layout.toml stays what says where the
+    analysis lives; the member is what makes the workspace restorable from members alone."""
+    wanted = nested_analysis_member(doc)
+    if wanted is None:
+        if DRY_RUN:
+            say(f"  (would record the nested analysis repo as a member of {doc['dir']}/ "
+                f"in {WORKSPACE_FILE.as_posix()})")
+        return False
+    member = next((m for m in state["members"] if m.get("dir") == wanted["dir"]), None)
+    if member is None:
+        state["members"].append(wanted)
+        return True
+    before = json.dumps(member, sort_keys=True)
+    member["kind"] = "analysis"
+    if wanted["repo"]:
+        member["repo"] = wanted["repo"]
+    documents_fed = member.get("documents")
+    if not isinstance(documents_fed, list):
+        member["documents"] = documents_fed = []
+    if doc["dir"] not in documents_fed:
+        documents_fed.append(doc["dir"])
+    return json.dumps(member, sort_keys=True) != before
 
 
 def setup_nested_state(document):
@@ -889,25 +1202,25 @@ def cmd_document(args):
     """Print the document a skill should act on, or every document with --all, as JSON."""
     state = read_state()
     if args.all:
-        print(json.dumps([describe(doc) for doc in state["document"]], indent=2))
+        print(json.dumps([describe(doc) for doc in documents(state)], indent=2))
     else:
         print(json.dumps(describe(find_document(state, args.document)), indent=2))
     return 0
 
 
 def cmd_sync(args):
-    """uv sync in a document's analysis repo, passing every extra workspace.toml records
+    """uv sync in a document's analysis repo, passing every extra workspace.json records
     for it: a bare `uv sync` removes the extras it is not given. --extra adds one and
     records it."""
     state = read_state()
     doc = find_document(state, args.document)
     info = describe(doc)
     if not info["analysis_path"]:
-        sys.exit(f"{doc['name']} has no analysis repo, so no venv: nothing to sync. "
+        sys.exit(f"{doc_name(doc)} has no analysis repo, so no venv: nothing to sync. "
                  "(doc-publish for it runs through uvx; see /project-workspace:setup-doc-publish.)")
     extras = list(dict.fromkeys([*doc.get("extras", []), *(args.extra or [])]))
     if not extras:
-        sys.exit(f"workspace.toml records no extras for {doc['name']}. Pass them: "
+        sys.exit(f"{WORKSPACE_FILE.as_posix()} records no extras for {doc_name(doc)}. Pass them: "
                  "--extra dev --extra notebooks --extra plotly")
     if extras != doc.get("extras"):
         doc["extras"] = extras
@@ -920,16 +1233,189 @@ def cmd_sync(args):
 
 
 # ---------------------------------------------------------------------------
-# migrate: schema 1 (one document, side-by-side members, root venv) -> schema 2
+# migrate: workspace.toml -> .claude/workspace.json
+#
+#   schema 2  several documents, each hosting its analysis   converted; nothing on disk moves
+#   schema 1  one document, side-by-side repos, a root venv  nested first, then converted
 # ---------------------------------------------------------------------------
 
 # What schema 1 kept at the root and schema 2 does not. Backed up to .setup/migrate-backup/
 # before deletion, never just deleted: either may hold the user's own edits.
 LEGACY_ROOT_FILES = ("pyproject.toml", "uv.lock", ".python-version")
+# workspace.toml's top-level keys that become workspace.json's. Any other is reported as not
+# carried over -- it is in the backup -- since no other key of workspace.json is ours to write.
+TOML_KEYS = ("schema", "name", "document")
+
+
+def convert_state(toml_documents, name, existing):
+    """workspace.json's state for documents as workspace.toml lists them: each a `document`
+    member keeping every key it had (extras, and any this plugin never wrote), followed by
+    an `analysis` member for the analysis repo it hosts, if layout.toml says it hosts one.
+    `existing` is a workspace.json made before the conversion; its other keys are kept."""
+    members = []
+    for doc in toml_documents:
+        member = {"dir": doc["dir"], "repo": doc.get("repo", ""), "kind": "document",
+                  "name": doc.get("name") or doc["dir"]}
+        member.update({k: v for k, v in doc.items() if k not in member})
+        members.append(member)
+        analysis = nested_analysis_member(member)
+        if analysis:
+            members.append(analysis)
+    return {**existing, "schema": existing.get("schema", SCHEMA),
+            "name": existing.get("name") or name, "members": members}
+
+
+def show_state_text(state):
+    """The workspace.json `migrate` will write, in full, for the dry run to be reviewed."""
+    raw, text = state_text(state)
+    say(f"\n{WORKSPACE_FILE.as_posix()} will read"
+        + (" (only schema, name and members change):" if raw else ":"))
+    for line in text.rstrip("\n").splitlines():
+        say(f"    {line}")
+
+
+def cmd_migrate(args):
+    legacy = load_legacy()
+    existing = load_state()
+    if not legacy:
+        if not existing:
+            sys.exit(f"No {LEGACY_FILE}: nothing to migrate. Use `init`.")
+        say(f"{WORKSPACE_FILE.as_posix()} is the manifest already; nothing to migrate.")
+        leftovers = [n for n in (*LEGACY_ROOT_FILES, ".venv") if (ROOT / n).exists()]
+        if leftovers:
+            say(f"Left at the root: {', '.join(leftovers)}. A schema-1 migrate that stopped "
+                "part-way leaves these; once `add-analysis` and `sync` have run for the "
+                "document, and nothing else uses them, back them up and delete them.")
+        return 0
+    if existing.get("members"):
+        sys.exit(f"Both {LEGACY_FILE} and {WORKSPACE_FILE.as_posix()} list members; refusing "
+                 f"to merge them. Compare the two, then delete {LEGACY_FILE} by hand.")
+    if existing and existing.get("schema", SCHEMA) != SCHEMA:
+        sys.exit(f"{STATE_FILE} has schema {existing.get('schema')!r}; this plugin writes "
+                 f"{SCHEMA}. Update the plugin, or fix the file by hand.")
+    if is_legacy(legacy):
+        return migrate_schema_1(legacy["workspace"], existing)
+    if legacy.get("schema") != TOML_SCHEMA:
+        sys.exit(f"{LEGACY_FILE} has schema = {legacy.get('schema')!r}; `migrate` converts "
+                 f"schema 1 and {TOML_SCHEMA}. Fix the file by hand.")
+    return migrate_schema_2(legacy, existing)
+
+
+def migrate_schema_2(legacy, existing):
+    """Convert a schema-2 workspace.toml into workspace.json, and remove it. Nothing on
+    disk moves and nothing at the root but the two manifests is touched: schema 2 has no
+    Python at the root, so a pyproject.toml there is something else's (#34)."""
+    docs = legacy.get("document", [])
+    stops = [f"a [[document]] has no dir: {doc!r}" for doc in docs if not doc.get("dir")]
+    say(f"Converting {LEGACY_FILE} (schema {TOML_SCHEMA}, {len(docs)} document(s)) into "
+        f"{WORKSPACE_FILE.as_posix()}:")
+    if stops:
+        sys.exit("\nCannot migrate:\n" + "\n".join(f"  - {s}" for s in stops))
+    state = convert_state(docs, legacy.get("name") or ROOT.name, existing)
+    analyses = [m for m in state["members"] if m["kind"] == "analysis"]
+    plan = [f"write {WORKSPACE_FILE.as_posix()}: {len(docs)} document member(s), "
+            f"{len(analyses)} analysis member(s)"
+            + (f", keeping its {', '.join(k for k in existing if k not in OWNED_KEYS)}"
+               if any(k not in OWNED_KEYS for k in existing) else "")]
+    plan += [f"record {m['dir']}/ as an analysis member feeding {m['documents'][0]}/ "
+             f"(from its layout.toml)" for m in analyses]
+    plan += [f"{doc['dir']}/ is not on disk: an analysis repo nested in it is not recorded "
+             "until `add-analysis` restores it" for doc in docs if not (ROOT / doc["dir"]).is_dir()]
+    plan += [f"not carried over: {LEGACY_FILE}'s `{key}` (it stays in the backup)"
+             for key in legacy if key not in TOML_KEYS]
+    plan.append(f"back up {LEGACY_FILE} (-> .setup/migrate-backup/), then remove it")
+    plan.append("refresh CLAUDE.md's documents table")
+    claude_md = ROOT / "CLAUDE.md"
+    if claude_md.is_file() and LEGACY_FILE in claude_md.read_text(encoding="utf-8"):
+        plan.append(f"CLAUDE.md still names {LEGACY_FILE} outside that table: the text is "
+                    "yours, so it is left; update it by hand")
+    if tracked():
+        plan.append("refresh the .gitignore members block")
+    for line in plan:
+        say(f"  - {line}")
+    show_state_text(state)
+    if DRY_RUN:
+        return 0
+
+    # workspace.json first: a failure before the removal leaves the TOML, and a re-run.
+    backup_file(LEGACY_STATE_FILE, SETUP_DIR / "migrate-backup")
+    write_state(state)
+    remove_file(LEGACY_STATE_FILE)
+    refresh_claude_md(state)
+    write_document_block(state)
+    say(f"\nMigrated. {LEGACY_FILE} is backed up in .setup/migrate-backup/; delete it once "
+        "you have checked the members above."
+        + (f"\nCommit at the root: {WORKSPACE_FILE.as_posix()}, the removal of {LEGACY_FILE}, "
+           "CLAUDE.md and .gitignore." if tracked() else ""))
+    return 0
+
+
+def root_python_dependents(writing, analysis):
+    """Why the root pyproject.toml is load-bearing beyond the analysis repo, if it is: other
+    uv workspace members, sources from outside, or extras the analysis repo does not declare.
+    Deleting such a root broke a workspace whose other members lived in a sibling checkout,
+    with root-only extras and git sources kept there to lock offline (#34)."""
+    path = ROOT / "pyproject.toml"
+    if not path.is_file():
+        return []
+    try:
+        root = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        return [f"it is not valid TOML ({exc}), so what depends on it cannot be checked"]
+    uv = root.get("tool", {}).get("uv", {})
+    own = {analysis.strip("/")} if analysis else set()
+    norm = lambda m: str(m).removeprefix("./").strip("/")
+    reasons = []
+    others = [m for m in uv.get("workspace", {}).get("members", []) if norm(m) not in own]
+    if others:
+        reasons.append(f"its [tool.uv.workspace] members include {', '.join(others)}")
+    outside = [n for n, src in uv.get("sources", {}).items()
+               if not (isinstance(src, dict) and src.get("workspace"))]
+    if outside:
+        reasons.append(f"its [tool.uv.sources] take {', '.join(outside)} from outside the workspace")
+    declared = set()
+    # Beside the document repo, or inside it already when a stopped migrate is re-run.
+    for where in ([ROOT / analysis, ROOT / (writing or "") / analysis] if analysis else []):
+        if (where / "pyproject.toml").is_file():
+            declared = set(tomllib.loads((where / "pyproject.toml").read_text(encoding="utf-8"))
+                           .get("project", {}).get("optional-dependencies", {}))
+            break
+    root_only = sorted(set(root.get("project", {}).get("optional-dependencies", {})) - declared)
+    if root_only:
+        reasons.append(f"it declares extras the analysis repo does not: {', '.join(root_only)}")
+    return reasons
+
+
+def linked_worktrees(repo):
+    """The linked worktrees of the checkout at `repo`, as absolute paths; the first entry of
+    `git worktree list` is the main worktree itself. Read before a move: afterwards the
+    links are what is broken."""
+    result = quiet(["git", "worktree", "list", "--porcelain"], cwd=repo)
+    if result.returncode != 0:
+        return []
+    paths = [Path(line.removeprefix("worktree ")) for line in result.stdout.splitlines()
+             if line.startswith("worktree ")]
+    return paths[1:]
+
+
+def repair_worktrees(linked, old, new):
+    """`git worktree repair` from the moved checkout, for every linked worktree it had: each
+    one's .git file, and the checkout's record of it, still name the old absolute path, so
+    every one of them is broken until repaired (#35). One inside the moved tree is repaired
+    at its new path; one outside it did not move, and is repaired where it is."""
+    if not linked:
+        return
+    paths = [new / p.relative_to(old) if p == old or old in p.parents else p for p in linked]
+    result = run(["git", "worktree", "repair", *paths], cwd=new, check=False)
+    if result.returncode != 0:
+        say(f"  git worktree repair failed ({result.returncode}). Run it by hand in "
+            f"{new.relative_to(ROOT).as_posix()}/: git worktree repair "
+            + " ".join(p.as_posix() for p in paths))
 
 
 def migrate_plan(legacy):
-    """Everything `migrate` will do, as a list of lines, and the stops that prevent it."""
+    """Everything a schema-1 `migrate` will do, as a list of lines, and the stops that
+    prevent it."""
     layout = legacy.get("layout") or ("full" if "analysis_dir" in legacy else "writing-only")
     writing = legacy.get("writing_dir")
     stops, plan = [], []
@@ -951,6 +1437,10 @@ def migrate_plan(legacy):
                 stops.append(f"{analysis}/ has no origin remote; nested_remote needs one")
             plan.append(f"move {analysis}/ -> {writing}/{analysis}/  (close Jupyter, IDEs and "
                         "terminals inside it first: Windows will not move an open directory)")
+            linked = linked_worktrees(source)
+            if linked:
+                plan.append(f"then repair its {len(linked)} linked git worktree(s) with "
+                            "`git worktree repair`: the move leaves them pointing at the old path")
         nested = setup_nested_state(ROOT / writing) if writing else "current"
         if nested != "current":
             plan.append(f"{'update the outdated' if nested == 'outdated' else 'add'} "
@@ -959,6 +1449,13 @@ def migrate_plan(legacy):
         plan.append(f"run {writing}/setup-nested.sh --dir {analysis}: gitignore it, write "
                     f"layout.toml, build its own .venv")
         plan.append(f"uv sync there with the extras {legacy.get('extras', [])}")
+    dependents = root_python_dependents(writing, analysis)
+    if dependents:
+        stops.append("the root pyproject.toml is load-bearing beyond the analysis repo -- "
+                     + "; ".join(dependents) + " -- and migrate would delete it. Nest the "
+                     "analysis repo by hand instead: move it, run the document repo's "
+                     f"setup-nested.sh --dir {analysis or '[dir]'}, and repoint the root's "
+                     "member path")
     for name in LEGACY_ROOT_FILES:
         if (ROOT / name).exists():
             plan.append(f"back up and remove {name}  (-> .setup/migrate-backup/)")
@@ -967,26 +1464,16 @@ def migrate_plan(legacy):
     if (ROOT / ".env").exists():
         plan.append("keep the root .env; doc-publish settings in it move per document "
                     "(/project-workspace:setup-doc-publish)")
-    plan.append("rewrite workspace.toml as schema 2, listing one document")
+    plan.append(f"write {WORKSPACE_FILE.as_posix()} listing the document"
+                + (" and its analysis repo" if analysis else "")
+                + f"; back up and remove {LEGACY_FILE}")
     plan.append("back up CLAUDE.md and write the plugin's workspace text in its place")
     if tracked():
         plan.append("rewrite the .gitignore member block as a documents block")
     return layout, plan, stops
 
 
-def cmd_migrate(args):
-    state = load_state()
-    if not state:
-        sys.exit("workspace.toml missing: nothing to migrate. Use `init`.")
-    if not is_legacy(state):
-        say(f"workspace.toml is already schema {state.get('schema')}; nothing to migrate.")
-        leftovers = [n for n in (*LEGACY_ROOT_FILES, ".venv") if (ROOT / n).exists()]
-        if leftovers:
-            say(f"Left at the root from schema 1: {', '.join(leftovers)}. A migrate that "
-                "stopped part-way leaves these; once `add-analysis` and `sync` have run for "
-                "the document, back them up and delete them.")
-        return 0
-    legacy = state["workspace"]
+def migrate_schema_1(legacy, existing):
     layout, plan, stops = migrate_plan(legacy)
     say(f"Migrating the {layout} workspace {legacy.get('name')!r}:")
     for line in plan:
@@ -1019,49 +1506,60 @@ def cmd_migrate(args):
         backup_file(claude_md, backup)
         claude_md.unlink()
 
+    doc = {"name": legacy.get("name") or writing, "dir": writing,
+           "repo": legacy.get("writing_repo", "")}
     analysis = legacy.get("analysis_dir") if layout == "full" else None
     if analysis:
+        doc["extras"] = legacy.get("extras", [])
         # The root venv goes first: it is what an IDE or kernel most often holds open.
         remove_tree(ROOT / ".venv")
-        if (ROOT / analysis / ".git").exists():
+        source = ROOT / analysis
+        if (source / ".git").exists():
+            linked = linked_worktrees(source)
             say(f"  move  {analysis}/ -> {writing}/{analysis}/")
             try:
-                shutil.move(str(ROOT / analysis), str(document / analysis))
+                shutil.move(str(source), str(document / analysis))
             except OSError as exc:
                 sys.exit(f"Could not move {analysis}/ ({exc}). Close whatever has it open, "
                          "then re-run `migrate`: nothing else has changed yet.")
+            repair_worktrees(linked, source, document / analysis)
         # Before any uv runs in the analysis repo: uv looks upward for a workspace root, and
         # would find the old one here and sync into it.
         remove_legacy_root(backup)
-        args_ns = argparse.Namespace(
+        # add-analysis reads workspace.json, so it is written -- and workspace.toml retired --
+        # first; add-analysis then records the analysis member itself.
+        convert_legacy_manifest(doc, legacy, existing, backup)
+        cmd_add_analysis(argparse.Namespace(
             document=None, source=None, dir=analysis, owner=None, repo_name=None, public=False,
             backend=legacy.get("backend", "plotly"), python=python, distribution=None,
-            author=None)
-        # add-analysis reads schema 2, so workspace.toml is rewritten first.
-        new_state = {"name": legacy.get("name") or ROOT.name,
-                     "document": [{"name": legacy.get("name") or writing, "dir": writing,
-                                   "repo": legacy.get("writing_repo", ""),
-                                   "extras": legacy.get("extras", [])}]}
-        backup_file(STATE_FILE, backup)
-        write_state(new_state)
-        cmd_add_analysis(args_ns)
-        state = read_state()
+            author=None))
         cmd_sync(argparse.Namespace(document=None, extra=None))
     else:
-        backup_file(STATE_FILE, backup)
-        state = {"name": legacy.get("name") or ROOT.name,
-                 "document": [{"name": legacy.get("name") or writing, "dir": writing,
-                               "repo": legacy.get("writing_repo", "")}]}
-        write_state(state)
+        convert_legacy_manifest(doc, legacy, existing, backup)
 
+    state = read_state()
     remove_legacy_root(backup)
     refresh_claude_md(state)
     write_document_block(state)
     say(f"\nMigrated. Backups are in .setup/migrate-backup/: merge anything of yours from the "
         f"old CLAUDE.md into the new one, then delete them."
-        + ("\nCommit at the root: workspace.toml, CLAUDE.md, .gitignore, and the removals."
-           if tracked() else ""))
+        + (f"\nCommit at the root: {WORKSPACE_FILE.as_posix()}, CLAUDE.md, .gitignore, and the "
+           f"removals ({LEGACY_FILE} among them)." if tracked() else ""))
     return 0
+
+
+def convert_legacy_manifest(doc, legacy, existing, backup):
+    """Schema 1's one document into workspace.json; workspace.toml backed up, then removed."""
+    backup_file(LEGACY_STATE_FILE, backup)
+    write_state(convert_state([doc], legacy.get("name") or ROOT.name, existing))
+    remove_file(LEGACY_STATE_FILE)
+
+
+def remove_file(path):
+    if path.exists():
+        say(f"  remove {path.relative_to(ROOT).as_posix()}")
+        if not DRY_RUN:
+            path.unlink()
 
 
 def remove_legacy_root(backup):
@@ -1096,7 +1594,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dry-run", action="store_true", help="print what would run; change nothing")
     ap.add_argument("--root", help="the workspace root (default: the nearest directory holding "
-                    "workspace.toml, else the current one)")
+                    ".claude/workspace.json or an unmigrated workspace.toml, else the current one)")
     sub = ap.add_subparsers(dest="step", required=True)
 
     p = sub.add_parser("check")

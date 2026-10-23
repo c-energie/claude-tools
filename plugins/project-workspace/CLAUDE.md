@@ -18,19 +18,46 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
 
 ## Invariants
 
-- **`setup_workspace.py` is the one place that knows `workspace.toml`.** Which document a skill
+- **`setup_workspace.py` is the one place that knows `.claude/workspace.json`'s `members`**
+  (and the only reader of `workspace.toml`, which only `migrate` reads). Which document a skill
   acts on is its `find_document` / `describe` (the `document` step); `copy_analysis.py` imports
-  them from beside it rather than reading the file. A new reader does the same. Nothing about a
-  document's analysis repo is written to `workspace.toml` — `layout.toml` in the document repo,
-  owned by writing-template's `setup-nested.sh`, says it — except the `extras` its venv syncs.
+  them, and `default_root`, from beside it rather than reading the file. A new reader does the
+  same.
+- **This plugin owns `schema`, `name`, `repo` and `members` in `workspace.json` and writes no
+  other key** (ADR 0002: `connections` is setup-connectors', each `state.*` its plugin's).
+  `write_state` edits at block scale, porting `json-block.mjs`'s guarantee: only the value span
+  of an owned key that changed is replaced, so every other block keeps its bytes, its CRLF and
+  its BOM. Unknown keys — top level and inside member entries — are carried through every write,
+  because a member's dict is edited in place, never rebuilt. Never `json.dump` the whole file.
+- **A member is `dir`, `repo`, `kind` (`code` | `document` | `analysis`)** plus kind-specific
+  fields: a document's `name` and `extras` (its nested analysis venv's, as `sync` passes them);
+  an analysis member's `documents`, the document dirs it feeds, relative to the root (`[]` is
+  no-document mode, #41). A nested analysis is recorded as a member
+  (`dir: "<doc>/<analysis>"`, `documents: ["<doc>"]`) so the workspace can be restored from
+  `members` alone, but **where it lives is still `layout.toml`'s to say** — owned by
+  writing-template's `setup-nested.sh`; `describe` reads it from there.
+- **No dual-writing.** While `workspace.toml` is the only manifest (no `workspace.json`, or one
+  without `members`), every step but `check` and `migrate` refuses in one line naming
+  `migrate` (`MIGRATE_FIRST`). Nothing writes both files.
 - **Nesting is `setup-nested.sh`'s job, not the plugin's.** `add-analysis` and `migrate` call
   the document repo's own copy; never reimplement it here. A change to nesting goes to
   writing-template first.
 - **Scripts never locate the workspace from their own path.** They run from the plugin cache,
   so every SKILL.md passes `--root "${CLAUDE_PROJECT_DIR}"`, and without `--root` a script uses
-  the nearest directory at or above the current one holding `workspace.toml`, else the current
-  directory. A new script follows the same `default_root()` / `set_root()` pattern; a module
-  constant derived from `ROOT` must be reassigned in `set_root()` or `--root` silently misses it.
+  `default_root()`: the nearest directory at or above the current one holding
+  `.claude/workspace.json` (or, until migrated, `workspace.toml`; the nearer wins), else the
+  current directory. A new script follows the same `default_root()` / `set_root()` pattern; a
+  module constant derived from `ROOT` must be reassigned in `set_root()` or `--root` silently
+  misses it.
+- **`find_workspace()` is a Python PORT of context-kit-core's `findWorkspace()`
+  (`scripts/workspace.mjs`, #47), not a copy**: a skill can only call scripts in its own plugin,
+  and `check-plugin.mjs`'s drift rule cannot compare Python with Node. Same rules — nearest
+  wins, levels never merge, the walk does not stop at a member's `.git`, and a malformed
+  nearest file (a directory of that name included) stops the walk and is reported with its
+  path and parse error, never skipped past to an outer workspace. `FindsTheRoot` in
+  `test_setup_workspace.py` mirrors `workspace.test.mjs`'s cases: **change one walk, change the
+  other, and extend both test files.** Unlike the resolver there is no context-repo fallback:
+  a malformed file stops the step.
 - **Script paths in SKILL.md bodies are `${CLAUDE_SKILL_DIR}/...`**; one skill reaching another's
   script uses `${CLAUDE_SKILL_DIR}/../[skill]/...`. Never a repo-relative `.claude/skills/` path —
   the workspace no longer has one.
