@@ -17,10 +17,12 @@ A fix to the resolver or hook belongs in all three plugins' copies (see the mark
 ```bash
 node scripts/check-plugin.mjs .          # lint manifests/skills/hooks; exit 1 on error — run before any commit
 node --test hooks/load-context.test.mjs  # the autoload gate; stdlib only, no network, no clone
+node --test hooks/workspace-freshness.test.mjs  # the hook inside a workspace; local bare repos, no network
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
 node --test scripts/workspace.test.mjs   # the workspace resolver and its bash twin; stdlib only, no network
 node scripts/workspace.mjs --no-pull     # the nearest .claude/workspace.json's root, else the context repo (--json)
 bash scripts/workspace-root.sh --no-pull # the same, in bash, for hooks
+bash scripts/workspace-root.sh --no-fallback  # the workspace route only — never runs context-repo.sh
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
 bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
 bash hooks/load-context.sh --refresh     # exactly what refresh-context runs, against $PWD
@@ -83,6 +85,20 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   because PowerShell strips the quotes off `--settings '{...}'`. Do not "fix" this by having the
   resolver prefer some other channel: the ladder is correct, and the environment is genuinely the
   highest-precedence *channel* — what is counter-intuitive is who last wrote to it.
+- **Inside a workspace the session-start hook LOADS NOTHING; it only says when the workspace is
+  behind.** Claude Code already reads `CLAUDE.md` from the cwd and every parent (with `@`
+  imports), so printing memory and glossary as well would load them twice. What it cannot say is
+  that the checkout is behind its origin, so the hook runs a `git fetch` capped at
+  `CONTEXT_KIT_FETCH_TIMEOUT` seconds (default 10), and prints one line, to the user and to the
+  model alike, when the workspace is behind or has diverged. It prints **nothing** when up to
+  date, ahead only, or there is no upstream. It **never pulls**: a fetch moves remote-tracking refs
+  only, and the line names the command. If the fetch fails or times out, it prints one line
+  saying the check could not run. The cap is a background watcher, not `timeout`, which stock
+  macOS lacks. "Is this a workspace" is `workspace-root.sh --no-fallback`. Without that flag the
+  question is answered by `context-repo.sh`, which may clone just to say no. A malformed
+  `workspace.json` therefore falls through to the legacy loader, as the resolver does, and so do
+  `--refresh` and every session outside a workspace, unchanged until the fallback is deleted. The
+  kill switch above is checked first and silences this too.
 - **The hook never prompts, never hangs, never exits non-zero.** Unknown args are ignored.
   Failed refreshes serve the local copy under a STALE banner naming the reason — a silent
   stale load is the one failure mode that actively misleads.
