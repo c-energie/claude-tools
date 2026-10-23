@@ -3,8 +3,8 @@
 ## What this plugin is
 
 The **Sandcastle harness authoring** layer, `plugins/sandcastle` inside
-`c-energie/claude-tools`. Two skills, and between them they are the whole of the per-project half
-of a harness install:
+`c-energie/claude-tools`. Three skills. The first two are the whole of the per-project half of
+a harness install; the third gets a backlog ready for the engine's epic mode:
 
 - **`sandcastle-install`** — getting a workspace wired and verified: which kind of root this is,
   the member table, the prompt sets, the env, the Dockerfile, and the token-free proof that it
@@ -12,8 +12,12 @@ of a harness install:
 - **`sandcastle-prompts`** — the five prompts a harness install cannot ship (implementer,
   per-issue reviewer, group reviewer, revision, planner), written from the consuming project's own
   governing documents.
+- **`sandcastle-epic-prep`** — the issues an `--epic` run will plan from: which dependencies are
+  native links (obeyed) and which are only text (listed, ignored), whether any parent reaches them,
+  whether their repos are members. Its audit is `scripts/epic-audit.mjs`; the writes are a plan the
+  user approves.
 
-Neither depends on the other being run, and each says so in its `Not this skill:` line.
+None depends on another being run, and each says so in its `Not this skill:` line.
 
 It is deliberately **outside the context stack**. It reads no `context.json`, needs no context
 repo, and is useful in any workspace that has installed `@c-energie/sandcastle-harness`. Filing it
@@ -35,6 +39,10 @@ harness and peer versions it was checked against; re-check on every harness mino
   Never the other way round: a skill describing a placeholder the engine does not pass produces a
   prompt with a literal `{{TYPO}}` in the middle of it, and a skill describing a block the engine
   does not extract produces a run whose review verdict is never read.
+- **`scripts/epic-audit.mjs` ports the engine's `textLinksIn`** (`src/epic.mts`), so "text only"
+  in the audit means exactly what the planner lists as an unconfirmed link. It names the harness
+  version it was checked against. When the engine changes that function, or the phrases it
+  reads, or `EPIC_LABEL`, change the port in the same release.
 - **The check is a `--dry-run`, not prose here.** It prints the resolved prompt paths and the
   rendered `promptArgs`, which is the only thing that proves a prompt's placeholders are real and
   that no path fell back to the harness's stub.
@@ -43,11 +51,19 @@ harness and peer versions it was checked against; re-check on every harness mino
 
 ## Invariants
 
-- **The skill auto-triggers, and that is safe because it writes nothing outside the session
-  without being asked to.** It edits files in the workspace the user is standing in. There is no
-  `disable-model-invocation` here: no commit, no push, no message to anybody.
+- **The skills auto-trigger, and that is safe because none writes outside the session without
+  being asked to.** `sandcastle-install` and `sandcastle-prompts` edit files in the workspace the
+  user is standing in: no commit, no push, no message to anybody. `sandcastle-epic-prep` does
+  write to issue trackers (links, sub-issues, issues, bodies), so it carries an explicit gate
+  instead: its audit is read-only, and nothing is written until the user approves one numbered
+  plan. Any edit that lets a write happen before that approval needs `disable-model-invocation`
+  instead.
 
-- **Source-first, and the coverage is stated.** The skill's value is entirely in step 3 — the
+- **Native links are the fix; plan-file acceptance is not.** The epic's plan file can accept a
+  text link, but only on one machine and one plan. `sandcastle-epic-prep` exists to put the order
+  into GitHub, where every run and every reader sees it.
+
+- **Source-first, and the coverage is stated** (`sandcastle-prompts`). The skill's value is entirely in step 3 — the
   inventory. It exists because one workspace's prompts were drafted from the workspace `CLAUDE.md`
   alone and missed the member's own `.sandcastle/CODING_STANDARDS.md`; the agent then produced
   work correct against the rules it had and wrong against the rules that existed, and the

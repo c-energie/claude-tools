@@ -1,7 +1,9 @@
 {
   "name": "sandcastle",
-  "description": "The judgement half of a @c-energie/sandcastle-harness install — the half that has already gone wrong once — in two skills: getting a workspace wired and verified in order, token-free until the image build; and writing or repairing the implementer, reviewer, group-reviewer, revision and planner briefs the agent is actually told the rules by, from that project's own governing documents rather than from a guess.",
-  "version": "0.3.1",
-  "author": { "name": "c-energie" },
+  "description": "The judgement half of a @c-energie/sandcastle-harness install — the half that has already gone wrong once — in three skills: getting a workspace wired and verified in order, token-free until the image build; writing or repairing the implementer, reviewer, group-reviewer, revision and planner briefs from that project's own governing documents rather than from a guess; and getting a backlog ready for --epic, whose plan obeys native GitHub links and nothing written in issue text.",
+  "version": "0.4.0",
+  "author": {
+    "name": "c-energie"
+  },
   "license": "MIT"
 }

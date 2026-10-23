@@ -11,10 +11,13 @@ repo, no Notion, no Slack.
 | --- | --- |
 | `sandcastle-install` | Install the harness into a workspace and get it to a verified, token-free green state — decide whether the root is an interdependent uv/npm workspace or a clone root, write the member table and prompt sets, wire the env, hand-write the Dockerfile, then prove it with smoke and preflight |
 | `sandcastle-prompts` | Write or repair the five prompts in a workspace's `.sandcastle/` — implementer, per-issue reviewer, group reviewer, revision, planner — from that project's own CLAUDE.md, CODING_STANDARDS.md, test configuration and CI |
+| `sandcastle-epic-prep` | Get issues across one or more repos ready for an `--epic` run — audit native blocked-by links against dependencies written only in text, find a parent the epic can start from, check membership and labels, then apply the missing links, parent and edits as one approved plan |
 
 The two are a pair, in that order: `sandcastle-install` gets a workspace wired and verified,
-`sandcastle-prompts` writes the briefs the agent is actually told the rules by. Each is useful
-without the other — a workspace already installed needs only the second; a workspace whose
+`sandcastle-prompts` writes the briefs the agent is actually told the rules by. `sandcastle-epic-prep` comes after both, once there is a
+backlog to run: `--epic` obeys only native GitHub links, and a backlog whose order lives in issue
+text plans as a flat pile of ready tasks. Each is useful
+without the others — a workspace already installed needs only the second; a workspace whose
 prompts are fine but whose image will not build needs only the first.
 
 ## Why this exists
@@ -69,7 +72,11 @@ plugins/sandcastle/
 ├── .claude-plugin/plugin.json
 ├── CLAUDE.md                                  the invariants
 ├── README.md                                  this file
-└── skills/sandcastle-prompts/
-    ├── SKILL.md                               the method
-    └── references/contract.md                 the five prompts, placeholders per pass, output blocks
+├── scripts/epic-audit.mjs                     read-only audit of a backlog for --epic (ports the harness's textLinksIn)
+└── skills/
+    ├── sandcastle-install/SKILL.md            wiring and verifying a workspace
+    ├── sandcastle-prompts/
+    │   ├── SKILL.md                           the method
+    │   └── references/contract.md             the five prompts, placeholders per pass, output blocks
+    └── sandcastle-epic-prep/SKILL.md          native links, parent, members, then one approved plan
 ```
