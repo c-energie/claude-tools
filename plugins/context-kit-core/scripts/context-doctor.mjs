@@ -289,6 +289,42 @@ if (ctx) {
       }
     }
   }
+
+  // -------------------------------------------------------------- stale Notion date guidance
+
+  // context-notion's notion-discover used to stamp every date property's schema line with
+  // "with is_datetime 0" — correct for the hosted notion-create-pages tool, and a 400 on every
+  // date write through API-post-page, which rejects the key outright. Skills follow schema text
+  // exactly, so the stale line outlives the fix in every project it was copied into.
+  //
+  // This is the one place core reads under state.notion, and it reads as little as it can: a
+  // retired token in a string, the way DEAD_MARKETS carries a retired catalog name. It does not
+  // interpret the schema — what a date should look like is context-notion's (notion-config) to
+  // say, and spelling it out here would be a second copy of that rule. No fix: the right line
+  // depends on the property's own notes, which only the user can rewrite.
+  const schemas = ctx.state?.notion?.schemas;
+  if (schemas && typeof schemas === 'object') {
+    const walk = (v, path) => {
+      if (typeof v === 'string') {
+        if (v.includes('is_datetime')) {
+          add('warn', 'notion-dates',
+            `state.notion.schemas.${path} mentions is_datetime — stale guidance. That key is valid `
+            + 'for one Notion tool only and API-post-page rejects it with a 400, so a skill that '
+            + 'follows this line breaks every date write through that tool. Edit the line to name '
+            + 'no tool (e.g. "date — YYYY-MM-DD (shape per notion-config)"); context-notion\'s '
+            + 'notion-config owns the per-tool date rule.');
+        }
+      } else if (v && typeof v === 'object') {
+        // Quoted when not a bare word: property names with trailing spaces are real, and an
+        // unquoted path would hide exactly the character that makes the name what it is.
+        for (const [k, child] of Object.entries(v)) {
+          const seg = /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
+          walk(child, path ? `${path}.${seg}` : seg);
+        }
+      }
+    };
+    walk(schemas, '');
+  }
 }
 
 // ---------------------------------------------------------------- the repo's own settings
