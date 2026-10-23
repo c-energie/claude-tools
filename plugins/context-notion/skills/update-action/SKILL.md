@@ -18,8 +18,8 @@ edit needs live Notion, so a guest's edit becomes an `add-pending` note instead.
 ## Update
 
 `schemas.actions` names the properties. Universal rules as ever: status values from the
-schema's options; dates as `start` + `is_datetime` = `0` computed via `dates.mjs`; owners
-from the roster only. Update, then report what changed with the page URL.
+schema's options; dates computed via `dates.mjs` and shaped per tool as `notion-config`
+states; owners from the roster only. Update, then report what changed with the page URL.
 
 ## Triage ("what's overdue", "what's due this week")
 

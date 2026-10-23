@@ -26,7 +26,7 @@ parent `{type: "database_id", database_id: pageParents.decisionLog}` — never
 - **Capture the why**: rationale, alternatives considered, and anything superseded go in the
   schema's notes/rich-text property — a decision without its reasoning re-litigates itself in
   six months.
-- The decision **date** (start + `is_datetime` = `0`); owners from the roster.
+- The decision **date**, shaped per tool as `notion-config` states; owners from the roster.
 - If the schema has a revisit/review property, ask whether this decision is provisional and
   set it — provisional decisions that look permanent are how stale rules survive.
 

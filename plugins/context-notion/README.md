@@ -32,7 +32,7 @@ A project opts in by declaring, in its context repo's `context.json`:
           "title": "Task",
           "properties": {
             "Owner":    "person — resolve from people below, never notion-search",
-            "Due date": "date — YYYY-MM-DD, set is_datetime 0",
+            "Due date": "date — YYYY-MM-DD (shape per notion-config)",
             "Status":   "status: Not started | In progress | Done (default Not started)"
           }
         },
