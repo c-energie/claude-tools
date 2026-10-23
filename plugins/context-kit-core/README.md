@@ -385,9 +385,13 @@ that existed the day it was written, and goes stale silently in the dangerous di
 | no `connections` key at all | pass — nobody has decided |
 | policy unreadable (no repo, no clone, broken JSON) | pass, with the reason on stderr |
 
+The policy is the nearest `.claude/workspace.json`'s `connections`, found by walking up from the
+project dir — so a member repo nested in a workspace is gated by the workspace. Only when no
+workspace is found does it fall back to the context repo's `context.json` and the marker.
+
 Two properties are load-bearing. It **fails open and says why**, because a gate that blocks every
 MCP call the moment a checkout is missing is worse than no gate and breaks the hook contract. And
-it reads `context.json` *or* the `.claude/context-project.json` marker, whose `connections` the
+without a workspace it reads `context.json` *or* the `.claude/context-project.json` marker, whose `connections` the
 session-start hook already mirrors — which is what makes it the only mechanism that reaches
 **Cowork**, where there is no checkout and so no `.claude/settings.json` to carry permissions.
 
