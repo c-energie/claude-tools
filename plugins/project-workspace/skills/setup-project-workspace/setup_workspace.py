@@ -10,11 +10,15 @@ is a document repo (LaTeX) with, optionally, its analysis repo nested inside it:
     |-- thesis/                 a document repo (c-energie/writing-template, or Overleaf's sync repo)
     |   |-- layout.toml         present once it hosts its analysis repo
     |   `-- thesis-analysis/    the nested analysis repo, with its own .venv
-    `-- paper/                  another document, writing only
+    |-- paper/                  another document, writing only
+    `-- validation/             a workspace analysis: a member in its own right, its own .venv,
+                                feeding zero or more documents (#41)
 
 There is no Python at the workspace root. How a document hosts its analysis is its own
 layout.toml's to say (writing-template's setup-nested.sh writes it); workspace.json records
-the analysis repo only as a member, `kind = "analysis"`, naming the document it feeds.
+the analysis repo only as a member, `kind = "analysis"`, naming the document it feeds. A
+workspace analysis is nested in no document: its member is all there is, `documents` the
+dirs it feeds and `extras` its venv's.
 
 Driven by the setup-project-workspace, add-document and add-analysis skills. Each step is
 also runnable by hand, and each refuses rather than overwrites when its target exists:
@@ -23,9 +27,13 @@ also runnable by hand, and each refuses rather than overwrites when its target e
     init          write .claude/workspace.json and CLAUDE.md
     track         make the workspace a git repo (optional), and give it a GitHub remote
     add-document  create or adopt a document repo, and record it as a member
-    add-analysis  nest an analysis repo in a document, through its setup-nested.sh
+    add-analysis  nest an analysis repo in a document, through its setup-nested.sh; or,
+                  with --workspace, make a workspace analysis (or restore a recorded one)
+    attach-analysis / detach-analysis
+                  add or remove a document in a workspace analysis's `documents`
     document      which document a skill acts on, as JSON
-    sync          uv sync a document's analysis venv with its recorded extras
+    sync          uv sync every analysis venv, nested and workspace, with its recorded
+                  extras; or one, named with --document or --analysis
     migrate       convert workspace.toml: schema 2 (several documents) or schema 1 (one
                   document, side-by-side repos) into .claude/workspace.json; or nest the
                   analysis repo of an adopted folder with schema 1's shape
@@ -381,7 +389,9 @@ def made_from_template(repo, template):
         for name in markers)
 
 
-def create_from_template(template, repo, visibility):
+def create_from_template(template, repo, visibility,
+                         otherwise="or use --mode adapt if it is a writing-template / Overleaf repo"):
+    """`otherwise` ends the refusal: what to do instead, which depends on what is made."""
     if repo_exists(repo):
         # Only a repo this template made is taken as-is: that is the re-run of an
         # interrupted fresh run. Anything else was adopted silently — an unrelated Python
@@ -390,7 +400,7 @@ def create_from_template(template, repo, visibility):
         # the clone and before any workspace file is written.
         if not made_from_template(repo, template):
             sys.exit(f"{repo} already exists and was not made from {template}; pick another "
-                     "name, or use --mode adapt if it is a writing-template / Overleaf repo.")
+                     f"name, {otherwise}.")
         say(f"{repo} already exists and was made from {template}; using it as-is.")
     else:
         run(["gh", "repo", "create", repo, "--template", template, f"--{visibility}"])
@@ -528,6 +538,39 @@ def documents(state):
 def doc_name(doc):
     """A document's name: its own `name`, else its directory."""
     return doc.get("name") or doc["dir"]
+
+
+def host_document(state, directory):
+    """The document member whose repo `directory` sits inside, or None. A nested analysis
+    has one; a workspace analysis, by definition, has none."""
+    directory = directory.strip("/")
+    return next((d for d in documents(state)
+                 if directory.startswith(d["dir"].strip("/") + "/")), None)
+
+
+def workspace_analyses(state):
+    """The workspace analyses: `analysis` members inside no document repo (#41). The dicts
+    themselves, as documents() returns them, so attach/detach edit what write_state writes.
+    A nested analysis is a member too, but layout.toml, not this list, is where it lives."""
+    return [m for m in state["members"] if m.get("kind") == "analysis" and m.get("dir")
+            and not host_document(state, m["dir"])]
+
+
+def find_workspace_analysis(state, directory):
+    """The workspace analysis member at `directory`. Stops, listing them, when there is
+    none -- and says so plainly when the dir is a nested analysis, whose documents are not
+    this list's to change: it feeds the document holding it, and only that one."""
+    directory = directory.strip("/")
+    for member in workspace_analyses(state):
+        if member["dir"].strip("/") == directory:
+            return member
+    host = host_document(state, directory)
+    if host and any(m.get("dir", "").strip("/") == directory for m in state["members"]):
+        sys.exit(f"{directory}/ is an analysis nested in {host['dir']}/: it feeds that document "
+                 "only. A workspace analysis is one inside no document repo.")
+    sys.exit(f"No workspace analysis {directory!r} in {WORKSPACE_FILE.as_posix()}. Workspace "
+             "analyses: " + (", ".join(m["dir"] for m in workspace_analyses(state))
+                             or "none yet (add-analysis --workspace makes one)"))
 
 
 def is_legacy(state):
@@ -714,6 +757,17 @@ def render_documents_table(state):
         rows.append(f"| {info['name']} | `{doc['dir']}/` | `{info['repo']}` | {analysis} |")
     if not documents(state):
         rows.append("| _none yet: /project-workspace:add-document_ | | | |")
+    # Inside the same markers, so a workspace whose CLAUDE.md predates #41 gains it without
+    # a second managed block; and only when there is one, so such a workspace's text does
+    # not change until it has a workspace analysis to list.
+    analyses = workspace_analyses(state)
+    if analyses:
+        rows += ["", "Analyses (workspace analyses: each a member in its own right, feeding "
+                 "the documents listed):", "",
+                 "| Analysis | Repo | Documents fed |", "|---|---|---|"]
+        for member in analyses:
+            fed = ", ".join(f"`{d}/`" for d in member.get("documents") or []) or "none yet"
+            rows.append(f"| `{member['dir']}/` | `{member.get('repo', '')}` | {fed} |")
     return "\n".join([DOCS_START, *rows, DOCS_END])
 
 
@@ -1186,8 +1240,13 @@ def cmd_add_analysis(args):
     """Nest an analysis repo in one document, through that document's own setup-nested.sh:
     create it from analysis-template, adopt one with --from, or restore it from layout.toml.
     The document repo carries the script (writing-template ships it; `add-document --mode
-    adapt` copies it in), so one implementation serves this skill and a lone checkout."""
+    adapt` copies it in), so one implementation serves this skill and a lone checkout.
+    With --workspace, a workspace analysis instead: see add_workspace_analysis."""
     state = read_state()
+    if getattr(args, "workspace", False):
+        return add_workspace_analysis(state, args)
+    # No parser default, so workspace mode can tell a --backend given on a restore from none.
+    args.backend = args.backend or "plotly"
     doc = find_document(state, args.document)
     document = ROOT / doc["dir"]
     if not document.is_dir():
@@ -1229,6 +1288,221 @@ def cmd_add_analysis(args):
         say(f"  {problem}")
     say(f"\nAnalysis repo ready at {doc['dir']}/{analysis}/, with its own venv. "
         "Next: the plotly check and the proof (add-analysis, §4).")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# workspace analyses (#41): an analysis repo that is a member in its own right
+# ---------------------------------------------------------------------------
+
+# The add-analysis flags that shape a repo being created. On a restore the repo exists, its
+# pin committed and its init.py long since run, and its extras are the member's: a flag
+# given then would be silently ignored, so it is refused, as setup-nested.sh refuses its
+# create flags on a restore.
+CREATE_ONLY = (("--owner", "owner"), ("--public", "public"), ("--backend", "backend"),
+               ("--python", "python"), ("--distribution", "distribution"), ("--author", "author"))
+
+
+def checked_member_dir(value):
+    """A workspace analysis's --dir, normalised: relative to the root and inside it, each
+    segment a name (so no `.`, `..` or `.git`). More than one segment is allowed -- `--dir
+    analyses/x` is how a grouping dir is had, the default being the top level."""
+    parts = value.replace("\\", "/").strip("/").split("/")
+    if value.startswith(("/", "\\")) or ":" in value or not all(DOC_NAME.fullmatch(p) for p in parts):
+        sys.exit(f"--dir {value!r}: a relative path inside the workspace, each part letters, "
+                 "digits, '.', '_' and '-', not starting with '.'")
+    return "/".join(parts)
+
+
+def default_owner(state):
+    """Whose account a new workspace analysis goes on: the workspace repo's owner, so the two
+    sit side by side on GitHub, else the gh login's. Reads only, so a dry run asks the same."""
+    repo = state.get("repo") or ""
+    if REPO_NAME.fullmatch(repo):
+        return repo.split("/")[0]
+    login = quiet(["gh", "api", "user", "--jq", ".login"])
+    if login.returncode == 0 and login.stdout.strip():
+        return login.stdout.strip()
+    sys.exit("Could not work out a GitHub owner: the workspace records no repo, and gh gave "
+             "no login. Pass --owner.")
+
+
+def clone_member(repo, directory):
+    """clone(), but an existing checkout is taken only if it is `repo`: clone() alone leaves
+    any checkout in place, and the member would then name one repo while the folder held
+    another (add-member's check, for the same reason)."""
+    target = ROOT / directory
+    if (target / ".git").exists():
+        have = github_repo(origin_url(target))
+        if have.lower() != github_repo(repo).lower():
+            sys.exit(f"{directory}/ is already a checkout of {have or '(no origin)'}, not "
+                     f"{repo}. Move it aside, or pick another --dir.")
+    return clone(repo, directory)
+
+
+def uv_sync(checkout, extras):
+    """`uv sync` with every extra: a bare one uninstalls the extras it is not given."""
+    cmd = ["uv", "sync"]
+    for extra in extras:
+        cmd += ["--extra", extra]
+    run(cmd, cwd=checkout)
+
+
+def add_workspace_analysis(state, args):
+    """A workspace analysis (#41): a repo from analysis-template at the workspace top level
+    (or --dir), with its own .venv and .python-version, recorded as an `analysis` member
+    feeding no document yet (`documents: []`) and carrying its venv's `extras`. With the
+    member already recorded, a restore instead (restore_workspace_analysis)."""
+    if args.document or args.source:
+        sys.exit("--document and --from nest an analysis in a document; a workspace analysis "
+                 "is in none. Drop --workspace to nest one, or those flags to make one.")
+    if not (args.dir or args.repo_name):
+        sys.exit("add-analysis --workspace needs --repo-name: a workspace analysis has no "
+                 "document to take a default name from. (To restore a recorded one, its "
+                 "--dir alone is enough.)")
+    directory = checked_member_dir(args.dir or args.repo_name)
+    recorded = next((m for m in workspace_analyses(state)
+                     if m["dir"].strip("/") == directory), None)
+    if recorded:
+        return restore_workspace_analysis(recorded, args)
+    if not args.repo_name:
+        sys.exit(f"No workspace analysis is recorded in {directory}/, so this makes one, and "
+                 "that needs --repo-name: there is no default name.")
+
+    host = host_document(state, directory)
+    if host:
+        sys.exit(f"{directory}/ is inside the document {host['dir']}/: that is a nested "
+                 f"analysis. Use add-analysis --document {doc_name(host)}, or a --dir outside "
+                 "every document.")
+    for member in state["members"]:
+        held = member.get("dir", "").strip("/")
+        if held and (held == directory or directory.startswith(held + "/")):
+            sys.exit(f"{directory}/ is {'' if held == directory else 'inside '}the "
+                     f"{member.get('kind')} member {held}/; refusing to put a workspace "
+                     "analysis there. Pick another --dir.")
+    repo = f"{args.owner or default_owner(state)}/{args.repo_name}"
+    if not REPO_NAME.fullmatch(repo):
+        sys.exit(f"{repo!r} is not OWNER/NAME; check --owner and --repo-name.")
+    for member in state["members"]:
+        if member.get("repo") and github_repo(member["repo"]).lower() == repo.lower():
+            sys.exit(f"{repo} is already a member, in {member.get('dir')}/; refusing to add it "
+                     "twice. A document it should feed is added with attach-analysis.")
+
+    backend = args.backend or "plotly"
+    extras = ["dev", "notebooks", backend]
+    visibility = "public" if args.public else "private"
+    say(f"Workspace analysis {repo} ({visibility}) at {directory}/, feeding no document yet:")
+    create_from_template(ANALYSIS_TEMPLATE, repo, visibility, otherwise="or record an existing "
+                         "analysis repo by cloning it into the workspace and running `adopt`")
+    checkout = clone_member(repo, directory)
+    # Its own pin, always: unpinned, `uv sync` takes the newest interpreter allowed, which
+    # scientific stacks often have no wheels for yet (#9). One already there -- a re-run, or
+    # a template that ships one -- is kept unless --python says otherwise.
+    pin = checkout / ".python-version"
+    python = args.python or (None if pin.is_file() else ANALYSIS_PYTHON)
+    if python:
+        write(pin, f"{python}\n")
+    # `--doc-repo=` empty: init.py then neither asks for a document path nor offers to nest
+    # one. There is no document to give it; analysis-template#20 is the no-document mode.
+    run_init(checkout, backend=backend, doc_repo="",
+             **{k: v for k, v in (("distribution", args.distribution), ("author", args.author)) if v})
+    uv_sync(checkout, extras)
+
+    # Last, once the venv is built: a run stopped before here is finished by re-running the
+    # same command (an existing repo this template made, and an existing checkout of it, are
+    # both taken as they are), where a member recorded first would turn it into a restore.
+    state["members"].append({"dir": directory, "repo": repo, "kind": "analysis",
+                             "documents": [], "extras": extras})
+    write_state(state)
+    refresh_claude_md(state)
+    write_document_block(state)
+    say(f"\nWorkspace analysis ready at {directory}/, with its own venv; it feeds no document "
+        f"yet. Feed one with `attach-analysis --analysis {directory} --document [dir]`. Until "
+        "doc_analysis has a no-document mode (c-energie/analysis-template#20), its "
+        "document_repo() raises, so save_fig has nowhere to write a figure into: ignore "
+        "init.py's note about DOC_REPO. Nothing has been committed in it.")
+    return 0
+
+
+def restore_workspace_analysis(member, args):
+    """Workspace mode for a recorded member: clone it back if its dir is missing (a fresh
+    clone of the root), and sync its venv with its recorded extras; a checkout already there
+    is left alone. Only identifying flags apply (see CREATE_ONLY)."""
+    directory = member["dir"].strip("/")
+    given = [flag for flag, attr in CREATE_ONLY if getattr(args, attr, None)]
+    if given:
+        sys.exit(f"{directory}/ is a recorded workspace analysis, so {', '.join(given)} do not "
+                 f"apply: they shape a repo being created. Run with only --repo-name or --dir "
+                 f"to restore it; `sync --analysis {directory} --extra [x]` adds an extra.")
+    recorded = github_repo(member.get("repo") or "")
+    if args.repo_name and recorded.split("/")[-1].lower() != args.repo_name.lower():
+        sys.exit(f"{directory}/ is recorded from {recorded or '(no repo)'}, not "
+                 f"{args.repo_name}. Pick another --dir to make a new one.")
+    if (ROOT / directory / ".git").exists():
+        say(f"{directory}/ is already a checkout; nothing to restore. `sync --analysis "
+            f"{directory}` re-syncs its venv.")
+        return 0
+    if not recorded:
+        sys.exit(f"{directory}/ records no repo, so it cannot be cloned back: clone it by "
+                 "hand, then record its repo in workspace.json.")
+    restore_workspace_checkout(member)
+    say(f"\nWorkspace analysis restored at {directory}/ from {recorded}.")
+    return 0
+
+
+def restore_workspace_checkout(member):
+    """Clone a workspace analysis back and build its venv with its recorded extras -- the
+    part `restore` and add-analysis's restore share. With none recorded (one `adopt` found,
+    say) the venv is left unbuilt rather than guessed at: a wrong guess uninstalls."""
+    directory = member["dir"].strip("/")
+    checkout = clone_member(member["repo"], directory)
+    extras = member.get("extras") or []
+    if extras:
+        uv_sync(checkout, extras)
+    else:
+        say(f"  {directory}/ records no extras, so its venv is not built: `sync --analysis "
+            f"{directory} --extra dev --extra notebooks --extra plotly` builds and records them.")
+
+
+def cmd_attach_analysis(args):
+    """Add (attach-analysis) or remove (detach-analysis) a document in a workspace
+    analysis's `documents`. No files move: `documents` is read by doc_analysis
+    (c-energie/analysis-template#20), and this records it. Both are no-ops when there is
+    nothing to change, so a re-run leaves no diff."""
+    attach = args.step == "attach-analysis"
+    state = read_state()
+    member = find_workspace_analysis(state, args.analysis)
+    directory = member["dir"].strip("/")
+    fed = member.setdefault("documents", [])
+    if not isinstance(fed, list):
+        sys.exit(f"{directory}/'s `documents` in {WORKSPACE_FILE.as_posix()} is not a list; "
+                 "fix it by hand. Nothing was changed.")
+    wanted = args.document.strip("/")
+    docs = documents(state)
+    # A dir, as recorded; a document's name is taken too, and recorded as its dir.
+    doc = (next((d for d in docs if d["dir"].strip("/") == wanted), None)
+           or next((d for d in docs if doc_name(d) == wanted), None))
+    if attach and doc is None:
+        other = next((m for m in state["members"] if m.get("dir", "").strip("/") == wanted), None)
+        what = (f"is the {other.get('kind')} member {wanted}/, not a document" if other
+                else "names no member")
+        sys.exit(f"--document {wanted!r} {what}: a workspace analysis feeds documents only. "
+                 "Documents: " + (", ".join(d["dir"] for d in docs) or "none yet"))
+    # Detach takes the dir as written too, so an entry for a document since removed from the
+    # workspace can still be taken out.
+    target = doc["dir"].strip("/") if doc else wanted
+    if attach == (target in fed):
+        say(f"{directory}/ {'already feeds' if attach else 'does not feed'} {target}/; "
+            "nothing changed.")
+        return 0
+    if attach:
+        fed.append(target)
+    else:
+        fed.remove(target)
+    write_state(state)
+    refresh_claude_md(state)
+    say(f"\n{directory}/ now feeds " + (", ".join(f"{d}/" for d in fed) or "no document")
+        + ". No files moved.")
     return 0
 
 
@@ -1363,26 +1637,69 @@ def cmd_document(args):
 
 
 def cmd_sync(args):
-    """uv sync in a document's analysis repo, passing every extra workspace.json records
-    for it: a bare `uv sync` removes the extras it is not given. --extra adds one and
-    records it."""
+    """uv sync analysis venvs, each passing every extra workspace.json records for it: a
+    bare `uv sync` removes the extras it is not given. --document syncs that document's
+    nested analysis and --analysis one workspace analysis; --extra adds one to it and
+    records it (alone, it picks the document as `document` does). With none of the three,
+    every analysis venv in the workspace, nested and workspace alike, each with its own
+    extras (#41)."""
     state = read_state()
-    doc = find_document(state, args.document)
-    info = describe(doc)
-    if not info["analysis_path"]:
-        sys.exit(f"{doc_name(doc)} has no analysis repo, so no venv: nothing to sync. "
-                 "(doc-publish for it runs through uvx; see /project-workspace:setup-doc-publish.)")
-    extras = list(dict.fromkeys([*doc.get("extras", []), *(args.extra or [])]))
+    if args.document and args.analysis:
+        sys.exit("Name one: --document (a nested analysis) or --analysis (a workspace analysis).")
+    if args.analysis:
+        member = find_workspace_analysis(state, args.analysis)
+        return sync_one(state, member, f"{member['dir']}/", ROOT / member["dir"],
+                        args.extra, f"--analysis {member['dir']}")
+    # --extra alone names its document as before #41 -- the one the session is inside, else
+    # the only one -- since an extra is recorded on one analysis, never on all of them.
+    if args.document or args.extra:
+        doc = find_document(state, args.document)
+        info = describe(doc)
+        if not info["analysis_path"]:
+            sys.exit(f"{doc_name(doc)} has no analysis repo, so no venv: nothing to sync. "
+                     "(doc-publish for it runs through uvx; see /project-workspace:setup-doc-publish.)")
+        return sync_one(state, doc, doc_name(doc), Path(info["analysis_path"]), args.extra,
+                        f"--document {doc_name(doc)}")
+    # (record holding the extras, label, venv's repo, the flag naming it)
+    targets = [(doc, doc_name(doc), Path(info["analysis_path"]), f"--document {doc_name(doc)}")
+               for doc, info in ((d, describe(d)) for d in documents(state))
+               if info["analysis_path"]]
+    targets += [(m, f"{m['dir']}/", ROOT / m["dir"], f"--analysis {m['dir']}")
+                for m in workspace_analyses(state)]
+    if not targets:
+        sys.exit("No analysis repo in this workspace, so no venv: nothing to sync. "
+                 "(/project-workspace:add-analysis makes one.)")
+    problems = []
+    for owner, label, path, flag in targets:
+        if not path.is_dir():
+            problems.append(f"{label}: {path.relative_to(ROOT).as_posix()}/ is not on disk; "
+                            "restore it first")
+        elif not owner.get("extras"):
+            problems.append(f"{label}: no extras recorded; `sync {flag} --extra dev --extra "
+                            "notebooks --extra plotly` builds and records them")
+        else:
+            uv_sync(path, owner["extras"])
+    if problems:
+        say("Not synced:\n" + "\n".join(f"  - {p}" for p in problems))
+        return 1
+    return 0
+
+
+def sync_one(state, owner, label, path, extra, flag):
+    """Sync one analysis venv; `owner` is the member holding its extras -- the document,
+    for a nested analysis (as add-analysis records them), the member itself for a
+    workspace analysis."""
+    extras = list(dict.fromkeys([*(owner.get("extras") or []), *(extra or [])]))
     if not extras:
-        sys.exit(f"{WORKSPACE_FILE.as_posix()} records no extras for {doc_name(doc)}. Pass them: "
-                 "--extra dev --extra notebooks --extra plotly")
-    if extras != doc.get("extras"):
-        doc["extras"] = extras
+        sys.exit(f"{WORKSPACE_FILE.as_posix()} records no extras for {label}. Pass them: "
+                 f"sync {flag} --extra dev --extra notebooks --extra plotly")
+    if not path.is_dir():
+        sys.exit(f"{path.relative_to(ROOT).as_posix()}/ is not on disk: restore it first "
+                 "(/project-workspace:add-analysis).")
+    if extras != owner.get("extras"):
+        owner["extras"] = extras
         write_state(state)
-    cmd = ["uv", "sync"]
-    for extra in extras:
-        cmd += ["--extra", extra]
-    run(cmd, cwd=Path(info["analysis_path"]))
+    uv_sync(path, extras)
     return 0
 
 
@@ -1599,15 +1916,19 @@ def cmd_restore(args):
         if target.exists() and any(target.iterdir()):
             problems.append(f"{directory}/ exists and is not a checkout; move it aside")
             continue
-        host = next((d for d in documents(state)
-                     if directory.startswith(d["dir"].strip("/") + "/")), None)
+        host = host_document(state, directory)
         if member.get("kind") == "analysis" and host:
             nested.append((member, host))
             continue
         if not member.get("repo"):
             problems.append(f"{directory}/ records no repo: clone it by hand")
             continue
-        clone(member["repo"], directory)
+        if member.get("kind") == "analysis":
+            # A workspace analysis has no setup-nested.sh to build its venv: cloned and
+            # synced here, with its recorded extras, as add-analysis --workspace restores it.
+            restore_workspace_checkout(member)
+        else:
+            clone(member["repo"], directory)
         restored += 1
     for member, host in nested:
         # After the clones above: layout.toml, which says where the analysis lives and
@@ -1983,7 +2304,7 @@ def migrate_schema_1(legacy, existing, adopted=False):
             document=None, source=None, dir=analysis, owner=None, repo_name=None, public=False,
             backend=legacy.get("backend", "plotly"), python=python, distribution=None,
             author=None))
-        cmd_sync(argparse.Namespace(document=None, extra=None))
+        cmd_sync(argparse.Namespace(document=writing, analysis=None, extra=None))
     else:
         convert_legacy_manifest(doc, legacy, existing, backup)
 
@@ -2070,13 +2391,18 @@ def main(argv=None):
     p.add_argument("--visibility", choices=("private", "public"), default="private")
 
     p = sub.add_parser("add-analysis")
+    p.add_argument("--workspace", action="store_true",
+                   help="a workspace analysis: a member in its own right, nested in no document")
     p.add_argument("--document", help="name or directory (default: see `document`)")
     p.add_argument("--from", dest="source", help="adopt this repo (anything git clone takes)")
-    p.add_argument("--dir", help="inside the document repo (default: [document repo]-analysis)")
-    p.add_argument("--owner")
-    p.add_argument("--repo-name", help="the new repo's name (default: [document repo]-analysis)")
+    p.add_argument("--dir", help="inside the document repo (default: [document repo]-analysis); "
+                        "with --workspace, relative to the root (default: the repo name)")
+    p.add_argument("--owner", help="default: the document repo's owner; with --workspace, "
+                        "the workspace repo's")
+    p.add_argument("--repo-name", help="the new repo's name (default: [document repo]-analysis; "
+                        "with --workspace, required)")
     p.add_argument("--public", action="store_true")
-    p.add_argument("--backend", choices=BACKENDS, default="plotly")
+    p.add_argument("--backend", choices=BACKENDS, help="default: plotly")
     p.add_argument("--python", type=checked_python,
                    help=f"written to the analysis repo's .python-version (offer {ANALYSIS_PYTHON}; "
                         "left out, an existing pin is kept)")
@@ -2088,8 +2414,16 @@ def main(argv=None):
     p.add_argument("--all", action="store_true", help="every document")
 
     p = sub.add_parser("sync")
-    p.add_argument("--document", help="name or directory")
-    p.add_argument("--extra", action="append", help="an extra to add, and record")
+    p.add_argument("--document", help="name or directory: its nested analysis only")
+    p.add_argument("--analysis", help="a workspace analysis's directory: it only")
+    p.add_argument("--extra", action="append", help="an extra to add, and record "
+                   "(alone: for the document `document` picks)")
+
+    for step, verb in (("attach-analysis", "add"), ("detach-analysis", "remove")):
+        p = sub.add_parser(step)
+        p.add_argument("--analysis", required=True, help="the workspace analysis's directory")
+        p.add_argument("--document", required=True,
+                       help=f"the document directory to {verb} in its `documents`")
 
     sub.add_parser("migrate")
 
@@ -2128,6 +2462,7 @@ def main(argv=None):
 
     return {"check": cmd_check, "init": cmd_init, "track": cmd_track,
             "add-document": cmd_add_document, "add-analysis": cmd_add_analysis,
+            "attach-analysis": cmd_attach_analysis, "detach-analysis": cmd_attach_analysis,
             "document": cmd_document, "sync": cmd_sync, "migrate": cmd_migrate,
             "adopt": cmd_adopt, "add-member": cmd_add_member,
             "restore": cmd_restore}[args.step](args)

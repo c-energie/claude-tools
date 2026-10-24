@@ -32,7 +32,10 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
 - **A member is `dir`, `repo`, `kind` (`code` | `document` | `analysis`)** plus kind-specific
   fields: a document's `name` and `extras` (its nested analysis venv's, as `sync` passes them);
   an analysis member's `documents`, the document dirs it feeds, relative to the root (`[]` is
-  no-document mode, #41). A nested analysis is recorded as a member
+  no-document mode, #41). A **workspace analysis** (#41, an analysis member inside no
+  document's dir: `workspace_analyses`) also carries its venv's `extras`, since it has no
+  document to hold them; only `attach-analysis` / `detach-analysis` change its `documents`,
+  and only to name `kind: "document"` members. A nested analysis is recorded as a member
   (`dir: "<doc>/<analysis>"`, `documents: ["<doc>"]`) so the workspace can be restored from
   `members` alone, but **where it lives is still `layout.toml`'s to say** — owned by
   writing-template's `setup-nested.sh`; `describe` reads it from there.
@@ -45,7 +48,8 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
   path, so #34's stop for a load-bearing root `pyproject.toml` holds there too.
 - **`restore` clones only what is missing and never touches a present member**; a nested
   analysis repo is restored through its document's `setup-nested.sh` (add-analysis's
-  restore), never cloned directly.
+  restore), never cloned directly; a workspace analysis is cloned and then synced with its
+  recorded extras (`restore_workspace_checkout`, shared with `add-analysis --workspace`).
 - **The root `.gitignore` block is an allowlist** (`write_document_block`): `/*/`, then
   `!/<dir>/` for `ROOT_OWN_DIRS` and any folder the root already tracks files in, then every
   top-level member. A new folder a workspace owns by convention goes into `ROOT_OWN_DIRS`, or
@@ -82,7 +86,8 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
   `check-plugin.mjs` errors on drift. Only `observer.toml` is this plugin's own.
 - **`CLAUDE.workspace.md` is workspace text, not plugin text.** `init` writes it into the
   workspace, and only the documents table between its `<!-- documents ... -->` markers is ever
-  rewritten after that; keep those markers intact.
+  rewritten after that; keep those markers intact. The Analyses table (#41) lives inside the
+  same markers, so a workspace made before it gains the table without a second block.
 - **The scripts are stdlib-only Python with LF endings**, run through
   `uv run --no-project --python 3.12`, every write routed through `write`/`run` so `--dry-run`
   covers it. Their tests are the check: run both suites (README.md, "Tests") before a bump.

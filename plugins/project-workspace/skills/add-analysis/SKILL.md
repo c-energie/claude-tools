@@ -1,6 +1,6 @@
 ---
 name: add-analysis
-description: Nest an analysis repo (c-energie/analysis-template; notebooks and doc_analysis figure/table tooling) inside one document of a project workspace, with its own venv, and prove a generated figure lands in the document — or restore the analysis repo on a fresh clone. Use when the user asks to add analysis, generated figures or notebooks to a document, or when a document's layout.toml names an analysis directory that is missing.
+description: Nest an analysis repo (c-energie/analysis-template; notebooks and doc_analysis figure/table tooling) inside one document of a project workspace, with its own venv, and prove a generated figure lands in the document — or make a workspace analysis, a member of its own feeding none or several documents, and attach or detach documents later — or restore either on a fresh clone. Use when the user asks to add analysis, generated figures or notebooks to a document, to start analysis before any write-up or one shared by several documents, or when a document's layout.toml or the workspace names an analysis directory that is missing.
 ---
 
 # Add an analysis repo to a document
@@ -17,7 +17,14 @@ done by the document repo's own `setup-nested.sh` (writing-template ships it; th
 adds it if missing, or replaces a copy too old to know `--python` and in-place `--dir`); this skill does
 the interview, the proof and the hand-offs.
 
-Prerequisite: `.claude/workspace.json` listing the document. Otherwise (or with only a
+That is a **nested analysis**, and §1–§5 make one. A **workspace analysis** is the other
+kind: a member of the workspace in its own right, inside no document repo, feeding zero or
+more documents — exploratory work before any write-up, or a method whose figures go into
+several documents. §6 makes one. A document may have its nested analysis *and* be fed by
+any number of workspace analyses.
+
+Prerequisite: `.claude/workspace.json` listing the document (for a workspace analysis, the
+file alone). Otherwise (or with only a
 `workspace.toml`, which every step refuses until it is migrated) →
 `/project-workspace:setup-project-workspace`, then `/project-workspace:add-document`.
 
@@ -28,7 +35,12 @@ uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspac
 Abbreviated `SETUP <step>`; `--dry-run` goes before `<step>`. Never commit or push without
 asking; confirm the one repo to be created (owner, name, visibility) before it is.
 
-## 1. Which document, and which case
+## 1. Which kind, which document, and which case
+
+First ask: **nest it in one document, or make a workspace analysis** (feeds no document
+yet, or several)? An existing repo whose notebooks feed only one document is nested. A
+workspace analysis → §6, skipping the rest of this section and §2–§5. Also §6: the workspace
+lists an analysis member at the top level whose directory is missing (a fresh clone).
 
 `SETUP document` prints the document this session acts on as JSON — the one the session is
 inside, else the only one; with several, it lists them: ask, then pass `--document <name>`
@@ -167,6 +179,54 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
   `CLAUDE.md`.
 - Delete `.setup/<document dir>/executed/`.
 - Offer **`/project-workspace:setup-doc-publish`** (corpus, Notion wiki, Quarto site).
+
+## 6. A workspace analysis
+
+A member of its own: `{dir, repo, kind: "analysis", documents: [...], extras: [...]}` in
+`.claude/workspace.json`, `documents` the dirs of the documents it feeds (`[]` at first) and
+`extras` its venv's. No `layout.toml` and no `setup-nested.sh` are involved, and `SETUP check`
+(without `--analysis`) is enough.
+
+1. **Interview.** Repo name — **required**, there is no default; directory (default the
+   repo name, at the workspace top level beside the documents; `--dir analyses/<n>` or any
+   relative path otherwise); owner (default the workspace repo's owner, else the gh login);
+   visibility (default private); backend, distribution name, author and Python version as
+   §2's questions 3–5. Read back a summary, get an explicit yes, then show the plan:
+   `SETUP --dry-run add-analysis --workspace --repo-name <n> ...`, and **confirm the repo to
+   be created** (owner, name, visibility) from it.
+2. **Create it:**
+   ```bash
+   SETUP add-analysis --workspace --repo-name <n> --backend plotly --python 3.12 \
+         --distribution <dist> --author "<author>" [--dir <d>] [--owner <o>] [--public]
+   ```
+   It creates the repo from analysis-template, clones it to `<d>/`, writes
+   `.python-version` (`--python`, else 3.12 unless the checkout already pins one), runs its
+   `init.py` with no document (`--doc-repo=` empty, so it asks for none), runs `uv sync` with
+   `dev`, `notebooks` and the backend, and records the member with `documents: []` — last,
+   so a run that stopped part-way is finished by re-running the same command. In a tracked
+   workspace the root `.gitignore` names it, and `CLAUDE.md` gains an **Analyses** table.
+3. **Feed documents**, now or later — no files move, only `documents` changes:
+   ```bash
+   SETUP attach-analysis --analysis <d> --document <document dir>   # a second run is a no-op
+   SETUP detach-analysis --analysis <d> --document <document dir>
+   ```
+   Only a `kind: "document"` member can be attached; anything else is refused, naming the
+   documents there are. A nested analysis is not attached anywhere: it feeds its own document.
+4. **Restore** on a fresh clone of the root: `SETUP add-analysis --workspace --repo-name <n>`
+   (or `--dir <d>`) with no other flag clones it back from its recorded repo and syncs it
+   with its recorded extras; `SETUP restore` does the same for every missing member.
+5. **Proof, for now:** the plotly check and the tests from §4 run as there, from `<d>/`.
+   Figures do not: until c-energie/analysis-template#20 gives `doc_analysis` a no-document
+   mode (and reads `documents`), `document_repo()` raises in a workspace analysis, so
+   `save_fig` has nowhere to put a figure. Say so rather than calling it a failure; ignore
+   `init.py`'s note about `DOC_REPO`.
+6. **Commits**, asking before each: in the **analysis repo**, `init.py`'s changes,
+   `.python-version` and `uv.lock`; at a tracked root, `.claude/workspace.json`, `CLAUDE.md`
+   and `.gitignore`.
+
+`SETUP sync` with no flag syncs every analysis venv, nested and workspace, each with its own
+recorded extras; `SETUP sync --analysis <d> --extra <x>` adds one extra to a workspace
+analysis and records it on its member.
 
 Not this skill: a new document → `/project-workspace:add-document`; existing notebooks →
 `/project-workspace:adapt-existing-analysis`; an old workspace with the analysis repo beside

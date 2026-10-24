@@ -172,9 +172,12 @@ SETUP restore
 
 It clones every member missing on disk — parents first — and leaves every one present
 untouched. An analysis repo nested in a document is restored by that document's own
-`setup-nested.sh` (as add-analysis restores it, venv included), never cloned here. A member
-with no `repo`, or a non-checkout folder in its place, is listed as not restored (exit 1).
-Then prove each analysis repo as add-analysis §4 does.
+`setup-nested.sh` (as add-analysis restores it, venv included), never cloned here. A
+workspace analysis (one in no document) is cloned and its venv synced with the extras its
+member records; with none recorded, its venv is left for `SETUP sync --analysis <dir>
+--extra ...`. A member with no `repo`, or a non-checkout folder in its place, is listed as
+not restored (exit 1). Then prove each analysis repo as add-analysis §4 (§6 for a workspace
+analysis) does.
 
 ## Converting workspace.toml
 

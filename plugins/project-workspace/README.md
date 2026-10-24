@@ -10,7 +10,8 @@ and a figure pipeline from its notebooks into that document:
 my-phd/                     .claude/workspace.json + CLAUDE.md; optionally a git repo
 |-- thesis/                 document repo
 |   `-- thesis-analysis/    its nested analysis repo (layout.toml), with .venv/
-`-- paper/                  another document, writing only
+|-- paper/                  another document, writing only
+`-- validation/             a workspace analysis: in no document, feeding thesis and paper
 ```
 
 Install it yourself from the `c-energie` catalog — `/plugin marketplace add c-energie/claude-tools`,
@@ -23,7 +24,7 @@ so a collaborator who clones just one document repo gets it too.
 | --- | --- |
 | `setup-project-workspace` | Make a folder a project workspace (`.claude/workspace.json`, `CLAUDE.md`, optionally its own git repo with an allowlist `.gitignore`); adopt a folder of clones with no manifest; add a code repo as a member; restore every member on a fresh clone; convert a `workspace.toml` into `workspace.json` — schema 2, or the schema-1 workspace made from the retired `project-workspace-template` |
 | `add-document` | Add a document: new from writing-template, an adopted Overleaf project, or an import (LaTeX, Word, Markdown); prove it builds |
-| `add-analysis` | Nest an analysis repo in one document through its `setup-nested.sh` — create, adopt or restore — and prove a figure lands |
+| `add-analysis` | Nest an analysis repo in one document through its `setup-nested.sh` — create, adopt or restore — and prove a figure lands; or make (or restore) a workspace analysis, feeding none or several documents, and attach or detach them |
 | `adapt-existing-document` | Bring an existing document into the `Sections/` / `\graphicspath` / label conventions, one section at a time |
 | `adapt-existing-analysis` | Copy an existing analysis project's notebooks into a document's analysis repo — the source stays untouched — and retrofit each with the `save_fig`/`save_table` setup |
 | `setup-doc-publish` | Optional, per document: `doc-publish` for a corpus, Notion wiki or Quarto site |
@@ -47,8 +48,9 @@ plugins/project-workspace/
     setup-project-workspace/
       SKILL.md
       setup_workspace.py           the step script every skill shares: check, init, track,
-                                   add-document, add-analysis, document, sync, migrate,
-                                   adopt, add-member, restore
+                                   add-document, add-analysis, attach-analysis,
+                                   detach-analysis, document, sync, migrate, adopt,
+                                   add-member, restore
       test_setup_workspace.py
       fixtures/                    workspace.toml files the conversion is tested against
       CLAUDE.workspace.md          the workspace CLAUDE.md init writes
@@ -89,10 +91,16 @@ plugins. This plugin writes only `schema`, `name`, `repo` and `members`:
   "members": [
     { "dir": "thesis", "repo": "me/thesis", "kind": "document", "name": "thesis", "extras": ["dev", "notebooks", "plotly"] },
     { "dir": "thesis/thesis-analysis", "repo": "me/thesis-analysis", "kind": "analysis", "documents": ["thesis"] },
-    { "dir": "paper", "repo": "me/paper", "kind": "document", "name": "paper" }
+    { "dir": "paper", "repo": "me/paper", "kind": "document", "name": "paper" },
+    { "dir": "validation", "repo": "me/validation", "kind": "analysis", "documents": ["thesis", "paper"], "extras": ["dev", "notebooks", "plotly"] }
   ]
 }
 ```
+
+`validation` is a **workspace analysis** (#41): an analysis repo inside no document, feeding
+the documents in its `documents` (`[]` for none yet), its venv's `extras` on its own member.
+`add-analysis --workspace` makes or restores one; `attach-analysis` / `detach-analysis`
+change what it feeds.
 
 A workspace still described by a schema-2 `workspace.toml` is converted by
 `/project-workspace:setup-project-workspace` (`migrate`, dry run first); until then every other

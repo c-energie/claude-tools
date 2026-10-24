@@ -18,6 +18,11 @@ that write that document's figures and tables. The document repo's `layout.toml`
 nested directory; the analysis repo finds its document from it, so there is no `DOC_REPO`
 to set.
 
+A **workspace analysis** is the other kind of analysis repo: a member of the workspace in
+its own right, in no document repo, with its own `.venv`, feeding the documents its member
+lists in `documents` — none yet, or several. The managed block above lists them under
+"Analyses". A document can have its nested analysis and be fed by workspace analyses too.
+
 **Every document and every analysis repo is a repo in its own right.** Commit inside the
 repo the change belongs to, never from here. A document repo gitignores its analysis repo,
 so `git status` in the document repo never shows analysis changes. Each has its own
@@ -50,8 +55,8 @@ uv run check-figure-parity              # after regenerating figures; non-zero o
 uv run check-figure-parity --snapshot   # record a new baseline
 ```
 
-The plugin's `sync` step passes the extras `.claude/workspace.json` records for that document, so
-nothing gets uninstalled by mistake.
+The plugin's `sync` step passes the extras `.claude/workspace.json` records for each analysis
+repo, so nothing gets uninstalled by mistake; with no flag, it syncs every one of them.
 
 The LaTeX is compiled on Overleaf. `make` in a document repo is optional and local only.
 Never commit a built PDF.
@@ -87,7 +92,7 @@ session is inside, else the only one, else the one you name.
 |---|---|
 | `/project-workspace:setup-project-workspace` | Make a folder a project workspace, optionally a git repo; migrate an old single-document workspace. |
 | `/project-workspace:add-document` | Add a document: a new one from writing-template, an Overleaf project, or an import. |
-| `/project-workspace:add-analysis` | Nest an analysis repo in a document, or restore one on a fresh clone. |
+| `/project-workspace:add-analysis` | Nest an analysis repo in a document, or make a workspace analysis and attach documents to it; restore either on a fresh clone. |
 | `/project-workspace:adapt-existing-document` | Bring an existing document into the `Sections/` / `\graphicspath` / label conventions, one section at a time. |
 | `/project-workspace:adapt-existing-analysis` | Copy an existing analysis project's notebooks into a document's analysis repo and retrofit them. |
 | `/project-workspace:setup-doc-publish` | Optional, per document: corpus, Notion wiki, Quarto site. |
