@@ -169,14 +169,29 @@ test('--fix never writes workspace.json', { skip: !posix }, () => {
 
 test('a legacy context repo is still checked as before', { skip: !posix }, () => {
   const root = scratch();
-  put(root, 'context.json', JSON.stringify({ contextRepo: 'acme/context', template: { version: '1' }, include: ['nope'] }));
+  put(root, 'context.json', JSON.stringify({ contextRepo: 'acme/context', template: { version: '1' } }));
   put(root, 'memory.md', '# Memory\n');
   const out = doctor(root);
   assert.equal(out.mode, 'context-repo');
   assert.equal(out.workspace, null);
-  const c = checks(out);
-  assert.ok(c.includes('err:include'), c);
-  assert.ok(c.includes('warn:marker'), c);
+  assert.ok(checks(out).includes('warn:marker'), checks(out));
+});
+
+// #54: the checks for the cross-project layer are gone, not merely skipped in a workspace. A
+// legacy repo still carrying that data is judged on everything else, and gets no finding for it.
+test('a legacy context repo still carrying retired keys gets no finding for them', { skip: !posix }, () => {
+  const root = scratch();
+  put(root, 'context.json', JSON.stringify({
+    contextRepo: 'acme/context', template: { version: '1' },
+    include: ['not a repo'], teaching: { x: {} }, assistants: { editor: {} }, supervisors: { editor: {} },
+  }));
+  put(root, 'memory.md', '# Memory\n');
+  put(root, 'handoff/2026-01-01-old.md', '---\nkind: issue\n---\n');
+  const out = doctor(root);
+  assert.equal(out.mode, 'context-repo');
+  assert.deepEqual(checks(out).filter((c) => /include|teaching|handoff/.test(c)), []);
+  assert.equal(out.includes, undefined, 'no includes report in --json');
+  assert.equal(run(DOCTOR, [root, '--include']).status, 2, '--include is an unknown option now');
 });
 
 test('a context repo is a root of its own, even below a workspace', { skip: !posix }, () => {
@@ -203,7 +218,6 @@ test('status in a workspace counts docs/threads and .context/pending', { skip: !
   assert.equal(out.queues.pending.count, 1);
   assert.equal(out.queues.threads.total, 1);
   assert.equal(out.queues.threads.index.behind, false);
-  assert.equal(out.queues.handoff.applicable, false);
   assert.match(out.actions.join('\n'), /drain the \.context\/pending\/ queue/);
 });
 
@@ -214,7 +228,7 @@ test('status in a workspace: retired queues are not applicable, and the all-clea
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /WHAT TO RUN: nothing — every queue is clear\./);
   assert.doesNotMatch(r.stdout, /cross-project layer/);
-  assert.equal(status(root, '--role', 'software-dev').status, 2);
+  assert.equal(status(root, '--role', 'software-dev').status, 2, '--role is an unknown option');
 });
 
 test('status on a legacy context repo is unchanged', { skip: !posix }, () => {
@@ -226,4 +240,22 @@ test('status on a legacy context repo is unchanged', { skip: !posix }, () => {
   assert.equal(out.kind, 'project context repo');
   assert.equal(out.queues.reconcile.carrying, 1);
   assert.equal(out.queues.pending.count, 1);
+});
+
+// #54: with the cross-project queues gone, a legacy repo that still declares supervisors is an
+// ordinary project repo, counts only its own queues, and can be told every queue is clear.
+test('status on a legacy repo still declaring retired keys: only the surviving queues', { skip: !posix }, () => {
+  const root = scratch();
+  put(root, 'context.json', JSON.stringify({
+    contextRepo: 'acme/context', include: ['acme/other'], supervisors: { editor: {} }, assistants: { editor: {} },
+  }));
+  put(root, 'handoff/2026-01-01-old.md', '---\nproject: acme/other\n---\n');
+  const r = status(root);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.kind, 'project context repo');
+  assert.deepEqual(Object.keys(out.queues), ['threads', 'reconcile', 'pending', 'memory']);
+  assert.equal(out.declared, undefined);
+  assert.deepEqual(out.actions, []);
+  assert.match(run(STATUS, [root, '--no-memory', '--today', '2026-10-24']).stdout, /every queue is clear/);
 });

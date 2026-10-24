@@ -168,9 +168,8 @@ re-cloned at the new path and the stale directory is left to be deleted by hand.
 *configured* (loads), *unconfigured* (says so loudly and tells the model to hunt for a marker), and
 *opted out* — `none`/`off`/`false`/`no`/`-`/`disabled`, which exits silently. Conflating opt-out with
 unconfigured, or falling back to some other project's repo, is the exact failure the system exists to
-prevent. **A deliberate cross-project layer reading every repo under this root is a different
-thing from an accidental wrong-context load** — but it has to be an explicit mode, never something
-a session inherits from its working directory.
+prevent. There is no longer a deliberate cross-project mode either: the `include` list that loaded
+other repos beside this one was retired with ADR 0002, so a session loads exactly one context.
 
 The same rule, for the same reason, governs `state.diagrams.repo`: no default, because a default
 would let one org's project write into another org's diagram store.
@@ -186,7 +185,7 @@ authoritative and must be read before editing a plugin:
 | --- | --- |
 | `claude-tools/CLAUDE.md` | release discipline (check, bump, the deliberately copied scripts) and the skill-authoring rules that fail silently |
 | `claude-tools/plugins/*/CLAUDE.md` | one per plugin: its commands, and its own invariants — the Notion ID and schema traps, Slack's blanket block, the diagram index |
-| `claude-tools/plugins/context-kit-core/README.md` | the `include` contract and the payload the SessionStart hook builds |
+| `claude-tools/plugins/context-kit-core/README.md` | the payload the SessionStart hook builds, and what ADR 0002 retired |
 
 Resolve the checkout with `bash scripts/plugin-repo.sh --writable`; it may sit at
 `~/c-energie/claude-tools` or at the older `~/.context/c-energie/context-kit`, and whichever is

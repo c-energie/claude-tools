@@ -1,18 +1,17 @@
 ---
 name: context-status
-description: Report what is outstanding across the context ladder — lessons waiting for a sweep, sweeps waiting to be distilled, handoff items nobody has drained, threads due for curation, thread outcomes never logged to a decision log or tracker, a pending queue, and native memory awaiting triage — each with the skill that clears it. Triggers like "what is outstanding", "what do I need to run", "what is queued up", "is anything waiting", "status of my context", "catch me up on the context system", "what has built up", "did those decisions ever get logged".
+description: Report what is outstanding in a workspace or context repo — threads due for curation, thread outcomes never logged to a decision log or tracker, a pending queue, and native memory awaiting triage — each with the skill that clears it. Triggers like "what is outstanding", "what do I need to run", "what is queued up", "is anything waiting", "status of my context", "catch me up on the context system", "what has built up", "did those decisions ever get logged".
 ---
 
 # What is outstanding
 
-Counts every queue in the context ladder and names the skill that drains each one. It is the
-standing answer to "what has built up while I was working" — and it is a **read**: it writes
-nothing, queues nothing and pushes nothing.
+Counts every queue in a workspace or a context repo and names the skill that drains each one. It
+is the standing answer to "what has built up while I was working" — and it is a **read**: it
+writes nothing, queues nothing and pushes nothing.
 
-The queues are real and they fill silently. Lessons accumulate in `LESSONS.md` with nothing
-announcing that a sweep is due; handoff items sit addressed to a repo nobody has opened;
-`memory.md`'s last-review date recedes. Every one of them is visible only if something goes and
-counts it.
+The queues are real and they fill silently. Threads accumulate with nothing announcing that a
+curation is due; a decision reached in a thread never reaches the decision log; `memory.md`'s
+last-review date recedes. Every one of them is visible only if something goes and counts it.
 
 ## 1. Find the repo
 
@@ -21,11 +20,9 @@ ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
 ```
 
 The nearest workspace, else (until the last context repo is migrated) the context repo. In a
-workspace the same queues are counted from their new homes — thread outcomes and curation in
+workspace the queues are counted from their new homes — thread outcomes and curation in
 `docs/threads/` against `docs/memory.md`, the pending queue in `.context/pending/`, native memory
-as before — and the retired ones (lessons, sweeps, doctrine, handoff) are simply not shown:
-nothing in a workspace fills them, so there is no layer above it to check either. `--role` is
-refused there for the same reason.
+as before. A context repo is counted at `threads/`, `memory.md` and `pending/`.
 
 `--no-pull` deliberately: a status check should be instant and change nothing, and the
 session-start hook already pulled this repo when the session opened. If the numbers matter
@@ -40,74 +37,48 @@ If the resolver exits non-zero the problem is the link rather than the queues �
 node "${CLAUDE_PLUGIN_ROOT}/scripts/context-status.mjs" "$ROOT"
 ```
 
-Useful options: `--role [name]` to look at one role, `--json` for the structured form,
-`--today YYYY-MM-DD` to pin the date, `--no-memory` to skip the native-memory scan (the slow
-part, and the only one that reads outside the repo).
+Useful options: `--json` for the structured form, `--today YYYY-MM-DD` to pin the date,
+`--no-memory` to skip the native-memory scan (the slow part, and the only one that reads outside
+the repo).
 
-The script composes `assistants.mjs` and `memory-triage.mjs` rather than re-counting what they
-already count, so its lesson figures are the **same** figures a sweep will act on. Anything it
-reports as absent — a clone that is not on disk, a stamp that was never written — is reported
-as absent rather than as zero.
+The script composes `memory-triage.mjs` rather than re-counting what it already counts, so its
+native-memory figure is the **same** figure a triage will act on. Anything it reports as absent —
+an index that is not there, a review stamp that was never written — is reported as absent rather
+than as zero.
 
 ## 3. Report it, leading with what to run
 
 The script ends with a `WHAT TO RUN` block. **Lead with that**, then fill in only the queues
-that have something in them. A recital of six sections where five are empty buries the one that
-is not.
+that have something in them. A recital of every section where most are empty buries the one
+that is not.
 
 Then add the judgement the script cannot:
 
-- **Say which queue is the real one.** Three ready sweeps and one stale handoff item are not
-  equally urgent. A sweep that is one lesson over its threshold can wait; a handoff item that
-  has been sitting for three weeks is a decision that has not reached the project it governs.
-- **A threshold is a floor, not a schedule.** `ready` means there is enough evidence to distil,
-  not that it must happen today. Distilling two lessons into doctrine manufactures confidence
-  the evidence does not support — which is exactly why the threshold exists.
+- **Say which queue is the real one.** A curation that is one thread over the line can wait; a
+  thread that reached a decision three weeks ago and never logged it is a decision that has not
+  reached the people it governs.
 - **"Never logged" is a question, not an accusation.** `THREAD OUTCOMES NEVER LOGGED` counts
   threads that reached a decision or named an action and carry no `notion_ids` / `issue_ids`
   link. It cannot tell whether the outcome was logged and simply never linked back. So offer
   the two ways to clear each one — log it now, or record `notion_ids: []` because there was
   nothing to log — and never assert that the work was skipped.
-- **An absent clone contributed nothing.** If a source repo has no clone, its lessons were not
-  counted, and the total is a floor rather than a figure. Say so; never let silence read as
-  "that project had nothing to add".
-- **`no threshold yet` means no sweep has ever run for that role.** The first sweep sets the
-  bar. That is a starting state, not a misconfiguration.
 
 ## 4. Offer, then wait
 
-Every skill in the `WHAT TO RUN` block writes outside the session, and every one of them is
-`disable-model-invocation: true` for that reason. **Offer to run one; do not start.** Naming
-what you would do and waiting is the whole point of the gate — a status check that quietly
-triggered a sweep would have converted a read into six writes.
+Every skill in the `WHAT TO RUN` block writes outside the session. **Offer to run one; do not
+start.** Naming what you would do and waiting is the whole point — a status check that quietly
+triggered a curation would have converted a read into a commit.
 
-Draining a handoff item is the one that cannot be done from here at all: it has to happen in
-the target project's own session, where the write is legitimate and a human watches it land.
+Every queue it reports lives in the root it was given, so an empty `WHAT TO RUN` is a real
+all-clear.
 
-## 5. From a project context repo, say what you cannot see
+## 5. If a queue looks wrong rather than full
 
-(Not in a workspace: the queues this section is about are retired there, so a workspace's
-all-clear is a real one.)
-
-Run in a project's context repo, this reports that repo's threads, slices, pending queue and
-native memory — and it is **blind** to two queues that concern it: whether its lessons have been
-swept, and whether handoff items are addressed to it. Both live in the cross-project layer, and
-nothing in a project's config points upward.
-
-The script says so rather than printing an all-clear it has no standing to give. Repeat that
-when you report it, and offer to run the same check in the cross-project layer. Do **not** go
-hunting the filesystem for a second brain: what a session reads has to be legible from committed
-config, and guessing at a sibling repo is the discovery-by-filesystem this system forbids
-everywhere else.
-
-## 6. If a queue looks wrong rather than full
-
-A count that cannot be explained is usually configuration, not backlog — a role declared in one
-repo under a name another repo does not use, an `include` entry the hook silently dropped, an
-index that was never rebuilt. That is `context-doctor`'s job, and it is the right next step when
-the numbers themselves look suspect.
+A count that cannot be explained is usually configuration, not backlog — an index that was never
+rebuilt, threads in a directory the layout does not expect. That is `context-doctor`'s job, and
+it is the right next step when the numbers themselves look suspect.
 
 **Not this skill:** health-checking the config behind these numbers is `context-doctor`; wiring
 a project to its context repo is `context-setup`; re-pulling mid-session is `refresh-context`.
-Actually draining the queues is `supervisor-sweep`, `supervisor-distil`, `curate-context` and
-`memory-triage`; adopting a role is `assistant`.
+Actually draining the queues is `curate-context`, `memory-triage`, and (where the project uses
+Notion) `process-pending`, `log-decision` and `add-action`.

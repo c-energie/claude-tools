@@ -111,17 +111,17 @@ function topicOf(text, filename) {
 // Lines that do not parse are counted and reported rather than dropped in silence: losing a
 // hand-written gist without saying so is exactly the failure this is fixing.
 //
-// The owner segment is OPTIONAL and must be matched explicitly, because this file has to
-// re-parse its own output. A thread tagged `assistant:` or `supervisor:` emits SIX fields, not
-// five; without the optional group the parser read the owner as the status and carried
-// "supervisor: editor" forward as a status — a line that still matched, so carriedUnparsed
-// stayed 0 and nothing was reported. Latent until the first owner-bearing line was generated
-// (2026-08-23): the three that existed had been hand-written into an index, five fields wide.
+// `audience:` is an OPTIONAL segment and must be matched explicitly, because this file has to
+// re-parse its own output: without the optional group the parser read it as the status and
+// carried "audience: team" forward as one — a line that still matched, so carriedUnparsed stayed
+// 0 and nothing was reported. It is prefixed with a literal tag in the rendered line precisely so
+// this pattern can tell it apart from the status that follows — an untagged optional field
+// between two free-text ones cannot be located unambiguously at all.
 //
-// `audience:` is the second such optional segment and is matched the same way, for the same
-// reason. Both are prefixed with a literal tag in the rendered line precisely so this pattern
-// can tell them apart from the status that follows — an untagged optional field between two
-// free-text ones cannot be located unambiguously at all.
+// The `assistant:` / `supervisor:` owner segment is matched the same way but no longer emitted.
+// ADR 0002 retired assistants and supervisors, yet indexes written before then still carry the
+// segment, and a rebuild that could not parse those lines would drop their hand-written gists.
+// The next --write drops the segment and keeps the gist.
 const INDEX_LINE =
   /^-\s+(\S+)\s+·\s+(.*?)\s+·\s+(?:(?:assistant|supervisor):\s*[^·]+?\s+·\s+)?(?:audience:\s*[^·]+?\s+·\s+)?([^·]*?)\s+·\s+(.*?)\s+·\s+`([^`]+)`\s*$/;
 // Belt and braces for the same failure: a status is never a tag, so if one ever appears there
@@ -173,14 +173,6 @@ function scan(dir, archived) {
       return {
         date: /^(\d{4}-\d{2}-\d{2})/.exec(f)?.[1] ?? '—',
         topic: topicOf(text, f),
-        // An assistant's or supervisor's thread is otherwise indistinguishable from an ordinary
-        // one here — tagging rather than nesting was chosen precisely so these stay in the same
-        // flat directory. Surfacing the owner is what keeps the index navigable once a role
-        // starts writing daily, and what lets a reader see which lines belong to a role rather
-        // than to the project itself.
-        owner: fmScalar(fm, 'assistant') || fmScalar(fm, 'supervisor') || null,
-        kind: fmScalar(fm, 'assistant') ? 'assistant'
-          : (fmScalar(fm, 'supervisor') ? 'supervisor' : null),
         audience: audience || null,
         status: meta.status ?? (archived ? 'archived' : 'TODO: active/settled?'),
         gist: meta.gist ?? 'TODO: one-line gist',
@@ -202,14 +194,13 @@ let carriedCount = 0;
 const active = scan(THREAD_DIR, false);
 const archived = scan(ARCHIVE_DIR, true);
 const line = (t) => `- ${t.date} · ${t.topic}`
-  + `${t.owner ? ` · ${t.kind}: ${t.owner}` : ''}`
   + `${t.audience ? ` · audience: ${t.audience}` : ''}`
   + ` · ${t.status} · ${t.gist} · \`${t.path}\``;
 
 const out = [
   '# Thread index',
   '',
-  `_Generated ${new Date().toISOString().slice(0, 10)} — one line per thread. Format: date · topic · [assistant/supervisor: owner] · [audience: working|team|external] · status · gist · path. The two bracketed segments appear only when the thread declares them._`,
+  `_Generated ${new Date().toISOString().slice(0, 10)} — one line per thread. Format: date · topic · [audience: working|team|external] · status · gist · path. The bracketed segment appears only when the thread declares it._`,
   '',
   `## Active (${active.length})`,
   ...(active.length ? active.map(line) : ['- _none_']),

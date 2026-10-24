@@ -4,7 +4,6 @@
 //
 //   node context-doctor.mjs                             # the nearest workspace above the cwd
 //   node context-doctor.mjs <root>                      # report on that workspace or context checkout
-//   node context-doctor.mjs <root> --include            # ...and report (never fix) on its includes
 //   node context-doctor.mjs <root> --json               # machine-readable findings
 //   node context-doctor.mjs <root> --fix                # apply the derivable JSON fixes, in place
 //   node context-doctor.mjs <root> --today 2026-08-18   # pin dates so output can be compared
@@ -14,9 +13,6 @@
 // a value it would have to guess. That envelope is the whole safety property — a context repo
 // is hand-written prose that exists in exactly one copy, and a diagnostic has no business
 // rewriting it. Findings outside the envelope are reported with the fix spelled out instead.
-//
-// Includes are READ-ONLY here, as everywhere: --include reports on them and --fix skips them,
-// because writing into an included repo is the one thing the cross-project layer forbids.
 //
 // TWO KINDS OF ROOT (ADR 0002), told apart by workspace.mjs's rootKind() — a directory holding
 // context.json and no .claude/workspace.json is a legacy context repo and is checked exactly as
@@ -31,8 +27,8 @@
 //     touches the network (`gh repo view`, capped at 15s), it runs only when one of those two
 //     directories exists, and a lookup that fails is a note saying it was NOT verified — never
 //     a silent pass.
-// The keys a workspace retired — include, template, assistants/roles/supervisors, teaching,
-// handoff/, the generated marker, PROJECT_CONTEXT_REPO — are not checked there at all. --fix
+// The keys a workspace retired — template, the generated marker, PROJECT_CONTEXT_REPO — are
+// not checked there at all. --fix
 // never writes workspace.json: every key in it has a writing owner (workspace.mjs's header),
 // and the doctor is not one of them, so a workspace's only derivable fixes are the
 // .claude/settings.json ones it shares with a context repo.
@@ -44,20 +40,13 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from '
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join, resolve, basename } from 'node:path';
-// Imported rather than restated: the audience vocabulary is shared with a thread's front-matter,
-// and a copy here would disagree with the roster the first time one of them gained a value.
-import { AUDIENCES } from './teaching-workspace.mjs';
 import { rootKind, SCHEMA, WORKSPACE_FILE } from './workspace.mjs';
 
-const OPTIONS = ['json', 'fix', 'include', 'today'];
+const OPTIONS = ['json', 'fix', 'today'];
 // In step with hooks/load-context.sh, scripts/context-repo.sh and scripts/link-context.mjs.
 const OPTOUT = ['none', 'off', 'false', 'no', '-', 'disabled'];
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const PENDING_STALE_DAYS = 30;
-// Shorter than the pending queue's, because a handoff item is addressed to a PERSON in another
-// project rather than to a tool: it is only drained when somebody opens that project's session,
-// so it goes stale by nobody doing anything rather than by a run failing.
-const HANDOFF_STALE_DAYS = 14;
 const MEMORY_STALE_DAYS = 90;
 // A member's kind, as ADR 0002 lists them. project-workspace owns what each kind carries; this
 // only spots a value outside the list, which none of its steps would recognise.
@@ -284,89 +273,7 @@ if (ctx) {
     add('note', 'template', `stamped ${stamp} — no template clone at ${tmplDir}, so it could not be compared`);
   }
 
-  // This filter MIRRORS the hook's include parser (load-context.sh). An entry the hook drops
-  // loads nothing and says nothing, so a typo here costs a whole project's context with no
-  // symptom at all. Keep the two in step.
-  if (ctx.include !== undefined) {
-    if (!Array.isArray(ctx.include)) {
-      add('err', 'include', '"include" is not an array — the hook ignores it entirely');
-    } else {
-      const seen = new Set();
-      for (const raw of ctx.include) {
-        if (typeof raw !== 'string') {
-          add('err', 'include', `include entry ${JSON.stringify(raw)} is not a string — the hook drops it silently`);
-          continue;
-        }
-        const v = raw.trim();
-        if (OPTOUT.includes(v.toLowerCase())) {
-          add('note', 'include', `include entry "${v}" is an opt-out sentinel — deliberately skipped`);
-        } else if (!REPO_RE.test(v)) {
-          add('err', 'include', `include entry "${v}" is not an owner/repo name — the hook drops it silently, so that project's context never loads`);
-        } else if (v === ctx.contextRepo) {
-          add('warn', 'include', `include entry "${v}" is this repo itself — the hook drops it`);
-        } else if (seen.has(v)) {
-          add('warn', 'include', `include entry "${v}" is listed twice`);
-        } else {
-          seen.add(v);
-        }
-      }
-    }
-  }
-
   checkConnections(ctx.connections);
-
-  // -------------------------------------------------------------- teaching workspaces
-
-  // Three ways a `teaching` declaration goes stale without announcing itself. All three are
-  // REPORTS and none carries a `fix`: this tool only ever applies a fix whose correct value it
-  // can DERIVE, and none of these has one. A slug with no directory could mean the workspace was
-  // deleted or that the slug was mistyped, and the two repairs are opposites — creating an empty
-  // workspace, or correcting a key. Guessing would be worse than saying nothing.
-  //
-  // Reads the declaration only. It does not depend on the scaffolder having written it, and must
-  // keep working against a block somebody typed by hand.
-  if (ctx.teaching !== undefined && ctx.teaching !== null) {
-    if (typeof ctx.teaching !== 'object' || Array.isArray(ctx.teaching)) {
-      add('err', 'teaching', '"teaching" is present but is not an object — no workspace in it is declared, and teach-workspace reports none');
-    } else {
-      // `_`-prefixed keys are comments, the convention this file already uses for
-      // `_comment_include`. Skipped rather than reported, so the reasoning can live beside the
-      // block it explains.
-      for (const [slug, entry] of Object.entries(ctx.teaching).filter(([k]) => !k.startsWith('_'))) {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-          add('err', 'teaching', `"teaching.${slug}" is not an object — it declares neither a mission nor an audience`);
-          continue;
-        }
-        // The parent is fixed at `teaching/` deliberately: it is what keeps teach's `lessons/`
-        // from colliding with assistants/[role]/LESSONS.md, two unrelated senses of one word.
-        if (!existsSync(join(ROOT, 'teaching', slug))) {
-          add('warn', 'teaching',
-            `"teaching.${slug}" is declared but there is no teaching/${slug}/ directory. Either the `
-            + 'workspace was deleted and the declaration outlived it, or the slug is mistyped — '
-            + 'the fixes are opposite, so this is not repaired for you.');
-        }
-        if (typeof entry.mission !== 'string' || !entry.mission) {
-          add('warn', 'teaching', `"teaching.${slug}" declares no mission path`);
-        } else if (!existsSync(join(ROOT, entry.mission))) {
-          add('warn', 'teaching',
-            `"teaching.${slug}" declares mission "${entry.mission}", which does not resolve. `
-            + 'Expected while a workspace is prepared but not yet started — teach writes MISSION.md '
-            + 'at the first session — and a real defect at any point after that.');
-        }
-        // ABSENT IS ABSENT, never a default, and never a finding. A workspace that declares no
-        // audience has not been classified; reporting that as a defect would push people to
-        // supply a value to silence the check, which is exactly how a repo ends up full of
-        // audiences nobody chose. Only a value OUTSIDE the vocabulary is wrong.
-        if (entry.audience !== undefined && !AUDIENCES.includes(entry.audience)) {
-          add('warn', 'teaching',
-            `"teaching.${slug}" declares audience ${JSON.stringify(entry.audience)}, which is not one of `
-            + `${AUDIENCES.join(' / ')} — the same vocabulary a thread's front-matter uses. It is `
-            + 'rendered as written and never corrected: a typo you can see costs seconds, one this '
-            + 'swallowed would leave the workspace misclassified forever.');
-        }
-      }
-    }
-  }
 
   checkNotionDates(ctx);
 }
@@ -705,59 +612,6 @@ try {
   }
 } catch { /* no pending queue is fine */ }
 
-// The handoff queue is a SILENT BACKLOG: an item sits there until somebody opens the target
-// project's own session, and nothing announces that it has been waiting. Reporting its age here
-// is what turns it into a backlog somebody has seen — the same job this check does for every
-// other drift that never announces itself. Report only: whether an item is still worth draining
-// is a judgement about its content, which nothing here can make.
-//
-// Retired in a workspace (ADR 0002), so not looked for there.
-if (!WS) try {
-  for (const f of readdirSync(join(ROOT, 'handoff')).filter((f) => f.endsWith('.md') && !['README.md', 'INDEX.md'].includes(f))) {
-    const text = readFileSync(join(ROOT, 'handoff', f), 'utf8');
-    const fm = text.match(/^﻿?---\r?\n([\s\S]*?)\r?\n---/);
-    const dated = (fm?.[1].match(/^date:\s*(\d{4}-\d{2}-\d{2})/m) ?? f.match(/^(\d{4}-\d{2}-\d{2})/))?.[1] ?? null;
-    const age = dated
-      ? daysSince(dated)
-      : Math.round((Date.parse(`${today}T00:00:00Z`) - statSync(join(ROOT, 'handoff', f)).mtimeMs) / 86400000);
-    if (age > HANDOFF_STALE_DAYS) {
-      add('warn', 'handoff', `handoff/${f} has been waiting ${age} days — it is addressed to another project and is only drained when somebody opens that project's session. triage-notes reports the backlog every run; context-notion:weekly-review is the cadence for the shared ones.`);
-    }
-    // kind: issue REQUIRES a repo: field. Without it the item names no destination, and a drainer
-    // would have to infer one from the prose — which is the guess this field exists to prevent.
-    const kind = fm?.[1].match(/^kind:\s*(\S+)/m)?.[1] ?? null;
-    if (kind === 'issue' && !/^repo:\s*\S/m.test(fm?.[1] ?? '')) {
-      add('err', 'handoff', `handoff/${f} is kind: issue with no "repo:" field — it names no destination repository, and a drainer must not infer one from the text`);
-    }
-  }
-} catch { /* no handoff/ is fine — most context repos have none */ }
-
-// ---------------------------------------------------------------- includes (report only)
-
-const includeReports = [];
-if (flags.has('include') && Array.isArray(ctx?.include)) {
-  for (const raw of ctx.include) {
-    if (typeof raw !== 'string') continue;
-    const v = raw.trim();
-    if (!REPO_RE.test(v) || OPTOUT.includes(v.toLowerCase())) continue;
-    // Same ~/.context/<owner>/<repo> layout the resolver clones into.
-    const dir = join(homedir(), '.context', ...v.split('/'));
-    if (!existsSync(dir)) {
-      includeReports.push({ repo: v, available: false, note: `no clone at ${dir}` });
-      continue;
-    }
-    let stamp = null;
-    let readable = true;
-    try { stamp = readJson(join(dir, 'context.json')).template?.version ?? null; } catch { readable = false; }
-    includeReports.push({
-      repo: v,
-      available: true,
-      templateVersion: stamp,
-      note: !readable ? 'context.json unreadable' : (stamp ? `template ${stamp}` : 'no template stamp'),
-    });
-  }
-}
-
 // ---------------------------------------------------------------- fix (JSON keys only)
 
 const applied = [];
@@ -809,18 +663,15 @@ if (flags.has('json')) {
   // `workspace` is null for a context repo rather than absent, for the same reason.
   console.log(JSON.stringify({
     root: ROOT, mode: WS ? 'workspace' : 'context-repo', today, findings,
-    workspace: WS ? wsReport : null, includes: includeReports, applied, refused, fixable,
+    workspace: WS ? wsReport : null, applied, refused, fixable,
   }, null, 2));
 } else {
   console.log(`context-doctor — ${ROOT}  (${WS ? 'workspace' : 'context repo'}, ${today})`);
-  if (!findings.length && !includeReports.length) console.log('  ok    nothing to report');
+  if (!findings.length) console.log('  ok    nothing to report');
   const order = { err: 0, warn: 1, note: 2 };
   for (const f of [...findings].sort((a, b) => order[a.level] - order[b.level])) {
     console.log(`  ${f.level.padEnd(5)} [${f.check}] ${f.message}`);
     if (f.fix && !flags.has('fix')) console.log('        fixable: re-run with --fix');
-  }
-  for (const r of includeReports) {
-    console.log(`  note  [include] ${r.repo} — ${r.note} (read-only from here)`);
   }
   if (refused.length) {
     console.log('\n  NOT applied:');

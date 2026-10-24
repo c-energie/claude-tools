@@ -154,29 +154,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/thread-index.mjs" "$PWD" --dir .claude/threa
 **Check `.claude/` is not gitignored** before writing. A `/.claude/*` rule would make the whole
 layer invisible to everyone else, silently.
 
-## 7. Assistant and supervisor threads
-
-A repo with role assistants keeps their threads in this same flat `threads/` — tagged
-`assistant: [role]` (or `supervisor: [role]`), and named `YYYY-MM-DD-asst-[role]-topic.md`.
-They are curated like any other thread, with three differences:
-
-- **A settled assistant thread promotes into `assistants/[role]/memory.md`, not the root
-  `memory.md`.** That role's durable layer is its own; a dev conclusion promoted to the
-  project's top-level memory is then loaded into every session forever, which is exactly what
-  the slice exists to avoid.
-- **Keep the tag when archiving.** `git mv` preserves it; do not strip it in a tidy-up. The tag
-  is what `thread-index.mjs` renders, and what tells a later reader whose thread it was.
-- **`assistants/[role]/memory.md` needs curating too** — it grows exactly as the root one does,
-  and nothing else ever reviews it. Treat it as another durable layer in this pass.
-
-**Never rewrite `assistants/[role]/LESSONS.md`.** Its entries carry content-addressed ids, and a
-supervisor in the cross-project layer records what it has distilled by citing them. Renumber,
-reword or remove an entry and a lesson silently becomes new again — re-distilled as though it
-were fresh evidence — or an already-unread one becomes permanently invisible. The file is
-append-only; corrections are new entries that supersede old ones in their text. Archiving it is
-not a curation option.
-
-## 8. Boundaries
+## 7. Boundaries
 
 - **Never delete** a thread — archive it. **Never** rewrite an active thread's content.
 - Where the project has a structured decision log (its `context.json` declares one), decisions
@@ -189,5 +167,4 @@ the code repo to curate its threads, or in the context repo to curate the projec
 notice the layer you are *not* in going stale, say so rather than reaching into it.
 
 **Not this skill:** writing up the current session is `save-thread`; re-reading the context is
-`refresh-context`; recording a transferable lesson for a supervisor is `assistant-lesson`;
-checking a repo's config and layout for silent drift is `context-doctor`.
+`refresh-context`; checking a repo's config and layout for silent drift is `context-doctor`.

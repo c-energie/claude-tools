@@ -1,13 +1,12 @@
 ---
 name: context-doctor
-description: Health-check a workspace or a context repo for the drift and misconfiguration that never announces itself — a dead plugin id, an include entry the hook silently drops, a stale template stamp, an index missing threads, front-matter the ingester discards, a pending queue nobody drained, a member not cloned, a public workspace repo holding meetings. Reports everything and can fix the config keys whose correct value is derivable. Triggers like "check my context repo", "check my workspace", "context doctor", "is my context set up right", "why is this thread not showing up", "audit the context config", "what is wrong with my context repo".
+description: Health-check a workspace or a context repo for the drift and misconfiguration that never announces itself — a dead plugin id, a stale template stamp, an index missing threads, front-matter the ingester discards, a pending queue nobody drained, a member not cloned, a public workspace repo holding meetings. Reports everything and can fix the config keys whose correct value is derivable. Triggers like "check my context repo", "check my workspace", "context doctor", "is my context set up right", "why is this thread not showing up", "audit the context config", "what is wrong with my context repo".
 ---
 
 # Check a workspace's or a context repo's health
 
-Every failure this looks for is **silent**. A plugin id that names nothing still parses; an
-`include` entry with a typo is dropped without a word; a thread whose front-matter contains an
-angle bracket loses its title and says nothing; `threads/INDEX.md` that is merely out of date
+Every failure this looks for is **silent**. A plugin id that names nothing still parses; a
+thread whose front-matter contains an angle bracket loses its title and says nothing; `threads/INDEX.md` that is merely out of date
 reads exactly like a complete one. Nothing in a session reports any of it, so it accumulates.
 
 This skill runs the checks and hands you the findings. It is **diagnosis, not curation** — it
@@ -38,8 +37,6 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/context-doctor.mjs" "$ROOT"
 
 Useful flags:
 
-- `--include` — also report on each repo in this one's `include` list. **Report only**: includes
-  are read-only from here, and `--fix` never touches them.
 - `--json` — the same findings machine-readably.
 - `--today 2026-08-18` — pin the date so ages are reproducible.
 
@@ -47,8 +44,7 @@ Useful flags:
 `members[]` entry on disk, `connections`' shape), that `CLAUDE.md` imports `@docs/memory.md`,
 the threads and `INDEX.md` in `docs/threads/`, and `.context/pending/` for stale items. A member
 that is not cloned is a `note` — normal on a fresh clone — with the `gh repo clone` to run. The
-checks for retired keys (`include`, `template`, assistants and roles, `teaching`, `handoff/`, the
-marker) do not run there.
+checks for keys a workspace retired (`template`, the marker) do not run there.
 
 **A `visibility` warning is the one to raise first in a workspace.** A PUBLIC workspace repo
 holding `docs/meetings/` or `.context/pending/` gives those to anyone who clones it (ADR 0002):
@@ -75,27 +71,13 @@ NOT verified means exactly that: the marketplace was unreadable, so the check di
 
 Give the user the findings grouped by level, in their own words — not a paste of the output.
 For anything not automatically fixable, say what the fix is: rebuild the index with
-`thread-index.mjs`, correct the `include` entry by hand, run `curate-context` for a drifting
-`memory.md`.
+`thread-index.mjs`, run `curate-context` for a drifting `memory.md`.
 
 If the run reports fixable findings, **ask before applying them**:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/context-doctor.mjs" "$ROOT" --fix
 ```
-
-The three `teaching` findings are a good illustration of where that line falls, and none of them
-is fixable:
-
-- a declared slug with no `teaching/[slug]/` directory — the workspace may have been deleted, or
-  the slug may be mistyped, and those two repairs are opposites;
-- a `mission` path that does not resolve — expected while a workspace is prepared but not yet
-  started, since `teach` writes `MISSION.md` at the first session, and a real defect after that;
-- an `audience` outside `working` / `team` / `external`.
-
-An **absent** audience is not a finding at all. Absent is absent: a workspace that declares none
-has not been classified, and reporting it would push people to supply a value to silence the
-check — which is how a repo ends up full of audiences nobody chose.
 
 `--fix` never writes `workspace.json` — every key there has another writing owner — so in a
 workspace it can only fix `.claude/settings.json`. It writes **only JSON keys, and only where the correct value is derivable** from something

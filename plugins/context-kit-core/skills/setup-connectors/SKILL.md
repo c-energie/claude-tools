@@ -19,7 +19,7 @@ denies the rest on every MCP call.
 **A provider may declare more than one connection**, as a map of resource owner to name:
 
 ```json
-{ "github": { "your-user": "github-second-brain", "c-energie": "github-second-brain-c-energie" } }
+{ "github": { "your-user": "github-personal", "c-energie": "github-personal-c-energie" } }
 ```
 
 A fine-grained PAT has a single resource owner, so reaching two owners needs two tokens and two

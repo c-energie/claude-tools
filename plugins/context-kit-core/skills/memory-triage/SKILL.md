@@ -1,6 +1,6 @@
 ---
 name: memory-triage
-description: Drain Claude's own per-directory memory into the shared context layers — promoting a preference into the personal layer, a project fact into the workspace's docs/memory.md (or the context repo outside a workspace), a transferable claim into an assistant's LESSONS.md, and leaving genuinely machine-local notes alone. Triggers like "triage my memory", "drain claude's memory into the context repo", "what has claude remembered that should be shared", "my memories are scattered across projects", "promote my memories".
+description: Drain Claude's own per-directory memory into the shared context layers — naming what belongs to the personal layer, promoting a project fact into the workspace's docs/memory.md (or the context repo outside a workspace), a code convention into a CLAUDE.md, and leaving genuinely machine-local notes alone. Triggers like "triage my memory", "drain claude's memory into the context repo", "what has claude remembered that should be shared", "my memories are scattered across projects", "promote my memories".
 disable-model-invocation: true
 ---
 
@@ -21,8 +21,7 @@ Where each fact belongs:
 | machine-local | leave it in native memory | nobody: this laptop, this path |
 | repo | that repo's `CLAUDE.md` | anyone who clones the code |
 | project | the workspace's `docs/memory.md` — outside a workspace, the context repo's `memory.md` | the project's people |
-| role, across projects | `assistants/[role]/LESSONS.md` | every project with that role, via its supervisor |
-| personal | the cross-project layer's `memory.md` | you |
+| personal | the personal layer the user-level `~/.claude/CLAUDE.md` imports — **not promoted by this skill** | you |
 
 > **Rewrites a durable layer and stamps files outside any repo — run only when asked.**
 > `disable-model-invocation: true`, and it asks before every push.
@@ -40,16 +39,11 @@ the workspace's `CLAUDE.md` imports. **`route=context-repo`**: no workspace, and
 applies to the context repo's `memory.md` exactly as before. The scan prints which file it means
 (`project facts go to:`); trust that line rather than re-deriving it.
 
-The scan is **asymmetric**, and this is the part to understand before reading its output:
-
-- **In a project repo** it reads only the store for this working directory. It does not try to
-  work out which other directories belong to this project — guessing wrong files a fact under
-  the wrong project, and there is no signal that would make the guess safe.
-- **In the cross-project layer** (a repo whose `context.json` declares `include`) it reads
-  *every* store on the machine but surfaces only personal-layer entries. Those belong to the
-  person rather than to the folder they were captured in, so no mapping is needed.
-- **A workspace is always a project here**, never the cross-project layer: ADR 0002 retires
-  `include`, so nothing in `workspace.json` says a workspace is entitled to read every store.
+The scan reads **only the store for this working directory**, and this is the part to
+understand before reading its output. It does not try to work out which other directories belong
+to this project — guessing wrong files a fact under the wrong project, and there is no signal that
+would make the guess safe. Nor does it read every store on the machine from anywhere: ADR 0002
+retired the cross-project layer that did, so nothing committed says a repo is entitled to.
 
 Entries already stamped `promotedTo` are skipped.
 
@@ -70,9 +64,6 @@ learned from, which is evidence for a general preference rather than a limit on 
 
 Watch for these too:
 
-- **A transferable claim is a lesson, not a memory.** "Prefer one generic config-driven
-  implementation" is exactly what `assistants/[role]/LESSONS.md` is for — route it to
-  `assistant-lesson` rather than into `memory.md`.
 - **Machine-local stays put.** A laptop path, a `UV_LINK_MODE` workaround, where a binary
   lives — these are true of this machine and nowhere else. Promoting them pollutes a shared
   layer with something no one else can use.
@@ -82,7 +73,7 @@ Watch for these too:
 ## 3. Promote — into this repo only
 
 Write each promoted fact into **the repo this session is in**. Never into another repo, whatever
-the clone on disk permits: from the cross-project layer, included repos are read-only.
+the clone on disk permits.
 
 **In a workspace, "this repo" is the workspace's**, even when the session is in a member: a
 project fact goes to `$ROOT/docs/memory.md`, never to a member's `.claude/memory.md`. Create
@@ -91,9 +82,9 @@ project fact goes to `$ROOT/docs/memory.md`, never to a member's `.claude/memory
 session loads. A **code convention** still belongs to the `CLAUDE.md` of the member whose code it
 governs.
 
-A personal entry found from a *project* session is therefore a finding, not a task. It needs no
-handoff — the cross-project layer reads every store, so a run there will pick it up. Say so and
-move on.
+A personal entry is therefore a finding, not a task: no repo this session can write to is the
+personal layer. Name it, say it belongs in the file the user-level `~/.claude/CLAUDE.md` imports,
+and leave it unstamped in native memory so it is still there to move by hand.
 
 **Condense as you promote.** A native memory entry is written for one machine with its full
 "why"; the destination is a durable layer that every session loads. Take the claim, drop the
@@ -130,6 +121,6 @@ Say what moved where, what you deliberately left local and why, and what you cou
 An entry nobody can classify should stay where it is and be named — a fact filed under a guess
 is worse than one left in the inbox.
 
-**Not this skill:** recording a transferable lesson for a supervisor is `assistant-lesson`;
-condensing a context repo's own threads is `curate-context`; checking a repo's config for silent
-drift is `context-doctor`; adopting a role is `assistant`.
+**Not this skill:** condensing a context repo's own threads is `curate-context`; checking a
+repo's config for silent drift is `context-doctor`; writing up the current session is
+`save-thread`.

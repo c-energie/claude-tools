@@ -28,8 +28,7 @@ than reporting a full run.
    load warned it was stale) works from a copy that predates whatever was pushed this week. Cheap,
    read-only, and it says in a line if nothing changed. *Always run this, first.*
 0b. **`context-status`** (context-kit-core) — count what has built up across the context ladder:
-   lessons awaiting a sweep, sweeps awaiting distillation, undrained handoff items, curation lag,
-   native memory. It writes nothing, and it is what makes the judgement calls below evidence-based
+   curation lag, thread outcomes never logged, the pending queue, native memory. It writes nothing, and it is what makes the judgement calls below evidence-based
    rather than a feeling — item 10 especially, which otherwise gets skipped every week until the
    week it is a big job. Numbered `0b` rather than inserted as `1` so the cross-references in the
    items below keep pointing at what they mean. *Always run this, second.*
@@ -41,8 +40,8 @@ than reporting a full run.
    SOMEBODY ELSE OWNS. A triage run drains the personal ones automatically and lists the shared
    ones, but only when a triage run happens; this is the cadence that catches them when one
    does not. The shared items are exactly the ones nobody drains by accident, because acting on
-   them means opening another project's session. `context-status` (item 0b) has already
-   counted them — this is where they get looked at. Skip only if that count was zero.
+   them means opening another project's session. `triage-notes.mjs handoff` prints the count
+   (`context-status` no longer does). Skip only if it is zero.
 2. **`check-watchlist`** — review the "watch until it opens" items that are due; roll their
    next-check date on, or convert to a real action when something has opened. *Always run this.*
 3. **`update-action` (the triage pass)** — walk everything open in the actions database: overdue,

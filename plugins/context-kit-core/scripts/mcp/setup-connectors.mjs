@@ -30,7 +30,7 @@
 // resolvers draw between *unconfigured* and *opted out*. No `connections` key means nobody has
 // decided yet, so this offers to write one. `"connections": {}` is a decision already taken —
 // this project declares none, deliberately — so it is reported and left alone, and `--check`
-// exits 0 rather than 1. A cross-project layer that must never hold a workspace credential is
+// exits 0 rather than 1. A personal repo that must never hold a project's credential is
 // exactly the repo that writes `{}` and means it; treating that as an omission nags forever and
 // invites someone to "fix" it. `--add [provider]` is how a deliberate none is reopened.
 //

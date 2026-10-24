@@ -44,7 +44,7 @@ test('a workspace root: project facts go to docs/memory.md, from a member too', 
   const home = scratch();
   const root = scratch();
   deep(root, '.claude');
-  writeFileSync(join(root, '.claude', 'workspace.json'), JSON.stringify({ schema: 1, include: ['x/y'] }));
+  writeFileSync(join(root, '.claude', 'workspace.json'), JSON.stringify({ schema: 1 }));
   const member = deep(root, 'app');
   store(home, member, 'project');
 
@@ -53,7 +53,6 @@ test('a workspace root: project facts go to docs/memory.md, from a member too', 
   const out = JSON.parse(r.stdout);
   assert.equal(out.layer, 'workspace');
   assert.equal(out.memory, 'docs/memory.md');
-  // `include` means nothing in workspace.json: a workspace is never the cross-project layer.
   assert.match(out.mode, /^project/);
   assert.equal(out.candidates.length, 1);
   assert.match(out.candidates[0].suggestion, /the workspace's docs\/memory\.md/);
@@ -70,6 +69,23 @@ test('no workspace: the context repo memory.md, as before', { skip: !posix }, ()
   assert.equal(out.layer, 'context-repo');
   assert.equal(out.memory, 'memory.md');
   assert.match(out.candidates[0].suggestion, /the project context repo memory\.md/);
+});
+
+// #54: the cross-project mode is gone. A legacy repo that still declares `include` reads only
+// its own store, like any other, and a personal entry is a finding rather than a promotion.
+test('a context repo still declaring include: one store, and personal entries are not promotable', { skip: !posix }, () => {
+  const home = scratch();
+  const root = scratch();
+  writeFileSync(join(root, 'context.json'), JSON.stringify({ include: ['x/y'] }));
+  const cwd = scratch();
+  store(home, cwd, 'user');
+  store(home, scratch(), 'user');   // another directory's store, which must not be read
+
+  const out = JSON.parse(scan(home, root, cwd).stdout);
+  assert.match(out.mode, /^project/);
+  assert.equal(out.storesRead, 1);
+  assert.equal(out.candidates.length, 1);
+  assert.match(out.candidates[0].suggestion, /^personal — NOT promotable from here/);
 });
 
 test('a malformed workspace.json is fatal, not a reason to look for context.json', { skip: !posix }, () => {
