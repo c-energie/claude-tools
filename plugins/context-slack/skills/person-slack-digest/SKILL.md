@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Pulls everything tied to each person on the roster out of Notion and posts a single Slack message
 with **one section per person**. **Read `slack-config` first** — the connection, the channel and
-the member IDs all come from the project's `context.json`.
+the member IDs all come from the project's config (`slack-config` §1).
 
 > **Posts to a shared channel — run only when asked.** Excluded from automatic invocation
 > (`disable-model-invocation: true`); it runs when the user asks for it by name, or when a weekly
@@ -18,8 +18,11 @@ the member IDs all come from the project's `context.json`.
 Slack tools are missing, build the message, show it, and say plainly that it wasn't sent.
 
 **If Notion can't be reached** — the queries fail, or return nothing because the user is a
-workspace guest — **build the digest from the context repo's `notion/` mirror instead**
-(`actions.json`, `open-questions.json`, and whatever else the project mirrors). It is read-only
+workspace guest — **build the digest from the project's Notion mirror instead**
+(`actions.json`, `open-questions.json`, and whatever else the project mirrors) — `.context/notion/`
+in a workspace, `notion/` in a legacy context repo; take the folder from
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" mirror` (`$ROOT` as `slack-config` §1
+resolves it) rather than typing either. It is read-only
 work, so it still produces a real digest — but **say in the message that it came from the mirror
 and give its `syncedOn` date**, because recipients will otherwise read it as this morning's state.
 Watch items are excluded from the mirror, so the 👀 bucket will be empty: say so rather than
@@ -64,7 +67,7 @@ relationships, adds an **Unassigned** section, and drops empty buckets and empty
 standard Markdown — what the Slack send tools expect, *not* Slack mrkdwn. Messages are separated by
 a `---MESSAGE---` line; post each separately.
 
-`--title` puts the project's name in the header (take it from `context.json`); omit it and the
+`--title` puts the project's name in the header (take it from the config's `name`, or a legacy `context.json`'s); omit it and the
 header is just "who's got what". `--today YYYY-MM-DD` only to reproduce a past run.
 
 **Your judgement, not the script's:** whether a bucket needs a human sentence of context, whether
@@ -88,7 +91,7 @@ worth sending at all this week.
   them from this skill.
 - If someone appears as "Unknown owner", their Notion ID is missing from `state.notion.people`;
   if they appear by plain name rather than an `@`-mention, it's their `slackMemberId` that's
-  missing. Both are one-line fixes to `context.json` worth mentioning.
+  missing. Both are one-line fixes to the config worth mentioning.
 
 **Not this skill:** nudging one person about the pending queue is `notify-pending`. Triaging the
 actions themselves is context-notion's `update-action`.

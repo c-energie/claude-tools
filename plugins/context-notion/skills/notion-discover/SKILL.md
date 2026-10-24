@@ -1,9 +1,9 @@
 ---
 name: notion-discover
-description: Discover a project's Notion workspace into its context.json state block — enumerate the databases the project's declared Notion connection can see, capture their IDs and exact property schemas, map them to the actions/decisionLog/openQuestions keys, and write state.notion with the user's confirmation. Triggers like "fill in the context.json state block", "discover my notion workspace", "wire up notion for this project", "set up the notion databases", "map my notion databases".
+description: Discover a project's Notion workspace into its config's state block (workspace.json, or a legacy context.json) — enumerate the databases the project's declared Notion connection can see, capture their IDs and exact property schemas, map them to the actions/decisionLog/openQuestions keys, and write state.notion with the user's confirmation. Triggers like "fill in the notion state block", "fill in the context.json state block", "discover my notion workspace", "wire up notion for this project", "set up the notion databases", "map my notion databases".
 ---
 
-# Discover a Notion workspace into context.json
+# Discover a Notion workspace into the project's config
 
 Turns a project's `"state": null` into a working `state.notion` block — the one step between
 "connector wired up" and "the Notion skills work here". **Read `notion-config` first**; this
@@ -11,8 +11,15 @@ skill writes the very contract that file defines.
 
 ## 1. Resolve the project and its connection
 
-Resolve the context repo (`context-repo.sh` on a laptop; the marker + GitHub connector in a
-sandbox) and read `context.json`. `connections.notion` names the ONLY Notion connection to
+Resolve the config as `notion-config` §1 does — on a laptop:
+
+```bash
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+CONFIG="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" config)"
+```
+
+`$CONFIG` is `.claude/workspace.json` in a workspace, `context.json` in a legacy context repo
+(the marker + GitHub connector in a sandbox). Read it. `connections.notion` names the ONLY Notion connection to
 use — if it is missing, or that server's tools are absent from this session, stop and point
 the user at `context-setup` / the connector setup script rather than using another
 project's connection.
@@ -48,20 +55,34 @@ database — schemas, `people` — from the connection's user listing where avai
 just the user with their Notion user ID — and `defaults` with `dueSoonDays: 7`), including
 which databases you could NOT map, **and get an explicit yes before writing anything.**
 
-## 5. Write it back — whole-file, gated
+## 5. Write it back — `state.backend` and `state.notion` only, gated
 
-Read the current `context.json`, set `"state": { "backend": "notion", "notion": { … } }`,
-and write the **whole file** back — never rebuild it from memory; the file also carries
-`connections` and template metadata that must survive.
+This skill owns two keys of the config: `state.backend` (set to `"notion"`) and `state.notion`.
+**Nothing else** — other `state.*` blocks belong to the plugins that read them, `connections`
+to `setup-connectors`, and in a workspace `schema` / `name` / `repo` / `members` to
+`project-workspace`. Replacing `state` wholesale, as this step once did, erases a sibling block
+in a commit titled as a Notion change.
 
-- **Laptop:** edit the checkout, show the diff, commit and push (`config: discover Notion
-  state block`) — ask before the push.
-- **Sandbox (Cowork):** the connector write is an immediate commit to the default branch —
+- **Laptop:** save the agreed block (the value of `state.notion`, not the whole `state`) to a
+  file, then plan and write it with the script, which merges it into `state` and leaves every
+  other byte of the file alone:
+
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/notion-state.mjs" "$CONFIG" notion-block.json          # plan
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/notion-state.mjs" "$CONFIG" notion-block.json --write
+  ```
+
+  It refuses (exit 1, nothing written) a file that does not parse or a `state` that is not an
+  object — report that, never hand-edit around it. Show `git -C "$ROOT" diff`, commit
+  (`config: discover Notion state block`) and **ask before the push**.
+- **Sandbox (Cowork):** read the whole file, change only `state.backend` and `state.notion`
+  (every other key of `state` and of the file kept exactly), and write the whole file back —
+  never rebuild it from memory. The connector write is an immediate commit to the default branch —
   the ask-before-writing above IS the gate; say it is already live once done.
 
 ## 6. Verify and hand over
 
-Reload `context.json` and confirm it parses and the block is present (on a laptop,
+Reload `$CONFIG` and confirm it parses and the block is present (on a laptop,
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/pending-parse.mjs" "$ROOT"` loading without a
 "declares no Notion backend" note proves the scripts see it). Then tell the user what just
 became available: `add-action`, `log-decision`, `add-open-question`, `query-decisions`,

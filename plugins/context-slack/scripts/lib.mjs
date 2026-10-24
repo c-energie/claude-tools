@@ -5,46 +5,47 @@
 // lands in context-notion's copy FIRST, then here. (Same rule as context-repo.sh, which lives
 // in all three plugins for the same reason.)
 //
-// The config is per-project: the `state.notion` block of the context repo's context.json —
-// nothing is baked in. Resolution order:
-//   1. CONTEXT_CONFIG=/path/to/context.json  — explicit, no git, no bash needed
-//   2. resolve the context repo via context-repo.sh --no-pull and read its context.json
+// The config is per-project: the `state.notion` block of the project's config file — nothing
+// is baked in. Resolution order:
+//   1. CONTEXT_CONFIG=/path/to/file.json  — explicit, no git, no bash needed; still wins
+//   2. the nearest `.claude/workspace.json` (ADR 0002) — findWorkspace(), the resolver's own walk
+//   3. the context repo via context-repo.sh --no-pull, and its context.json — the legacy route,
+//      until the last context repo is migrated
 // Either way the project must declare `"state": { "backend": "notion", "notion": {…} }` —
 // a project without a Notion backend has nothing for these scripts to run against, and
 // saying so beats pretending with an empty roster.
+//
+// 2 and 3 are one call to resolveWorkspace() rather than a walk of this file's own: a session
+// whose context loaded from the workspace must not have its roster read from somewhere else,
+// and two walks are how that would start. Its route line is NOT relayed on success — these
+// scripts' stdout is a report or JSON and their stderr is read by people — but a malformed
+// workspace.json is, because it silently changes which file the roster came from.
 import { readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { bashBin, bashPath, NO_BASH } from './bash-bin.mjs';
-
-const here = dirname(fileURLToPath(import.meta.url));
-
-// Git Bash prints POSIX paths (/c/Users/…) that win32 path.join would mangle into \c\Users\….
-const posixToNative = (p) =>
-  (process.platform === 'win32' ? p.replace(/^\/([A-Za-z])\//, '$1:/') : p);
+import { resolveWorkspace } from './workspace.mjs';
+import { layout } from './layout.mjs';
 
 function configPath() {
   if (process.env.CONTEXT_CONFIG) return process.env.CONTEXT_CONFIG;
-  // bashBin() rather than `bash`: the Windows PATH entry is WSL's launcher, which has its own
-  // filesystem and $HOME — it cannot see this script, and cannot see the clone the resolver
-  // would print back. Failing by name beats resolving against the wrong ~.
-  const bin = bashBin();
-  if (!bin) throw new Error(`${NO_BASH} (or set CONTEXT_CONFIG to skip the resolver)`);
-  const root = execFileSync(bin, [bashPath(join(here, 'context-repo.sh')), '--no-pull'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
-  return join(posixToNative(root), 'context.json');
+  const r = resolveWorkspace({ args: ['--no-pull'] });
+  for (const m of r.messages) if (/malformed/.test(m) && !m.startsWith('route=')) console.error(`note: ${m}`);
+  if (!r.root) {
+    throw new Error(r.messages.filter((m) => m.startsWith('route=none')).pop() ?? 'no workspace and no context repo resolved');
+  }
+  // Git Bash prints POSIX paths (/c/Users/…) that win32 path.join would mangle into \c\Users\….
+  const root = process.platform === 'win32' ? r.root.replace(/^\/([A-Za-z])\//, '$1:/') : r.root;
+  return layout(root).config;
 }
 
 let parsed;
 try {
   const path = configPath();
-  parsed = { path, json: JSON.parse(readFileSync(path, 'utf8')) };
+  // A BOM is stripped as findWorkspace() strips it: an editor-saved workspace.json the resolver
+  // accepted must not then fail to parse here.
+  parsed = { path, json: JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) };
 } catch (e) {
-  console.error(`Cannot load the project's context.json: ${e.message.split('\n')[0]}`);
-  console.error('Set CONTEXT_CONFIG=/path/to/context.json, or check PROJECT_CONTEXT_REPO points at a reachable context repo.');
+  console.error(`Cannot load the project's config: ${e.message.split('\n')[0]}`);
+  console.error('Run inside a workspace (.claude/workspace.json), set CONTEXT_CONFIG=/path/to/file.json, '
+    + 'or check PROJECT_CONTEXT_REPO points at a reachable context repo.');
   process.exit(2);
 }
 
@@ -59,7 +60,7 @@ if (!notion) {
 }
 
 /** The roster, normalised to the canonical array of `{ name, notionUserId, ... }`.
- *  Older context.json files carry it as a `{ "Name": "notion-user-id" }` map instead, and every
+ *  Older config files carry it as a `{ "Name": "notion-user-id" }` map instead, and every
  *  caller reaches for `.find` — an object arrived as `roster.find is not a function` and took
  *  pending-parse down mid-validation, which is the one thing the queue exists to survive. A
  *  shape this layer can read is not a fact about any one project, so it is normalised here
@@ -77,7 +78,7 @@ const asRoster = (raw) => {
 };
 
 /** The project's state.notion block: databases, schemas, people, defaults. Null-proof:
- *  an explicit `"people": null` in a stub context.json must not defeat the guards. */
+ *  an explicit `"people": null` in a stub config must not defeat the guards. */
 export const config = {
   databases: notion?.databases ?? {},
   schemas: notion?.schemas ?? {},

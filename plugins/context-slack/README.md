@@ -6,10 +6,11 @@ per-person "who's got what" digest to a channel, and a direct nudge about the pe
 
 Install **alongside context-kit** (same marketplace); `person-slack-digest` also needs
 **context-notion**, since its data comes from the project's Notion databases. Nothing in this
-plugin names a channel, a person or a workspace: all of that comes from the context repo's
-`context.json`.
+plugin names a channel, a person or a workspace: all of that comes from the project's config —
+the workspace's `.claude/workspace.json`, or a legacy context repo's `context.json` (the ladder
+is context-notion's: `CONTEXT_CONFIG`, then the nearest `workspace.json`, then the context repo).
 
-## The contract: what it reads from `context.json`
+## The contract: what it reads from the config
 
 ```json
 {
@@ -52,7 +53,7 @@ The Slack keys sit inside the same roster the Notion layer uses, so a project th
 | `slack-config` | _(hidden)_ The contract above, the person-resolution traps, and the posting rules |
 | `person-slack-digest` | 🔒 Per-person digest of actions, watches, questions and relationships → a channel |
 | `weekly-roundup` | 🔒 Team-facing roundup of a `weekly-review` run → the `weeklyRoundup` channel |
-| `notify-pending` | 🔒 DM whoever drains the `pending/` queue that items are waiting |
+| `notify-pending` | 🔒 DM whoever drains the pending queue (`.context/pending/`, or a legacy `pending/`) that items are waiting |
 
 🔒 = `disable-model-invocation: true`. **Every skill here is blocked from self-triggering**, with
 no exceptions: a Slack message is visible to other people the instant it lands and cannot be
@@ -77,10 +78,11 @@ from it. It exists because they drifted: the weekly roundup carried a full icon 
 3 Aug 2026 and none by 11 Aug, because it was composed freehand with nothing holding its format.
 Five headings are shared with the digest and mean the same in both; three are the roundup's own.
 
-**Deliberate copies.** `context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `lib.mjs` and
-`pending-parse.mjs` are copies: plugins cannot reach into each other's install directories. The
-generic three originate in context-kit-core and the two Notion-coupled ones (`lib.mjs`,
-`pending-parse.mjs`) in context-notion — **fix there first, then copy here.** `pending-parse.mjs` in particular *defines* the pending entry format; a drifted copy
+**Deliberate copies.** `context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `workspace.mjs`, `lib.mjs`,
+`pending-parse.mjs` and `layout.mjs` are copies: plugins cannot reach into each other's install
+directories. The generic four originate in context-kit-core and the three Notion-coupled ones
+(`lib.mjs`, `pending-parse.mjs`, `layout.mjs` — which says where the queue and the mirror live in
+a workspace and in a context repo) in context-notion — **fix there first, then copy here.** `pending-parse.mjs` in particular *defines* the pending entry format; a drifted copy
 means a queue that reads differently depending on which plugin looked at it.
 
 ## Roadmap

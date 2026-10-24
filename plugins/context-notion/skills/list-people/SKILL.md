@@ -8,9 +8,9 @@ description: List the people a project tracks, from its Notion stakeholders data
 Reads the project's **stakeholders** database and reports the individuals in it. Read-only —
 edits belong to `tidy-stakeholders`. **Read `notion-config` first.**
 
-**Which database:** `databases.stakeholders` in the project's `context.json` (a project may name
+**Which database:** `databases.stakeholders` in the project's config (`notion-config` §1; a project may name
 this key differently — use whichever key its config declares for the people/organisation
-register). If the project declares no such database, say which key is missing from `context.json`
+register). If the project declares no such database, say which key is missing from the config
 rather than hunting for a database by search.
 
 > **Not the roster.** `state.notion.people` is the project's *team* — who can own an action. This
@@ -42,11 +42,11 @@ choosing between and ask.
    filling them in from here.
 
 **If Notion can't be reached** — the query fails, or returns nothing because the user is a
-workspace guest — **answer from the context repo's mirror instead** (`notion/stakeholders.md`,
-procedure in `notion-config`), and say the answer is a snapshot with its `syncedOn` date. The
+workspace guest — **answer from the project's Notion mirror instead** (its `stakeholders.md`; folder and
+procedure in `notion-config` §4), and say the answer is a snapshot with its `syncedOn` date. The
 mirror splits organisations from individuals for you. This is the single most likely question to
 be asked by someone whose connector doesn't work, and "we aren't tracking anyone" is the wrong
 answer to give them.
 
 **Not this skill:** enriching or de-duplicating those rows is `tidy-stakeholders`; the team roster
-lives in `context.json`, not in a database.
+lives in the config, not in a database.

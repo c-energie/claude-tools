@@ -33,7 +33,7 @@ than reporting a full run.
    rather than a feeling — item 10 especially, which otherwise gets skipped every week until the
    week it is a big job. Numbered `0b` rather than inserted as `1` so the cross-references in the
    items below keep pointing at what they mean. *Always run this, second.*
-1. **`process-pending`** — transfer what was queued in the context repo's `pending/` folder into
+1. **`process-pending`** — transfer what was queued in the project's pending queue (`.context/pending/` in a workspace, `pending/` in a legacy context repo) into
    Notion. **First, deliberately:** workspace guests write to the queue instead of to Notion, so
    anything they logged this week is invisible to items 2–4 until this has run. Skip only if the
    queue is empty (the skill says so in a line). *Always run this.*
@@ -59,8 +59,8 @@ than reporting a full run.
    it a scope word** so the sweep matches when you are running this: `this week` at the end of a
    week, `last week` at the start of the next one. A scope is a hard window, so if the run
    straddles a weekend, check both rather than assuming one covered it.
-8. **`sync-notion-mirror`** — refresh the read-only copy of the Notion databases in the context
-   repo's `notion/`. **Run it after items 1–7**, since it is a snapshot of whatever they left
+8. **`sync-notion-mirror`** — refresh the read-only copy of the Notion databases (`.context/notion/`
+   in a workspace, `notion/` in a legacy context repo). **Run it after items 1–7**, since it is a snapshot of whatever they left
    behind. This is the only way teammates without the Notion connector see any of the week's
    changes, so a skipped week leaves them reading stale rows. *Always run this.*
 9. **`person-slack-digest`** (context-slack) — post the per-person "who's got what" summary to the

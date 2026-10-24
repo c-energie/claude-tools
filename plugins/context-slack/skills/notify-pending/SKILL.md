@@ -1,16 +1,16 @@
 ---
 name: notify-pending
-description: Tell whoever drains the project's pending queue, on Slack, that items are waiting in the context repo's pending/ folder — the manual fallback for when the routine notification didn't cover it. Triggers like "tell them there's stuff pending", "nudge about the pending queue", "let the owner know I've queued some items".
+description: Tell whoever drains the project's pending queue, on Slack, that items are waiting in the pending queue (.context/pending/ in a workspace, pending/ in a legacy context repo) — the manual fallback for when the routine notification didn't cover it. Triggers like "tell them there's stuff pending", "nudge about the pending queue", "let the owner know I've queued some items".
 disable-model-invocation: true
 ---
 
 # Notify that the pending queue has items
 
-Posts a short Slack message summarising what is waiting in the context repo's `pending/` folder
-for transfer into the project's backend. **Read `slack-config` first.**
+Posts a short Slack message summarising what is waiting in the project's pending queue —
+`.context/pending/` in a workspace, `pending/` in a legacy context repo — for transfer into the project's backend. **Read `slack-config` first.**
 
-**Routine notification is usually not this skill's job.** A context repo can carry a GitHub Action
-that posts on any push touching `pending/`, whoever pushed and however the entry was written —
+**Routine notification is usually not this skill's job.** The repo holding the queue can carry a
+GitHub Action that posts on any push touching it, whoever pushed and however the entry was written —
 that covers the ordinary case better than an assistant can, because it fires on the push, the
 moment the entry becomes visible. Check whether the repo has one before making this a habit.
 
@@ -28,9 +28,14 @@ moment the entry becomes visible. Check whether the repo has one before making t
 ## 1. Build the message — don't compose it by hand
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
+PENDING="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" pending)"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/pending-parse.mjs" "$ROOT" --slack --added-by [first name]
 ```
+
+`workspace.mjs` finds the nearest `.claude/workspace.json`, else the context repo (stderr names
+the `route=`); `layout.mjs` says where that root keeps the queue, and `pending-parse.mjs` reads
+the same folder by itself — these are copies of context-notion's, so both plugins agree on it.
 
 Prints the message and nothing else. It covers **everything currently in the queue**, not only
 what this session added — that is deliberate: it is what the recipient has to act on, and it means
@@ -46,11 +51,17 @@ nothing trains people to ignore the next one.
 ## 2. Check whether it's actually visible yet
 
 ```bash
-git -C "$ROOT" status -sb | head -1
+git -C "$ROOT" status -sb -- "$PENDING"
+git -C "$ROOT" log --oneline '@{u}..' -- "$PENDING"
 ```
 
-If that line shows `[ahead N]`, the entries are **committed but not pushed**, so the recipient
-cannot see them. This session may well have no credentials for that repo, so this is common rather
+`$ROOT` is the repo the queue is committed to — the workspace repo in a workspace, the context
+repo otherwise — so this is the repo to ask. The check is scoped to the queue on purpose: a
+workspace repo also takes threads, memory and meetings, so its branch being `[ahead N]` says
+nothing about the queue, and a clean queue behind unrelated local commits is not a reason to
+tell anyone to push. If the log prints a commit, or status lists a queue file as modified or
+untracked, the entries are **not pushed**, so the recipient cannot see them. If the log fails
+because the branch has no upstream, nothing has been pushed at all — treat it the same way. This session may well have no credentials for that repo, so this is common rather
 than exceptional.
 
 - Append a line to the message: `_Not pushed yet — [name] still needs to run git push._`
@@ -79,6 +90,6 @@ entries are safely queued either way, which is the part that mattered.
 Say what was sent, to whom, and the message link the tool returns. If it wasn't sent, say why in
 one line and show the text.
 
-**Not this skill:** the routine "something was queued" message is the context repo's own GitHub
+**Not this skill:** the routine "something was queued" message is the queue repo's own GitHub
 Action. The team-wide "who's got what" digest is `person-slack-digest`. Writing an entry into the
 queue is context-notion's `add-pending`; transferring the queue into Notion is `process-pending`.

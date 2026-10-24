@@ -1,6 +1,6 @@
 ---
 name: add-action
-description: Add one or more action items to the project's Notion actions database (which database comes from the context repo's context.json). Use when a task/action with an owner (and optional due date) needs tracking — triggers like "add an action", "log these action items", "capture these to-dos".
+description: Add one or more action items to the project's Notion actions database (which database comes from the project's config, workspace.json or a legacy context.json). Use when a task/action with an owner (and optional due date) needs tracking — triggers like "add an action", "log these action items", "capture these to-dos".
 ---
 
 # Add an action
@@ -11,7 +11,7 @@ the guest gap, and the fallback ladder.
 
 ## Target
 
-The **actions** database from the project's `context.json` `state.notion` block. Which id
+The **actions** database from the `state.notion` block of the project's config (`notion-config` §1). Which id
 parents the create depends on the tool (see `notion-config` on the two ids):
 
 - `API-post-page` → parent `{type: "database_id", database_id: pageParents.actions}` —
@@ -22,7 +22,7 @@ parents the create depends on the tool (see `notion-config` on the two ids):
   prefix).
 
 Multiple actions go in **one** call where the tool takes an array of pages. No `actions`
-key in the config → say so and stop; the fix is a line in `context.json`.
+key in the config → say so and stop; the fix is a line in the config.
 
 ## Properties
 

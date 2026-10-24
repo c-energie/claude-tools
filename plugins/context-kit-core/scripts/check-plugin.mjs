@@ -190,6 +190,14 @@ const COPIES = [
   // people by notionUserId; pending-parse.mjs defines the queue format those rows land in.
   { file: 'scripts/lib.mjs',           origin: 'context-notion',   copies: ['context-slack'] },
   { file: 'scripts/pending-parse.mjs', origin: 'context-notion',   copies: ['context-slack'] },
+  // Where the queue, the mirror and the meetings folder live in a workspace vs a context repo
+  // (#53). Notion-coupled paths, so context-notion owns the table; notify-pending and the
+  // digest's mirror fallback read the same directories context-notion writes.
+  { file: 'scripts/layout.mjs',        origin: 'context-notion',   copies: ['context-slack'] },
+  // The block-scale JSON editor. Generic, so core owns it; context-notion's notion-state.mjs
+  // writes state.backend + state.notion through it, since every workspace.json writer must
+  // leave the keys other plugins own byte-identical.
+  { file: 'scripts/json-block.mjs',    origin: 'context-kit-core', copies: ['context-notion'] },
   // The step-0 setup observer. Its master is an inert asset in `skills` (scaffold.mjs copies it
   // into repos); project-workspace ships it as a live skill, so the copy sits at another path
   // (`to`). Both files are copied whole — neither has a banner — so any difference is drift.

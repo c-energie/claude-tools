@@ -10,9 +10,9 @@ resolution, guest gap, fallback ladder.
 
 ## Source
 
-`databases.decisionLog` from the project's `context.json`, queried via the Notion connection.
+`databases.decisionLog` from the project's config (`notion-config` §1), queried via the Notion connection.
 **An empty result is never "no decisions"** — it is also what a workspace guest sees. Fall
-back to the context repo's `notion/` mirror if the repo has one, and label the answer with
+back to the project's Notion mirror if it has one (which folder: `notion-config` §4), and label the answer with
 its `syncedOn` date; no mirror and no rows → say the read may be the guest gap.
 
 ## Shapes this answers
