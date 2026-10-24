@@ -1,22 +1,30 @@
 ---
 name: slack-config
-description: How the context-slack skills find and use a project's Slack configuration — the context.json connections.slack contract, the defaults.slackChannels purpose-to-channel map and its slackChannel fallback, member IDs in the roster, and the rules that keep a message from going to the wrong workspace, the wrong channel or the wrong person. Background knowledge for every skill in this plugin; not a task to run.
+description: How the context-slack skills find and use a project's Slack configuration — the connections.slack contract in workspace.json (or a legacy context.json), the defaults.slackChannels purpose-to-channel map and its slackChannel fallback, member IDs in the roster, and the rules that keep a message from going to the wrong workspace, the wrong channel or the wrong person. Background knowledge for every skill in this plugin; not a task to run.
 user-invocable: false
 ---
 
 # The project's Slack configuration
 
 Every skill in this plugin is generic: which connection, which channel and which people all come
-from the **project's context repo**, at runtime. This skill is the one place that procedure lives.
+from the **project's config**, at runtime — `.claude/workspace.json` in a workspace, or a legacy
+context repo's `context.json`. This skill is the one place that procedure lives.
 
 ## 1. Resolve the config
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
+CONFIG="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" config)"
 ```
 
-Read `$ROOT/context.json`. No shell (Cowork)? Read it over the GitHub connector instead — the
-route is context-kit-core's `context-access`, and which repo is `context-setup`'s ladder.
+Read `$CONFIG`. The ladder is context-notion's, and `lib.mjs` (a copy) follows it for every
+script here: `CONTEXT_CONFIG` (an explicit path) wins; otherwise the **nearest
+`.claude/workspace.json`** at or above the working directory — from a member repo, still the
+workspace's; otherwise the legacy context repo through `context-repo.sh` and its
+`context.json`. `workspace.mjs` names the route on stderr. No shell (Cowork)? A visible
+`.claude/workspace.json` names its repo in `repo` — read the copy there over the GitHub
+connector; otherwise the route is context-kit-core's `context-access`, and which repo is
+`context-setup`'s ladder.
 
 What this plugin reads:
 
@@ -34,7 +42,7 @@ What this plugin reads:
   to one place needs only this.
 
 **Resolve a channel in this order, every time:** `slackChannels[purpose]` → `slackChannel` →
-**ask, and offer to add it to `context.json`.** Never substitute a channel that merely looks
+**ask, and offer to add it to the config.** Never substitute a channel that merely looks
 right: a roundup posted to the news channel is noise, and news posted to the standup channel
 buries the thing people open that channel to read.
 
@@ -51,7 +59,7 @@ An unknown key is the project's business, not a config error to report.
   place to resolve a person.**
 
 If a skill needs one of these and the project doesn't declare it, say which key is missing from
-`context.json` — a one-line fix — rather than improvising.
+the config — a one-line fix — rather than improvising.
 
 ## 2. Resolving people — the trap
 

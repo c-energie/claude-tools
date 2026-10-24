@@ -1,13 +1,15 @@
 ---
 name: synthesise-meeting
-description: Synthesise a meeting into the context repo's meetings/ folder from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases; can also run as a sweep to catch up every past meeting missing a summary, optionally bounded by a scope word such as today, yesterday, this week or last week. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session", "catch up any meetings missing a summary", "synthesise last week's meetings", "write up this week's meetings".
+description: Synthesise a meeting into the project's meetings folder (docs/meetings/ in a workspace, meetings/ in a legacy context repo) from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases; can also run as a sweep to catch up every past meeting missing a summary, optionally bounded by a scope word such as today, yesterday, this week or last week. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session", "catch up any meetings missing a summary", "synthesise last week's meetings", "write up this week's meetings".
 ---
 
 # Synthesise a meeting
 
-Turns a meeting into a `meetings/` writeup in the project's context repo and logs its decisions /
-actions / open questions to Notion. **Read `notion-config` first** — the meetings database, the
-roster and every property name come from the project's `context.json`.
+Turns a meeting into a writeup in the project's meetings folder — `docs/meetings/` in a
+workspace, `meetings/` in a legacy context repo — and logs its decisions / actions / open
+questions to Notion. **Read `notion-config` first** — the meetings database, the roster and every
+property name come from the project's config (`.claude/workspace.json`, or a legacy
+`context.json`).
 
 Needs the project's Notion connection, and its file-storage connector (Google Drive or
 equivalent) for meetings that were recorded. **Not every meeting is recorded, and that's normal**
@@ -32,10 +34,10 @@ this skill exists to prevent, and it has happened: a meeting page was completely
 nearly reported as "nothing to synthesise" while a 99 KB transcript of that very conversation sat
 in Drive. **Always check both before concluding a meeting cannot be written up.**
 
-**This skill cannot fall back to the `notion/` mirror.** Meeting pages exist only in Notion. If
+**This skill cannot fall back to the Notion mirror.** Meeting pages exist only in Notion. If
 the connection fails or returns nothing (a workspace guest gets empty results, not an error),
 **stop and say the connection is needed.** Don't write up a meeting from memory or from a
-`threads/` file and present it as the synthesis. Decisions and actions that came out of the
+thread file and present it as the synthesis. Decisions and actions that came out of the
 meeting can still be captured with `add-pending`.
 
 ## 1. Identify the meeting(s), and check each isn't already done
@@ -204,15 +206,23 @@ synthesis, not a record of who said what.
 
 The writeup can hold the finer detail; Notion should hold only the core items.
 
-## 4. Write to the context repo's meetings/ folder
+## 4. Write to the meetings folder
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --writable)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT"     # meetings=, templates=, taxonomy=
+MEETINGS="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" meetings)"
 ```
 
-Write `meetings/YYYY-MM-DD-[slug].md` (date = the meeting's date; slug = a short kebab of the type
-or name). **Follow the repo's own house rules** — read its `templates/` and `taxonomy.yml` where
-they exist; they win over the defaults here. Typical front-matter:
+`workspace.mjs` finds the nearest `.claude/workspace.json`, else the context repo (stderr names
+the `route=`); `layout.mjs` says where that root keeps its meetings — `docs/meetings/` in a
+workspace, `meetings/` in a context repo. Use what it prints; never type either path yourself.
+Create the folder if it does not exist yet.
+
+Write `$MEETINGS/YYYY-MM-DD-[slug].md` (date = the meeting's date; slug = a short kebab of the
+type or name). **Follow the repo's own house rules** — read the `templates/` and `taxonomy.yml`
+`layout.mjs` names, at the root in both layouts, where they exist; they win over the defaults
+here. Typical front-matter:
 
 ```
 ---
@@ -248,7 +258,7 @@ Front-matter rules:
   link back into Notion.
 - `transcript`: the view URL of the file found in step 2. Omit the key entirely rather than
   writing a placeholder. Raw transcripts stay in the file store — **never commit a `.vtt` to the
-  context repo** (they hold third-party personal data that must stay deletable, and they crowd out
+  workspace or context repo** (they hold third-party personal data that must stay deletable, and they crowd out
   synthesised notes in retrieval).
 - Do **not** add `last_updated` or `author` — git already knows.
 - **No angle brackets in any front-matter value**; use `[…]` or `{…}`.
@@ -259,7 +269,7 @@ the whole batch (step 1.5) rather than one per file.
 ## 5. Write the summary back to the meeting page
 
 The meeting note itself is usually just the agenda. Append the **summary** to the meeting page so
-it lives with the note, not only in the repo, plus a one-line pointer to the `meetings/` file for
+it lives with the note, not only in the repo, plus a one-line pointer to the meetings file for
 the full writeup. The decisions / actions / questions go to their own databases in step 6, not
 duplicated here.
 
@@ -288,7 +298,7 @@ guests. Omit a person property rather than guessing.
 
 ## 7. Report
 
-List the summary added to the meeting page, what was written to `meetings/` (including the topics
+List the summary added to the meeting page, what was written to the meetings folder, by its path (including the topics
 used and whether a transcript was linked), and the rows created, with URLs.
 
 State **which sources the synthesis came from**, and name the transcript file if one was used. If

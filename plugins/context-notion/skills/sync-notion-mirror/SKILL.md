@@ -1,15 +1,15 @@
 ---
 name: sync-notion-mirror
-description: Refresh the read-only mirror of the project's Notion databases into its context repo (notion/) so teammates without a working Notion connection can still read the actions, open questions, decision log and whatever else the project mirrors. Triggers like "sync the notion mirror", "refresh the notion export", "update the mirror", "how stale is the notion mirror".
+description: Refresh the read-only mirror of the project's Notion databases into its workspace (.context/notion/) or legacy context repo (notion/) so teammates without a working Notion connection can still read the actions, open questions, decision log and whatever else the project mirrors. Triggers like "sync the notion mirror", "refresh the notion export", "update the mirror", "how stale is the notion mirror".
 disable-model-invocation: true
 ---
 
-# Sync the Notion mirror into the context repo
+# Sync the Notion mirror
 
-Pulls the project's Notion databases and regenerates the context repo's `notion/` — the
-committed, read-only copy that teammates without the Notion connector can read. **Read
+Pulls the project's Notion databases and regenerates its mirror — `.context/notion/` in a
+workspace, `notion/` in a legacy context repo — the committed, read-only copy that teammates without the Notion connector can read. **Read
 `notion-config` first**; every ID, schema and person below comes from the project's
-`context.json`.
+config (`.claude/workspace.json`, or a legacy `context.json`).
 
 **Why this exists:** the Notion connector only works fully for a workspace **member**. A
 **guest**'s queries return empty results rather than errors, so their sessions see nothing at
@@ -23,21 +23,24 @@ Requires the Notion connection this project declares — and unlike the skills t
 nothing, stop and say a member has to run it. Never regenerate the mirror from a partial read;
 that replaces good rows with an empty file.
 
-## 1. Find the context checkout
+## 1. Find the mirror
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --writable)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+MIRROR="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" mirror)"
 ```
 
-Stop if it exits non-zero — say so rather than writing somewhere else. Today's date:
+`workspace.mjs` finds the nearest `.claude/workspace.json`, else the context repo (stderr names
+the `route=`); `layout.mjs` names that root's mirror folder, and `mirror-render.mjs` writes into
+the same one by itself. Stop if either exits non-zero — say so rather than writing somewhere else. Today's date:
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs" today`.
 
-`cat "$ROOT/notion/_synced.json"` tells you when this last ran, per database. If it ran today
+`cat "$MIRROR/_synced.json"` tells you when this last ran, per database. If it ran today
 and nothing has changed in Notion, say so and stop — a no-op commit is noise.
 
 ## 2. Pull the databases
 
-The keys and IDs are in `context.json`'s `state.notion.databases`; the property names are in
+The keys and IDs are in the config's `state.notion.databases`; the property names are in
 `schemas`. Read them there, don't retype them. Query each with the project's Notion connection,
 and **page until you have every row**: a truncated result set doesn't look truncated once it's
 rendered, it just looks like rows were deleted.
@@ -66,7 +69,7 @@ are genuinely blank — leave `rationale` out for those rather than inventing on
 ## 3. Build the export JSON
 
 Write one file (a scratch path, **not** inside the repo), keyed by the same database keys
-`context.json` uses. The renderer's header comment carries the full field list; the three
+the config uses. The renderer's header comment carries the full field list; the three
 contract keys have purpose-built layouts:
 
 ```json
@@ -108,7 +111,7 @@ open actions" and blanks the file.
 node "${CLAUDE_PLUGIN_ROOT}/scripts/mirror-render.mjs" "$ROOT" export.json
 ```
 
-Writes `notion/*.md`, `notion/*.json` and `notion/_synced.json`. Formatting, sort order, grouping
+Writes `*.md`, `*.json` and `_synced.json` into `$MIRROR`. Formatting, sort order, grouping
 and clipping all live in the script so that two syncs with no Notion changes produce **no diff** —
 don't hand-edit its output to make it read better, or every future sync fights your edit.
 `--dry-run` shows what it would write; `--today YYYY-MM-DD` pins the stamp.
@@ -120,7 +123,7 @@ mentioning to the user.
 ## 5. Show the diff, then ask before committing
 
 ```bash
-git -C "$ROOT" diff --stat notion/
+git -C "$ROOT" diff --stat "$MIRROR"
 ```
 
 **Show it and get an explicit yes before committing.** The interesting part is what *changed in
@@ -129,12 +132,12 @@ actions closed), because it is the most useful thing to come out of this run. A 
 every line means the renderer changed, not Notion; check that before committing.
 
 ```bash
-git -C "$ROOT" add notion/ && git -C "$ROOT" commit -m "notion: sync mirror (YYYY-MM-DD)" && git -C "$ROOT" push
+git -C "$ROOT" add "$MIRROR" && git -C "$ROOT" commit -m "notion: sync mirror (YYYY-MM-DD)" && git -C "$ROOT" push
 ```
 
 If the push fails on credentials, report the commit and tell the user which checkout to push
 from — `$ROOT` is printed by the resolver.
 
-**Not this skill:** transferring the queue in `pending/` *into* Notion is `process-pending` (the
+**Not this skill:** transferring the pending queue *into* Notion is `process-pending` (the
 other direction). Enriching sparse rows is `tidy-stakeholders` / `tidy-projects`. Condensing
 `memory.md` and the threads is context-kit-core's `curate-context`.

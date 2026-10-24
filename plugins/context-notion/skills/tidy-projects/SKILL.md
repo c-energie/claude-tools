@@ -6,7 +6,7 @@ description: Enrich and tidy the project's Notion register of external projects 
 # Tidy the external-projects register
 
 The sibling of `tidy-stakeholders`, for the other half of the pair. Rows arrive sparse — a name
-from a conversation, a URL from a chat, a transferred `pending/` entry — and this skill walks
+from a conversation, a URL from a chat, a transferred pending-queue entry — and this skill walks
 them, **enriches each from public sources** and **flags the structural issues** below. It edits
 live Notion, so it **proposes a batch and gets confirmation before writing**. Requires the
 project's Notion connection and web access. **Read `notion-config` first.**
@@ -90,11 +90,11 @@ research-and-create path, including the duplicate check. This skill starts from 
 exist.
 
 **If Notion can't be reached** — the query fails, or returns nothing because the user is a
-workspace guest — you can still **read the context repo's `notion/related-projects.md` mirror**
+workspace guest — you can still **read the Notion mirror's `related-projects.md`** (folder per `notion-config` §4)
 and report which rows are sparse, unlinked or duplicated, as a snapshot with its `syncedOn` date.
 **You cannot apply anything.** Hand the list to someone with a working connection rather than
 describing changes as made.
 
 **Not this skill:** creating a row from a URL or a name is `capture-project`. Tidying the
-*organisations* is `tidy-stakeholders`. Transferring queued entries from the context repo is
+*organisations* is `tidy-stakeholders`. Transferring queued entries from the pending queue is
 `process-pending`.

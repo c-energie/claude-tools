@@ -1,22 +1,37 @@
 ---
 name: notion-config
-description: How the context-notion skills find and use a project's Notion configuration — the context.json state.notion contract, the workspace-guest gap, the property traps, and the fallback ladder. Background knowledge for every skill in this plugin; not a task to run.
+description: How the context-notion skills find and use a project's Notion configuration — the state.notion contract in workspace.json (or a legacy context.json), the workspace-guest gap, the property traps, and the fallback ladder. Background knowledge for every skill in this plugin; not a task to run.
 user-invocable: false
 ---
 
 # The project's Notion configuration
 
 Every skill in this plugin is generic: which databases, which properties, which people all
-come from the **project's context repo**, at runtime. This skill is the one place that
+come from the **project's config**, at runtime — `.claude/workspace.json` in a workspace, or a
+legacy context repo's `context.json`. This skill is the one place that
 procedure lives.
 
 ## 1. Resolve the config
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
+CONFIG="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" config)"
 ```
 
-Read `$ROOT/context.json`. (No shell — Cowork? Read `context.json` from the context repo over
+Read `$CONFIG`. The ladder, which `lib.mjs` follows for every script here:
+**`CONTEXT_CONFIG`** (an explicit path, for testing) wins; otherwise the **nearest
+`.claude/workspace.json`** at or above the working directory — from a member repo that is still
+the workspace's; otherwise the **legacy route**, `context-repo.sh` and that repo's
+`context.json`, until the last context repo is migrated. `workspace.mjs` prints which route
+answered on stderr (`route=workspace` / `route=context-repo`). A malformed nearest
+`workspace.json` is reported and goes to the legacy route — it never skips on to an outer
+workspace. In a workspace, `state.notion` and `state.backend` are this plugin's keys of the file
+and nothing else is: other `state.*` blocks belong to the plugins that read them, `connections`
+to `setup-connectors`, the rest to `project-workspace`.
+
+(No shell — Cowork? If the uploaded folder holds a `.claude/workspace.json`, read it, then the
+copy in the repo its `repo` key names over the GitHub connector — that copy wins. Otherwise read
+`context.json` from the context repo over
 the GitHub MCP connector instead. Which repo: the `PROJECT_CONTEXT_REPO` env value in the
 project's `.claude/settings.json` if that file is visible, else a one-line `.context-repo` /
 `context-repo.txt` plain marker, or a `context-project.json` JSON marker whose `contextRepo` and `connections` keys name the repo AND the MCP connection per provider, in `.claude/`, the working folder, `/mnt/project/`, or `~/mnt/.projects/*/docs/` — that marker, attached to
@@ -26,7 +41,7 @@ if none is found, say no context repo is configured — never guess one.)
 - `state.backend` must be `"notion"`. If it is missing, `null`, or something else: **say this
   project declares no Notion backend and stop.** Don't guess a database. Structured items can
   still be queued with `add-pending` — the queue needs no backend.
-- **`connections` (top level of context.json) gates which connectors serve this project** —
+- **`connections` (top level of the config) gates which connectors serve this project** —
   e.g. `{ "github": "github-thesis", "notion": "notion-thesis" }`, naming MCP server
   namespaces (`mcp__notion-thesis__…` tools). A machine can hold several workspace-scoped
   connections; **use ONLY the one this project declares** for each provider. If several
@@ -45,7 +60,7 @@ if none is found, say no context repo is configured — never guess one.)
 - `state.notion.defaults` — e.g. `dueSoonDays`.
 
 If a skill needs a database key or schema the project doesn't define, say which key is missing
-from `context.json` — a one-line fix — rather than improvising against a database found by
+from the config — a one-line fix — rather than improvising against a database found by
 search.
 
 ## 2. The two Notion ids
@@ -66,9 +81,9 @@ the id came from.
 
 **`pageParents` missing** (a `state.notion` written before the map existed): resolve at
 runtime — retrieve the data source with `databases.<key>` and read `parent.database_id`
-from the response — and proceed with the write. Then tell the user their `context.json`
-predates `pageParents` and offer to add it (the ids just resolved, keyed like `databases`);
-never rewrite `context.json` unasked.
+from the response — and proceed with the write. Then tell the user their config
+predates `pageParents` and offer to add it (the ids just resolved, keyed like `databases`,
+through `notion-discover`'s `notion-state.mjs`); never rewrite the config unasked.
 
 ## 3. The workspace-guest gap
 
@@ -83,12 +98,13 @@ return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
 
 ## 4. Fallback ladder
 
-- **Reads:** if Notion returns empty or fails, fall back to the context repo's `notion/`
-  mirror if the repo has one — and **label the answer with its `syncedOn` date** (from
-  `notion/_synced.json`). The mirror is a snapshot: Notion wins over it. No mirror either →
+- **Reads:** if Notion returns empty or fails, fall back to the project's Notion mirror if it
+  has one — `.context/notion/` in a workspace, `notion/` in a legacy context repo; ask
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" mirror` rather than typing either —
+  and **label the answer with its `syncedOn` date** (from `_synced.json` in that folder). The mirror is a snapshot: Notion wins over it. No mirror either →
   say the read couldn't be done, not "there are none".
 - **Writes:** if Notion can't be written, **don't retry and don't drop it — `add-pending`**
-  queues it in the context repo for someone with access to transfer.
+  queues it in the project's pending queue for someone with access to transfer.
 - State which route produced an answer (live Notion, mirror + date, or queued) — provenance
   differs and the user needs to know which they got.
 

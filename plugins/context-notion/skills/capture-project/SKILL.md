@@ -11,7 +11,7 @@ project's Notion connection and web access. **Read `notion-config` first.**
 
 **Targets:** `databases.relatedProjects` (whichever key the project declares for that register)
 and, as the target of its "organisations involved" relation, `databases.stakeholders`. If the
-project declares no such register, say which key is missing from `context.json` rather than
+project declares no such register, say which key is missing from the config rather than
 picking a database by search.
 
 **Confirm the schema before the first write of a session** — read `schemas.relatedProjects`, and
@@ -73,7 +73,7 @@ exactly; don't assume properties the schema doesn't show.
 - **If Notion can't be reached** — the write fails, or the duplicate query comes back empty because
   the user is a workspace guest — **use `add-pending`** rather than retrying. A name and the URL is
   enough; `tidy-projects` researches it after transfer. Do step 1's duplicate check against the
-  context repo's `notion/related-projects.md` mirror instead: an empty Notion query is **not** proof
+  mirror's `related-projects.md` instead (which folder: `notion-config` §4): an empty Notion query is **not** proof
   the project is new, and that is how duplicates get created in the first place.
 
 **Not this skill:** enriching or de-duplicating rows already in the register is `tidy-projects`.

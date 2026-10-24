@@ -1,12 +1,16 @@
 #!/usr/bin/env node
-// Parse the context repo's `pending/` inbox — the queue where anyone without a working Notion
+// Parse the project's pending inbox — `.context/pending/` in a workspace, `pending/` in a legacy
+// context repo (layout.mjs decides which) — the queue where anyone without a working Notion
 // connection writes actions, decisions, questions, stakeholders and projects for later transfer
 // into Notion. Workspace *guests* are the usual case: the connector returns them nothing rather
 // than erroring, so an empty result is never evidence of absence and they need somewhere to
 // write. Which people that covers is a fact about the project, not about this plugin — the
-// roster lives in the context repo's `state.notion.people`.
+// roster lives in the project's `state.notion.people`.
 //
-//   node pending-parse.mjs <context-root> [--type action] [--json]
+//   node pending-parse.mjs <root> [--type action] [--json]
+//
+// <root> is a workspace root or a context repo, as workspace.mjs printed it. Every `file` this
+// reports is relative to it (`.context/pending/actions.md`), and --drain resolves the same form.
 //
 // The entry format is defined here, once, rather than described in five skill files that then
 // drift. `context-notion:add-pending` writes this format; `context-notion:process-pending` reads it.
@@ -30,6 +34,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { config, readInput, today } from './lib.mjs';
+import { layout } from './layout.mjs';
 
 const args = process.argv.slice(2);
 const list = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
@@ -42,10 +47,13 @@ const typeFilter = (() => {
   return i >= 0 ? args[i + 1] : undefined;
 })();
 
-if (!root) { console.error('pending-parse.mjs: needs the context repo root'); process.exit(2); }
-const dir = join(root, 'pending');
+if (!root) { console.error('pending-parse.mjs: needs the workspace or context repo root'); process.exit(2); }
+const where = layout(root);
+const dir = where.pending;
+// Relative, with `/`, as it appears in messages and in the `file` of every entry.
+const rel = where.rel.pending;
 if (!existsSync(dir)) {
-  console.error(`pending-parse.mjs: no pending/ directory in ${root}`);
+  console.error(`pending-parse.mjs: no ${rel}/ directory in ${root}`);
   process.exit(2);
 }
 
@@ -273,8 +281,8 @@ function validate(entry) {
           entry.warnings.push(`\`${key}: ${name}\` is not on the roster — the person field will be left empty`);
         } else if (!hit.notionUserId) {
           // On the roster but we don't hold their Notion ID. Saying so beats both guessing and
-          // silently dropping them — the fix is one line in the context repo's context.json (state.notion.people).
-          entry.warnings.push(`\`${key}: ${name}\` has no Notion user ID in context.json's state.notion.people `
+          // silently dropping them — the fix is one line in the project's config (state.notion.people).
+          entry.warnings.push(`\`${key}: ${name}\` has no Notion user ID in ${where.rel.config}'s state.notion.people `
             + '— the person field will be left empty until someone fills it in');
         } else {
           resolved.push({ name: hit.name, notionUserId: hit.notionUserId });
@@ -307,7 +315,7 @@ for (const file of readdirSync(dir).sort()) {
   if (typeFilter && type !== typeFilter) continue;
   filesRead.push(file);
   for (const entry of parseFile(type, readFileSync(join(dir, file), 'utf8'))) {
-    entries.push(validate({ ...entry, file: `pending/${file}` }));
+    entries.push(validate({ ...entry, file: `${rel}/${file}` }));
   }
 }
 
@@ -342,7 +350,7 @@ if (args.includes('--drain')) {
     byFile.get(hit.file).push({ ...hit, notionUrl: r.notionUrl });
   }
 
-  const doneFile = join(dir, 'done', `${stamp}-processed.md`);
+  const doneFile = join(where.done, `${stamp}-processed.md`);
   const doneBlocks = [];
   const report = [];
 
@@ -362,7 +370,7 @@ if (args.includes('--drain')) {
   }
 
   if (doneBlocks.length) {
-    mkdirSync(join(dir, 'done'), { recursive: true });
+    mkdirSync(where.done, { recursive: true });
     const head = existsSync(doneFile) ? readFileSync(doneFile, 'utf8').trimEnd() + '\n\n' : [
       `# Transferred to Notion — ${stamp}`,
       '',
@@ -376,7 +384,7 @@ if (args.includes('--drain')) {
 
   console.log([
     `**Drained** · ${list(results).length} entr${list(results).length === 1 ? 'y' : 'ies'} → `
-    + `\`pending/done/${stamp}-processed.md\``,
+    + `\`${where.rel.done}/${stamp}-processed.md\``,
     '',
     ...report,
     '',
@@ -404,7 +412,7 @@ if (args.includes('--slack')) {
   const by = addedBy && !addedBy.startsWith('--') ? addedBy : null;
 
   if (!entries.length) {
-    console.log('The `pending/` queue in the context repo is empty — nothing waiting for Notion.');
+    console.log(`The \`${rel}/\` queue is empty — nothing waiting for Notion.`);
     process.exit(0);
   }
 
@@ -437,15 +445,16 @@ if (args.includes('--slack')) {
   }
   if (errored.length) {
     out.push(`⚠️ ${errored.length} entr${errored.length === 1 ? 'y' : 'ies'} won't transfer as `
-      + `written (${errored.map((e) => `\`${e.file.replace('pending/', '')}:${e.line}\``).join(', ')}) `
+      + `written (${errored.map((e) => `\`${e.file.slice(rel.length + 1)}:${e.line}\``).join(', ')}) `
       + '— a date or a status Notion won\'t take.', '');
   }
-  out.push('In the context repo → `pending/`. Run `context-notion:process-pending` to transfer them.');
+  out.push(`In ${where.kind === 'workspace' ? 'the workspace' : 'the context repo'} → \`${rel}/\`. `
+    + 'Run `context-notion:process-pending` to transfer them.');
 
   const text = out.join('\n');
   // 5000 is the per-element limit; the cap above makes this essentially unreachable, but a
   // silently truncated message would be worse than a blunt one.
-  console.log(text.length > 4900 ? `${text.slice(0, 4700)}\n\n…truncated. See \`pending/\`.` : text);
+  console.log(text.length > 4900 ? `${text.slice(0, 4700)}\n\n…truncated. See \`${rel}/\`.` : text);
   process.exit(0);
 }
 

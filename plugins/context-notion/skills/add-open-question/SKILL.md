@@ -1,6 +1,6 @@
 ---
 name: add-open-question
-description: Add one or more open questions to the project's Notion open-questions database (which database comes from the context repo's context.json). Use when an unresolved question or uncertainty should be tracked — triggers like "add an open question", "log these open questions", "capture what's unresolved".
+description: Add one or more open questions to the project's Notion open-questions database (which database comes from the project's config, workspace.json or a legacy context.json). Use when an unresolved question or uncertainty should be tracked — triggers like "add an open question", "log these open questions", "capture what's unresolved".
 ---
 
 # Add an open question
@@ -11,7 +11,7 @@ fallback ladder.
 
 ## Target
 
-The **open-questions** database from the project's `context.json`: create via
+The **open-questions** database from the project's config (`notion-config` §1): create via
 `API-post-page` with parent `{type: "database_id", database_id: pageParents.openQuestions}`
 — never `databases.openQuestions`, the read-side data source id (the misleading "not
 shared" 404; see `notion-config` on the two ids). A `notion-create-pages`-style tool

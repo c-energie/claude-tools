@@ -54,15 +54,16 @@ surface a root-sourced plugin).
 - **Some scripts exist as deliberate copies** — a skill can only reference
   `${CLAUDE_PLUGIN_ROOT}/scripts/...` inside its **own** plugin, so anything a skill calls at
   runtime must sit there. `context-repo.sh`, `dates.mjs` and `bash-bin.mjs` are in all three;
-  `lib.mjs` and
-  `pending-parse.mjs` are in context-notion and context-slack. **Fix the original first, then
+  `workspace.mjs` (core's) and `lib.mjs`, `pending-parse.mjs` and `layout.mjs` (context-notion's)
+  are in context-notion and context-slack; `json-block.mjs` (core's) is in context-notion.
+  `COPIES` in `check-plugin.mjs` is the full list. **Fix the original first, then
   copy** — and the original is decided by *layer, not by who uses it most*: `context-repo.sh`,
   `dates.mjs` and `bash-bin.mjs` originate in **context-kit-core**, because all three are generic
   (dates.mjs is pure UTC arithmetic; bash-bin.mjs is a Windows platform fact — pick Git Bash, never
   WSL's `System32\bash.exe`, which cannot see the paths or the `$HOME` these scripts assume; core's
-  own skills call both). `lib.mjs` and `pending-parse.mjs` originate in
+  own skills call both). `lib.mjs`, `pending-parse.mjs` and `layout.mjs` originate in
   **context-notion**, which is the only layer entitled to know about `state.notion`, Notion user
-  IDs and the queue format. `check-plugin.mjs` verifies this and errors on drift, comparing
+  IDs, the queue format and where the queue and the mirror live. `check-plugin.mjs` verifies this and errors on drift, comparing
   below each copy's header banner — the one part meant to differ. A tool that is *not* called by
   a skill does not need copying: `check-plugin.mjs` and `bump-version.mjs` live in
   context-kit-core alone, and had drifted while they were duplicated.

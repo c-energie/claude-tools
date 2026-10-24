@@ -67,12 +67,12 @@ can be applied directly, after confirmation.
    deletion.
 
 **If Notion can't be reached** — the query fails, or returns nothing because the user is a
-workspace guest — you can still **read the context repo's `notion/stakeholders.md` mirror** and
+workspace guest — you can still **read the Notion mirror's `stakeholders.md`** (folder per `notion-config` §4) and
 report which rows are sparse or look duplicated, as a snapshot with its `syncedOn` date. **You
 cannot apply anything**: no enrichment, no relation edits. Hand the list to someone with a working
 connection rather than describing changes as made.
 
 **Not this skill:** the same job on the project register is `tidy-projects`. Reading the people out
-is `list-people`. Rows arriving from the context repo's queue come via `process-pending`, which
+is `list-people`. Rows arriving from the pending queue come via `process-pending`, which
 can hand what it created straight to this skill — so "tidy the ones that just landed" is a valid
 scope.

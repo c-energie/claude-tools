@@ -4,7 +4,7 @@
 
 The **Slack delivery layer** plugin (`context-slack`) in the c-energie context architecture:
 core = context-kit-core (repo machinery), middle = context-notion (Notion) and this (Slack),
-project = each context repo's `context.json`. Nothing project-specific belongs here — no channel,
+project = each workspace's `.claude/workspace.json` (or a legacy context repo's `context.json`). Nothing project-specific belongs here — no channel,
 no member ID, no workspace name. A skill that needs one reads `connections.slack`, the
 `defaults.slackChannels` purpose map (falling back to `defaults.slackChannel`) or the roster's
 `slackMemberId`; `skills/slack-config/SKILL.md` is the contract and the file to update when it
@@ -40,13 +40,19 @@ CONTEXT_CONFIG=path/to/context.json node scripts/pending-parse.mjs "$ROOT" --sla
 - **Only the declared `connections.slack` connection** — several may be visible on one machine.
 - **No connector ⇒ show the text and say it was NOT sent.** Never report a message as posted, and
   never treat a missing connector as failure of the underlying job.
-- **`context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `lib.mjs` and `pending-parse.mjs` are COPIES** —
-  plugins cannot reference each other's `${CLAUDE_PLUGIN_ROOT}`. Fix the original first, then copy
-  here; the origin goes by *layer*, so the three generic ones (`context-repo.sh`, `dates.mjs`,
-  `bash-bin.mjs`) come from context-kit-core and the two Notion-coupled ones (`lib.mjs`,
-  `pending-parse.mjs`) from context-notion. `pending-parse.mjs` owns the pending
+- **`context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `workspace.mjs`, `lib.mjs`, `pending-parse.mjs`
+  and `layout.mjs` are COPIES** — plugins cannot reference each other's `${CLAUDE_PLUGIN_ROOT}`.
+  Fix the original first, then copy here; the origin goes by *layer*, so the four generic ones
+  (`context-repo.sh`, `dates.mjs`, `bash-bin.mjs`, `workspace.mjs`) come from context-kit-core and
+  the three Notion-coupled ones (`lib.mjs`, `pending-parse.mjs`, `layout.mjs`) from context-notion. `pending-parse.mjs` owns the pending
   entry format; a drifted copy breaks the single-definition rule — and `check-plugin.mjs` now
   errors on drift, comparing below each copy's header banner.
+- **The queue and the mirror are where `layout.mjs` says** — `.context/pending/` and
+  `.context/notion/` in a workspace, `pending/` and `notion/` in a legacy context repo — and config
+  is the nearest `.claude/workspace.json` before any context repo (`CONTEXT_CONFIG` still wins).
+  A skill here never types one of those paths: notify-pending reads the queue context-notion
+  wrote, and its "not pushed yet" check runs against `$ROOT`, the repo that queue is committed to,
+  scoped to the queue — a workspace repo's branch is ahead for threads and memory too.
 - **Never spawn bare `bash`** — go through `bashBin()` from `scripts/bash-bin.mjs`. On Windows the
   `bash` on PATH is WSL's `System32\bash.exe`, which has its own filesystem and `$HOME` and so
   cannot see either this script or the clone the resolver prints back.

@@ -10,7 +10,7 @@ them. Requires the Notion (MCP) connection. **Read `notion-config` first.**
 
 ## Find the row(s)
 
-Query `databases.actions` (from `context.json`) and match on the title. Ambiguous match →
+Query `databases.actions` (from the config) and match on the title. Ambiguous match →
 show the candidates and ask; never update a guessed row. **Empty result ≠ no actions** —
 guest gap; check the mirror before concluding, but note the mirror can't be *updated* — an
 edit needs live Notion, so a guest's edit becomes an `add-pending` note instead.

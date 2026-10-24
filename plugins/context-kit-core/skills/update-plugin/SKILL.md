@@ -120,16 +120,18 @@ not suggestions. Each plugin has its own `CLAUDE.md` stating its invariants; rea
   **its own** plugin: plugins cannot reach into each other's install directories.
 - **Some scripts are deliberate copies, and `check-plugin.mjs` enforces it.** A skill can only
   reference `${CLAUDE_PLUGIN_ROOT}/scripts/...` in its *own* plugin, so anything a skill calls at
-  runtime is duplicated: `context-repo.sh` and `dates.mjs` in all three, `lib.mjs` and
-  `pending-parse.mjs` in context-notion and context-slack. Fix the **origin** first, then copy it
+  runtime is duplicated: `context-repo.sh` and `dates.mjs` in all three, `lib.mjs`,
+  `pending-parse.mjs` and `layout.mjs` in context-notion and context-slack, `workspace.mjs` from
+  core into both of those, and `json-block.mjs` from core into context-notion. The full list, with
+  each origin, is `COPIES` in `check-plugin.mjs`. Fix the **origin** first, then copy it
   over the others, keeping only each copy's header banner. The linter compares below that banner
   and errors on any other difference, naming the direction to copy.
 
   The origin is decided by **layer, not by who uses it most**: `context-repo.sh` and `dates.mjs`
   originate in **context-kit-core** because both are generic — a script with no backend in it
-  belongs to core even when Notion skills are its heaviest callers. `lib.mjs` and
-  `pending-parse.mjs` originate in **context-notion**, the only layer entitled to know
-  `state.notion`, Notion user IDs and the queue format. Putting generic machinery in a backend
+  belongs to core even when Notion skills are its heaviest callers. `lib.mjs`,
+  `pending-parse.mjs` and `layout.mjs` originate in **context-notion**, the only layer entitled to
+  know `state.notion`, Notion user IDs, the queue format and where the queue and mirror live. Putting generic machinery in a backend
   layer is the same layering error as a hard-coded database ID, just pointing the other way.
 - **A script no skill calls does not need a copy.** `check-plugin.mjs` and `bump-version.mjs`
   take the target plugin's directory as an argument and run from the checkout, so they live in

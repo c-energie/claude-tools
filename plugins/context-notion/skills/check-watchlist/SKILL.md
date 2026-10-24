@@ -10,7 +10,7 @@ a report not published. You don't want them cluttering the real to-do list, but 
 recurring nudge to re-check until they open. These live in the project's **actions** database as
 **watch items**. This skill both adds them and reviews them. **Read `notion-config` first.**
 
-**This skill cannot fall back to the `notion/` mirror.** The mirror deliberately excludes
+**This skill cannot fall back to the Notion mirror.** The mirror deliberately excludes
 `Watching` rows — they are reminders, not work, and listed beside real actions they read as a
 pile of overdue tasks. So an empty or failed Notion query here means **stop and say the
 connection is needed**; it does not mean the watch list is empty. Never answer "nothing to check
