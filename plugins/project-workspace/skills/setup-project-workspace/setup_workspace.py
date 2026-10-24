@@ -1218,7 +1218,11 @@ def cmd_add_analysis(args):
     if changed:
         write_state(state)
     refresh_claude_md(state)
-    analysis = analysis_dir_of(document) if not DRY_RUN else (args.dir or "ANALYSIS_DIR")
+    analysis = analysis_dir_of(document)
+    if DRY_RUN and not analysis:
+        analysis = args.dir or "ANALYSIS_DIR"
+    if analysis:
+        ensure_doc_repo_env(document, analysis)
     say("\nDocument checks:")
     for problem in document_problems(document) or ["ok: every Sections/<Name>/Figures/ "
                                                    "is in \\graphicspath"]:
@@ -1226,6 +1230,52 @@ def cmd_add_analysis(args):
     say(f"\nAnalysis repo ready at {doc['dir']}/{analysis}/, with its own venv. "
         "Next: the plotly check and the proof (add-analysis, §4).")
     return 0
+
+
+# The module analysis-template #12 (0cab518, "Nested layouts", 2026-10-11) added: with it,
+# doc_analysis finds its document from the host's layout.toml (find_host_layout).
+LAYOUT_LOOKUP = "layout.py"
+ENV_KEY = re.compile(r"^\s*(?:export\s+)?DOC_REPO\s*=")
+
+
+def has_layout_lookup(checkout):
+    """Whether an analysis checkout's doc_analysis can find its document from layout.toml.
+    An adopted or restored repo carries the doc_analysis it was made with, not the current
+    template's (#38), so this is read from the checkout, never assumed."""
+    return any((checkout / p / LAYOUT_LOOKUP).is_file() for p in ANALYSIS_PACKAGES)
+
+
+def ensure_doc_repo_env(document, analysis):
+    """Give a nested analysis repo that predates analysis-template #12 a DOC_REPO in its
+    .env. Without one, its document_repo() raises `DOC_REPO is not set` from the analysis
+    repo and the document root alike, after a step that reported success (#38). A current
+    repo needs nothing, so it gets no .env. Every other line of an existing .env keeps its
+    bytes, and a DOC_REPO already there is the user's: it is never overwritten. The file is
+    gitignored by the template and never named in anything to commit."""
+    checkout = document / analysis
+    env = checkout / ".env"
+    shown = checkout.relative_to(ROOT).as_posix()
+    if not (checkout / ".git").exists():
+        # Only under --dry-run: setup-nested.sh has not cloned it, so there is nothing to read.
+        say(f"  (would write DOC_REPO={document.as_posix()} to {shown}/.env if the repo "
+            f"predates analysis-template #12, i.e. has no doc_analysis/{LAYOUT_LOOKUP})")
+        return
+    if has_layout_lookup(checkout):
+        return
+    why = (f"{shown}/ predates analysis-template #12 (no doc_analysis/{LAYOUT_LOOKUP}), so it "
+           "cannot find its document from layout.toml and needs DOC_REPO in its .env "
+           "(gitignored: never commit it). A template sync -- porting the current template's "
+           "doc_analysis -- removes the need.")
+    # Bytes, not read_text: that would turn CRLF into LF across the user's other lines.
+    text = env.read_bytes().decode("utf-8") if env.is_file() else ""
+    if any(ENV_KEY.match(line) for line in text.splitlines()):
+        say(f"  {why}\n  {shown}/.env already sets DOC_REPO: left as it is.")
+        return
+    eol = "\r\n" if "\r\n" in text else "\n"
+    if text and not text.endswith(("\n", "\r")):
+        text += eol
+    write(env, f"{text}DOC_REPO={document.as_posix()}{eol}")
+    say(f"  {why}")
 
 
 def nested_analysis_member(doc):

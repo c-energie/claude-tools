@@ -10,9 +10,11 @@ description: Nest an analysis repo (c-energie/analysis-template; notebooks and d
 The analysis repo is **nested inside its document repo**: a separate repo with its own
 remote, gitignored by the document repo and recorded in its `layout.toml`
 (`writing-hosts-analysis`). It has its own `.venv`. It finds the document from `layout.toml`,
-so no `DOC_REPO` is set anywhere. The work is done by the document repo's own
-`setup-nested.sh` (writing-template ships it; the step adds it if missing, or replaces a
-copy too old to know `--python` and in-place `--dir`); this skill does
+so no `DOC_REPO` is set — except in an adopted or restored repo made before
+analysis-template #12 (no `doc_analysis/layout.py`), which carries the `doc_analysis` it was
+made with: the step writes `DOC_REPO` into that repo's gitignored `.env` (§3). The work is
+done by the document repo's own `setup-nested.sh` (writing-template ships it; the step
+adds it if missing, or replaces a copy too old to know `--python` and in-place `--dir`); this skill does
 the interview, the proof and the hand-offs.
 
 Prerequisite: `.claude/workspace.json` listing the document. Otherwise (or with only a
@@ -46,7 +48,8 @@ template).
 1. **New or existing analysis repo?** New → created from `analysis-template` as
    `<owner>/<document repo>-analysis`, owner defaulting to the document repo's GitHub owner.
    An existing repo whose notebooks feed *only this document* → adopted with `--from <url>`
-   (cloned; the original untouched). A larger project only partly feeding it → still
+   (cloned; the original untouched; one older than analysis-template #12 gets a `.env`
+   `DOC_REPO`, §3). A larger project only partly feeding it → still
    **new**, with question 6.
 2. **Names** (new) — repo name (default `<document repo>-analysis`) and directory inside the
    document repo (default the same); visibility (default private).
@@ -89,6 +92,13 @@ one — records the analysis repo itself as a `kind: "analysis"` member (`dir`
 - `Sections/<Name>/Figures/ is not in \graphicspath` → add the entry (adapt-existing-document
   step 3) for each section that will get figures.
 
+**An adopted or restored repo older than analysis-template #12** has no
+`doc_analysis/layout.py`, so it cannot find the document from `layout.toml`: the step writes
+`DOC_REPO=<document path>` into its `.env` and says so (`--dry-run` only says it would).
+Other lines of an existing `.env` are kept; a `DOC_REPO` already there is left alone. `.env`
+is gitignored: never commit it. A template sync (porting the current template's
+`doc_analysis`) removes the need, and the line with it. A repo created now gets no `.env`.
+
 Extras later (`marimo`, `publish`, …): `SETUP sync --document <name> --extra <x>`.
 
 ## 4. Prove the pipeline
@@ -108,8 +118,9 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
 - **The document is found.** `uv run python -c "import sys; from doc_analysis import notebook_setup, document_repo; notebook_setup(); print(sys.executable); print(document_repo())"`
   — expect this repo's `.venv` interpreter, then the document repo's absolute path. Run the
   same with that interpreter from the **document repo root** too: an IDE opening the
-  document starts its kernel there. `document_repo()` raises `no Sections/ directory` for an
-  adopted Overleaf document not yet adapted; that is expected — adapt-existing-document runs
+  document starts its kernel there. `DOC_REPO is not set` means the repo predates
+  analysis-template #12 and its `.env` lacks the `DOC_REPO` §3 writes: check that file.
+  `document_repo()` raises `no Sections/ directory` for an adopted Overleaf document not yet adapted; that is expected — adapt-existing-document runs
   this proof once the first section is in.
 - **A figure lands** (document still has `Sections/Example/`, plotly):
   `uv run jupyter nbconvert --to notebook --execute notebooks/example/example_figure.ipynb --output-dir <workspace>/.setup/<document dir>/executed --ExecutePreprocessor.timeout=600`.

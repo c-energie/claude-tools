@@ -501,8 +501,8 @@ class FindDocument(Workspace):
         self.assertEqual(sw.describe({"dir": "x", "repo": "o/x", "kind": "document"})["name"], "x")
 
 
-class AddAnalysis(Workspace):
-    """add-analysis hands the work to the document's own setup-nested.sh."""
+class NestsAnAnalysis(Workspace):
+    """A workspace with one document, whose setup-nested.sh is stubbed to write layout.toml."""
 
     def setUp(self):
         super().setUp()
@@ -521,6 +521,10 @@ class AddAnalysis(Workspace):
                 mock.patch.object(sw, "gh_raw", return_value="#!/bin/sh\n"):
             self.call("add-analysis", *flags)
         return run
+
+
+class AddAnalysis(NestsAnAnalysis):
+    """add-analysis hands the work to the document's own setup-nested.sh."""
 
     def test_runs_setup_nested_in_the_document_with_init_answers_after_dashes(self):
         run = self.add("--python", "3.12", "--distribution", "t-analysis", "--author", "A")
@@ -586,6 +590,54 @@ class AddAnalysis(Workspace):
     def test_bad_python_is_refused(self):
         with self.assertRaises(SystemExit):
             self.add("--python", "3.9")
+
+
+class AddAnalysisDocRepoEnv(NestsAnAnalysis):
+    """An adopted or restored analysis repo carries the doc_analysis it was made with. One
+    from before analysis-template #12 has no layout.py, cannot find its document from
+    layout.toml, and needs DOC_REPO in its .env (#38)."""
+
+    def add(self, *flags, lookup=False, env=None):
+        checkout = self.tmp / "thesis" / "thesis-analysis"
+        (checkout / ".git").mkdir(parents=True, exist_ok=True)
+        (checkout / "src" / "doc_analysis").mkdir(parents=True, exist_ok=True)
+        if lookup:
+            (checkout / "src" / "doc_analysis" / "layout.py").write_text("", encoding="utf-8")
+        if env is not None:
+            (checkout / ".env").write_bytes(env.encode("utf-8"))
+        return super().add("--from", "https://github.com/o/thesis-analysis.git", *flags)
+
+    def env(self):
+        return (self.tmp / "thesis" / "thesis-analysis" / ".env").read_bytes().decode("utf-8")
+
+    def test_a_repo_without_the_layout_lookup_gets_doc_repo(self):
+        self.add()
+        self.assertEqual(self.env(), f"DOC_REPO={(self.tmp / 'thesis').as_posix()}\n")
+        self.assertIn("predates analysis-template #12", self.out)
+        self.assertIn("template sync", self.out)
+
+    def test_a_repo_with_the_layout_lookup_gets_no_env(self):
+        self.add(lookup=True)
+        self.assertFalse((self.tmp / "thesis" / "thesis-analysis" / ".env").exists())
+        self.assertNotIn("DOC_REPO", self.out)
+
+    def test_other_lines_of_an_existing_env_are_kept(self):
+        self.add(env="NOTION_TOKEN=x\r\n# mine\r\nWIKI=y")
+        self.assertEqual(self.env(), "NOTION_TOKEN=x\r\n# mine\r\nWIKI=y\r\n"
+                         f"DOC_REPO={(self.tmp / 'thesis').as_posix()}\r\n")
+
+    def test_an_existing_doc_repo_is_not_overwritten(self):
+        self.add(env="A=1\nDOC_REPO=/somewhere/else\n")
+        self.assertEqual(self.env(), "A=1\nDOC_REPO=/somewhere/else\n")
+        self.assertIn("already sets DOC_REPO", self.out)
+
+    def test_dry_run_writes_no_env_but_says_it_would(self):
+        with mock.patch.object(sw, "find_sh", return_value="/bin/sh"), \
+                mock.patch.object(sw, "gh_raw", return_value="#!/bin/sh\n"):
+            self.call("--dry-run", "add-analysis", "--from",
+                      "https://github.com/o/thesis-analysis.git")
+        self.assertFalse((self.tmp / "thesis" / "thesis-analysis").exists())
+        self.assertIn("would write DOC_REPO=", self.out)
 
 
 class Sync(Workspace):
@@ -1486,6 +1538,14 @@ class Restore(FolderOfClones):
         nested = [c for c in ran.call_args_list if "setup-nested.sh" in c.args[0]]
         self.assertEqual(len(nested), 1)
         self.assertEqual(nested[0].kwargs["cwd"], self.tmp / "thesis")
+
+    def test_a_restored_repo_older_than_template_12_gets_doc_repo(self):
+        # ANALYSIS_FILES has no doc_analysis/layout.py: an analysis repo made before #12.
+        shutil.rmtree(self.tmp / "thesis")
+        self.restore()
+        env = self.tmp / "thesis" / "thesis-analysis" / ".env"
+        self.assertEqual(env.read_text(encoding="utf-8"),
+                         f"DOC_REPO={(self.tmp / 'thesis').as_posix()}\n")
 
     def test_dry_run_clones_nothing(self):
         shutil.rmtree(self.tmp / "thesis")
