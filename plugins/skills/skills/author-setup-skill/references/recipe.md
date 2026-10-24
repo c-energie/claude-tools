@@ -14,12 +14,17 @@ specifics.
 ## Split the work
 
 1. **The skill does the interview and the judgement; a script does the mechanics.** One
-   stdlib-only Python script per skill, run with `uv run --no-project --python 3.12` so no system
-   Python is needed. It has named steps; each step is **re-runnable** (reuses what exists,
+   dependency-free script per skill: stdlib Python run with `uv run --no-project --python 3.12`
+   so no system Python is needed, or node built-ins only where node is already the plugin's
+   language. A plugin-shipped script is told the project with `--root "${CLAUDE_PROJECT_DIR}"`. It has named steps; each step is **re-runnable** (reuses what exists,
    refuses rather than overwrites), takes `--dry-run`, and stops on the first failure with the
    fix in the message.
 2. **A state file shared between skills.** Setup writes it once (`workspace.toml`); every later
-   skill reads it instead of re-asking. **A shared state file must not carry a machine path**:
+   skill reads it instead of re-asking. **Owned state defaults to JSON**; use TOML only when
+   people hand-edit the file, since node reads JSON natively and has no TOML parser. When the
+   record already exists — defined by other skills, as `setup-diagram-store` fills in
+   `.diagrams.json` or `context.json` `state.diagrams` — the setup **joins** it instead of
+   inventing a file: it writes their schema, and its trigger is their check failing. **A shared state file must not carry a machine path**:
    once committed it is read on every clone, and an absolute checkout dir is true on one laptop
    only. A per-machine path belongs in an env var, and a step that writes committed state
    refuses path arguments, so one cannot leak in through a flag.
