@@ -34,6 +34,8 @@ legacy context repo via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_
 node --test scripts/layout.test.mjs                    # workspace layout, config ladder, queue, mirror, state write; offline
 node scripts/layout.mjs "$ROOT"                        # meetings / queue / mirror paths for this root
 node scripts/notion-state.mjs "$CONFIG" block.json     # PLAN state.backend + state.notion; --write
+node --test hooks/adr-nudge.test.mjs                   # the PostToolUse ADR nudge; synthetic events, offline
+echo '{"session_id":"s","cwd":"/ws","tool_name":"Write","tool_input":{"file_path":"/ws/docs/adr/0001-x.md"}}' | node hooks/adr-nudge.mjs
 ```
 
 ## Invariants
@@ -82,6 +84,25 @@ node scripts/notion-state.mjs "$CONFIG" block.json     # PLAN state.backend + st
 - **`databases` and `pageParents` hold different Notion IDs** — data source vs database — and are
   not interchangeable. A create handed a data source ID 404s claiming the database is not shared
   with the integration, which names the wrong cause entirely and sends you to the wrong fix.
+- **`hooks/adr-nudge.mjs` nudges; it never writes to Notion, and it is never a gate.** A
+  `PostToolUse` hook on `Write|Edit|MultiEdit` (#18): a numbered ADR — basename starting with
+  digits, directly in a `docs/adr/` — written under a workspace whose `state.notion` has a
+  `decisionLog` emits `hookSpecificOutput.additionalContext` telling the model to *offer*
+  `log-decision`. Never `systemMessage` (only the user sees it) and never `decision: "block"`.
+  The row is `log-decision`'s, because only it reads the ADR's reasoning; a hook POSTing itself
+  would key rows on filenames. Four things are load-bearing. **The path test runs before
+  anything else** — it fires on every write in every session, so a non-ADR write costs one
+  regex and the resolver is imported only after it. **Config is `CONTEXT_CONFIG`, else
+  `findWorkspace()` walked up from the ADR**, never `lib.mjs` (it exits the process and writes
+  stderr) and never the legacy context-repo rung (`context-repo.sh` can clone; a file-write hook
+  stays off the network) — so a project still on a context repo gets no nudge, by choice.
+  **Once per ADR per session**, recorded in the OS temp dir by `session_id`; a stale entry costs
+  one missed nudge, which beats repeated injections after a decline. **Every failure is silence
+  and exit 0.** It is Node so that it needs neither `jq` nor `bash` — a hook command string
+  cannot call `bashBin()`, so not needing bash is how this plugin keeps that invariant in a hook.
+  The `if` filter on the handler was considered and left out: a Claude Code that does not know
+  the key could drop the handler, and that failure is silent. Plugin hooks load at session
+  start, so a live check needs a restart or `/hooks`; `adr-nudge.test.mjs` is the automated one.
 - **Skills that write to the workspace or context repo ask before committing/pushing**; `process-pending`
   is `disable-model-invocation: true`.
 - Version in `plugin.json` only; no angle brackets in front-matter values; `*.sh` stay LF.
