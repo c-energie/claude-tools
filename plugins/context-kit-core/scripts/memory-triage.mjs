@@ -2,7 +2,7 @@
 // Drain Claude's native per-directory memory into the context ladder.
 //
 //   node memory-triage.mjs scan <workspace-or-context-repo-root> [--dir path] [--json] [--today YYYY-MM-DD]
-//   node memory-triage.mjs mark <memory-file> --to "your-user/second-brain memory.md" [--today ...]
+//   node memory-triage.mjs mark <memory-file> --to "your-org/workspace docs/memory.md" [--today ...]
 //
 // THE PROBLEM. Claude's own memory lives in ~/.claude/projects/[mangled-cwd]/memory/, keyed by
 // WORKING DIRECTORY. One project spread over several checkouts therefore gets several stores
@@ -14,21 +14,19 @@
 // lands mid-task. This gives it a drain. Nothing redirects where memory is written — that path
 // belongs to the harness — so integration means promotion.
 //
-// THE SCAN IS ASYMMETRIC, and that asymmetry is what keeps it honest:
-//   * In a PROJECT repo — read only the store for the session's own working directory. No
-//     directory-to-project mapping is guessed, because guessing wrong files a fact under the
-//     wrong project.
-//   * In the CROSS-PROJECT LAYER (a repo whose context.json declares `include`) — read every
-//     store on the machine, but surface only PERSONAL-layer entries (`type: user` /
-//     `feedback`). Those belong to the person, not to the directory they were captured in, so
-//     no mapping is needed to place them.
+// THE SCAN READS ONE STORE: the one for the session's own working directory. No
+// directory-to-project mapping is guessed, because guessing wrong files a fact under the wrong
+// project.
+//
+// There is no longer a cross-project mode that read every store on the machine: ADR 0002
+// retired the cross-project layer it served, and the personal layer now loads through the
+// user-level ~/.claude/CLAUDE.md rather than by being a repo that declares anything, so nothing
+// committed would entitle a scan of every store. Inventing that entitlement (a name, a path under
+// ~/gh-orgs) would be exactly the guess the single-store rule refuses. A PERSONAL entry
+// (`type: user` / `feedback`) is therefore reported as belonging elsewhere, never promoted here.
 //
 // IN A WORKSPACE (a root holding .claude/workspace.json, ADR 0002) the project layer is the
-// workspace's docs/memory.md, which its CLAUDE.md imports — not a context repo's memory.md. A
-// workspace is always a PROJECT here: ADR 0002 retires `include`, and the personal layer loads
-// through the user-level CLAUDE.md rather than by being a workspace that declares anything, so
-// there is no committed statement in workspace.json that would entitle a scan of every store.
-// Inventing one (a name, a path under ~/gh-orgs) would be the guess the asymmetry refuses.
+// workspace's docs/memory.md, which its CLAUDE.md imports — not a context repo's memory.md.
 //
 // It never writes into a repo. `scan` is read-only; `mark` stamps one metadata key on a native
 // memory file so a promoted entry is not promoted twice. The skill does the promotion itself,
@@ -139,33 +137,19 @@ const readJson = (file) => {
 // context.json: workspace.mjs would have fallen back to a context repo and passed THAT root,
 // so arriving here with a broken workspace.json means the root came from somewhere else.
 const isWorkspace = existsSync(join(root, '.claude', 'workspace.json'));
-let ctx = {};
 if (isWorkspace) {
   try { readJson(join(root, '.claude', 'workspace.json')); }
   catch (e) { die(`${join(root, '.claude', 'workspace.json')} is malformed — ${String(e?.message ?? e).split('\n')[0]}`); }
 } else {
-  try { ctx = readJson(join(root, 'context.json')); }
+  try { readJson(join(root, 'context.json')); }
   catch { die(`no .claude/workspace.json and no readable context.json at ${root} — neither a workspace nor a context repo`); }
 }
 
 // Where a promoted project fact lands, relative to root.
 const MEMORY = isWorkspace ? 'docs/memory.md' : 'memory.md';
 
-// `include` is what makes a repo the cross-project layer. Not `roles` or `supervisors`: those
-// say a repo runs supervisors, whereas `include` is the committed statement of which projects
-// this repo is entitled to see, which is the question being asked here. A workspace never is —
-// see the header.
-const isCrossProject = !isWorkspace && Array.isArray(ctx.include) && ctx.include.length > 0;
-
 const stores = [];
-if (isCrossProject) {
-  let keys = [];
-  try { keys = readdirSync(PROJECTS); } catch { die(`cannot read ${PROJECTS}`); }
-  for (const k of keys) {
-    const s = readStore(k);
-    if (s) stores.push(s);
-  }
-} else {
+{
   const dir = opts.dir ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
   const s = readStore(storeKey(dir));
   if (s) stores.push(s);
@@ -176,7 +160,6 @@ const candidates = [];
 for (const s of stores) {
   for (const e of s.entries) {
     if (e.promotedTo) continue;                                   // already drained
-    if (isCrossProject && !PERSONAL.has(e.type)) continue;        // not this layer's business
     candidates.push({ ...e, store: s.key });
   }
 }
@@ -211,13 +194,9 @@ const suggest = (e) => {
     if (named.length) {
       return `AMBIGUOUS — names ${named.map((n) => `"${n}"`).join(', ')} from its own store path, so this is probably feedback ABOUT A PROJECT. Promote it to that project's repo, not the personal layer, unless the preference really is general.`;
     }
-    // A session may only write into its own repo, so from a project this is a finding, not a
-    // task. Saying "promote to the cross-project layer" here would be advice that cannot be
-    // taken. It needs no handoff: the cross-project layer reads every store, so a run there
-    // picks this up on its own.
-    return isCrossProject
-      ? 'personal — this repo, memory.md'
-      : 'personal — NOT promotable from here (a session writes only to its own repo). The cross-project layer reads every store, so run triage there; nothing to carry over.';
+    // A session may only write into its own repo, so this is a finding, not a task: the person
+    // is not this repo's subject, and no repo the session can write to is the personal layer.
+    return 'personal — NOT promotable from here (a session writes only to its own repo). It belongs in the personal layer the user-level ~/.claude/CLAUDE.md imports; leave it in native memory until it is moved there by hand.';
   }
   const home = isWorkspace ? `the workspace's ${MEMORY}` : `the project context repo ${MEMORY}`;
   if (e.type === 'reference') return `reference — ${home}, or leave local if it is a laptop path`;
@@ -229,7 +208,7 @@ const data = {
   layer: isWorkspace ? 'workspace' : 'context-repo',
   memory: MEMORY,
   today,
-  mode: isCrossProject ? 'cross-project (all stores, personal entries only)' : 'project (this working directory only)',
+  mode: 'project (this working directory only)',
   storesRead: stores.length,
   candidates: candidates.map((e) => ({ ...e, suggestion: suggest(e) })),
 };

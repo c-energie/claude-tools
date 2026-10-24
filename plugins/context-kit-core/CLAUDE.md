@@ -35,21 +35,14 @@ node scripts/list-plugins.mjs "$ROOT" --brief   # the plugin roster, read from t
 node scripts/list-plugins.mjs "$ROOT"           # ...plus each plugin's skills (--json)
 node scripts/dates.mjs today
 node scripts/json-block.mjs entries "$CTX/context.json"                # the top-level keys, in file order
-node scripts/json-block.mjs set "$CTX/context.json" teaching '{...}'   # PLAN one block; --write applies it
-node scripts/init-context.mjs owner/repo            # PLAN a new context repo (+ the second brain, once); --yes does it
+node scripts/json-block.mjs set "$CTX/context.json" connections '{...}'   # PLAN one block; --write applies it
+node scripts/init-context.mjs owner/repo            # PLAN a new context repo; --yes does it
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
 node scripts/link-context.mjs owner/repo --threads context   # ...and route its threads off this repo
-node scripts/context-doctor.mjs "$ROOT" --include   # health-check a workspace or context repo (--json, --fix, --today)
-node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every queue (--json, --role, --no-memory)
+node scripts/context-doctor.mjs "$ROOT"           # health-check a workspace or context repo (--json, --fix, --today)
+node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every queue (--json, --no-memory)
 node --test scripts/context-doctor.test.mjs   # doctor + status in a workspace, and legacy unchanged; fake gh, offline
-node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
-node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not yet distilled
 node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion (workspace root -> docs/memory.md)
-node scripts/teaching-workspace.mjs resolve --json               # which context repo, or WHY not (no network)
-node scripts/teaching-workspace.mjs roster "$ROOT"                # the teaching workspaces it DECLARES (--json)
-node scripts/teaching-workspace.mjs scaffold "$ROOT" "deep learning"   # PLAN a workspace; --yes --audience writes it
-pwsh scripts/Start-ContextSession.ps1 -DryRun    # menu over ~/.context; -Shortcut installs a Desktop launcher
-bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux (--shortcut writes .desktop/.command)
 ```
 
 ## Invariants (all load-bearing)
@@ -168,24 +161,6 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   directory *is*; it stops the layout suggesting the wrong answer. Every earlier path is still
   resolved and used where it sits — re-cloning beside an existing checkout is how one of them
   silently goes stale.
-- **`include` (cross-project loads) is explicit, one-level, and read-only.** A context repo's
-  `context.json` may declare `include: ["owner/repo", ...]`; the hook then loads each named
-  repo's memory alongside the repo's own — and its glossary and threads only as POINTERS (term
-  names, six newest by title), so an included repo is never loaded more eagerly than the repo
-  the session is in — per-repo STALE/UNAVAILABLE banners included. Never discover includes
-  from the filesystem, never recurse into an included repo's own list, and never write into an
-  included repo. Entries are repo names only — the contract stays route-agnostic for the
-  sandbox/API route. The sentinel filter in the hook's include parser mirrors `is_optout()`
-  — keep them in step.
-- **The two session launchers are twins, not copies.** `Start-ContextSession.ps1` and
-  `start-context-session.sh` are the same menu written for two shells, so `check-plugin.mjs`'s
-  drift rule (which compares byte-for-byte) deliberately does not cover them — only they can
-  make a `.lnk` and a `.desktop`/`.command` respectively. Change both, or neither.
-- **The second brain is stamped once and then adopted.** `init-context` bootstraps
-  `~/.context/[login]/second-brain` from the template plus `assets/second-brain/` only when no
-  such repo exists locally or on GitHub; an existing one is cloned and left exactly as it is.
-  It never writes that repo's `include` list — it prints the edit. Owner is the authenticated
-  GitHub user, never the project's owner, and never inferred from a git remote.
 - **One registry per surface, and they are not the same file.** `claude_desktop_config.json` is
   the **host** registry — the desktop chat app and **Cowork** both read it, because a Cowork
   sandbox does not run these servers: the host runs them and bridges them in, which is the whole
@@ -254,18 +229,34 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   null for the workspace's own repo) — a script, because two sessions in one directory must
   record the same provenance. It finds the workspace with `workspace.mjs`'s `findWorkspace()`
   rather than a walk of its own, so a thread can never be routed to a different home from the
-  context the session loaded. A workspace is never the cross-project layer for
-  `memory-triage.mjs` (`include` is retired). Both skills ask before pushing; outside a
-  workspace both behave as before.
+  context the session loaded. Both skills ask before pushing; outside a workspace both behave as
+  before.
 - **`context-doctor` and `context-status` take either kind of root, told apart by
   `workspace.mjs`'s `rootKind()`** (#52): a directory holding `context.json` and no
   `workspace.json` is a legacy context repo, checked exactly as before and tested FIRST so an
   outer workspace never judges it; anything else is the nearest workspace. In a workspace the
-  retired checks and queues (include, template, assistants/roles/supervisors, teaching,
-  handoff, the marker) do not run, and the same rules apply at ADR 0002's paths —
-  `docs/memory.md` (and its `@` import in `CLAUDE.md`), `docs/threads/`, `.context/pending/`.
+  checks for keys it retired (template, the marker) do not run, and the same rules apply at ADR
+  0002's paths — `docs/memory.md` (and its `@` import in `CLAUDE.md`), `docs/threads/`,
+  `.context/pending/`.
   `--fix` **never writes `workspace.json`**: the doctor owns no key in it. The doctor's one
   network call is `gh repo view` for visibility, made only when `docs/meetings/` or
   `.context/pending/` exists, warning when the workspace repo is PUBLIC; a failed lookup is a
   note saying it was not checked, never a pass. `--json` carries `mode` and `workspace`.
+- **`memory-triage.mjs` reads ONE native memory store: the session's own working directory's.**
+  There is no mode that reads every store on the machine. That mode was keyed on the cross-project
+  layer, retired with the rest below, and nothing committed now says a repo is entitled to see
+  every directory's memory — inventing that entitlement (a name, a path under `~/gh-orgs`) is the
+  directory-to-project guess the single store exists to refuse. A `user`/`feedback` entry is
+  reported as belonging to the personal layer the user-level `~/.claude/CLAUDE.md` imports, and is
+  never promoted or stamped from here.
+- **The features ADR 0002 retired are gone, not dormant** (#54, v1.0.0): `include` and
+  `handoff/`, assistants/roles/supervisors/lessons and their five skills, `teach-workspace`,
+  `init-context`'s second-brain bootstrap, and both session launchers. Nothing reads their keys
+  any more, so a legacy context repo that still carries them loads exactly as one that never did,
+  and no check or queue reports them — `load-context.test.mjs` and `context-doctor.test.mjs` hold
+  that line. Two deliberate leftovers: `thread-index.mjs` still *parses* the old
+  `assistant:`/`supervisor:` index segment (it no longer writes it), so rebuilding an index written
+  before the retirement keeps its hand-written gists; and the README's "Retired by ADR 0002" table
+  names each feature once, with what replaces it (`/mattpocock-skills:teach` in `teaching/[slug]/`
+  for teach-workspace). Do not bring any of them back without a new ADR.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).

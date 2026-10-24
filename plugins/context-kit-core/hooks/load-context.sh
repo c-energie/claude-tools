@@ -484,8 +484,7 @@ fi
 # the one failure mode that actively misleads. --refresh keeps plain text (the model
 # reads that stdout directly), and no-node degrades to plain text rather than failing.
 OUT_TMP="${TMPDIR:-/tmp}/context-kit-out-$$.txt"
-INC_TMP="${TMPDIR:-/tmp}/context-kit-inc-$$.txt"
-trap 'rm -f "$ERRFILE" "$OUT_TMP" "$INC_TMP"' EXIT
+trap 'rm -f "$ERRFILE" "$OUT_TMP"' EXIT
 
 emit() {  # $1 = one-line user-facing status; the body is already in $OUT_TMP
   if [ "$MODE" = "refresh" ] || ! command -v node >/dev/null 2>&1; then
@@ -551,15 +550,15 @@ if [ -z "$ROOT" ] || [ ! -f "$ROOT/memory.md" ]; then
   emit "→ Context repo: $CONTEXT_REMOTE — loading via ${GITHUB_CONN:-the GitHub connector} in the first response (git has no credentials in this environment)"
 fi
 
-# Lists the newest threads in a directory, with titles. Shared by the project layer, the
-# per-repo layer and each included repo, so the title-extraction awk exists once: it was
+# Lists the newest threads in a directory, with titles. Shared by the project layer and the
+# per-repo layer, so the title-extraction awk exists once: it was
 # duplicated the moment a second thread location appeared, and a title parser that drifts
 # between two copies would print the literal front-matter fence in one of them with nobody
 # noticing which.
 #   list_threads DIR DISPLAY_PREFIX MAX
 list_threads() {
   _d="$1"; _pfx="$2"; _max="${3:-6}"
-  find "$_d" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' ! -name '*-asst-*' -print 2>/dev/null     | sort | tail -n "$_max"     | while IFS= read -r f; do
+  find "$_d" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null     | sort | tail -n "$_max"     | while IFS= read -r f; do
         title="$(awk '
           NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
           fm == 1 && /^---[[:space:]]*$/ { fm = 0; next }
@@ -570,174 +569,6 @@ list_threads() {
         echo "   - ${_pfx}$(basename "$f") — ${title}"
       done
 }
-
-# Names the terms a glossary defines, without loading their definitions. The name is what makes
-# the file findable — "is X defined here?" is answered by the list, and the entry itself is only
-# needed once the answer is yes — and the list costs a tenth of the text: net-flex/context's
-# generated 71-term glossary is 39 KB whole and under 4 KB as names. Below SMALL_GLOSSARY the
-# pointer would cost more than the file it points at, so the file wins and is loaded entire;
-# that threshold is the point of the function, not a special case bolted onto it.
-#
-# Two glossary shapes are in the wild and both are matched: "### Term — Status" headings (the
-# form a Notion mirror generates) and the template's "**Term** — definition" paragraphs. A file
-# in neither shape is reported as unread rather than silently summarised to nothing: a term list
-# that quietly omits terms is worse than none, because it reads as complete.
-#   glossary_terms FILE LABEL MAX
-_gloss_scan() {  # FILE SED_EXPR -> one term per line, trailing space and blanks dropped
-  sed -n -e "$2" "$1" 2>/dev/null | sed -e 's/[[:space:]]*$//' | grep -v '^[[:space:]]*$'
-}
-glossary_terms() {
-  _g="$1"; _lbl="$2"; _max="${3:-120}"
-  _sz="$(wc -c < "$_g" 2>/dev/null | tr -d ' ')"
-  if [ "${_sz:-0}" -le "${SMALL_GLOSSARY:-4096}" ] 2>/dev/null; then
-    echo "----- $_lbl -----"
-    cat "$_g"
-    echo "----- end $_lbl -----"
-    return
-  fi
-  # Strictly ONE shape per file, tried in order, because mixing them is what goes wrong: a
-  # heading-shaped glossary also opens with prose like "**Status** reads: ..." and that bold
-  # lead would enter the list as a term the file does not define. h3/h4 first (the terms,
-  # wherever sections take h2), then the template's "**Term** — definition" paragraphs, then
-  # h2 for a glossary with no sections at all.
-  _terms="$(_gloss_scan "$_g" 's/^#\{3,4\}[[:space:]]\{1,\}//p')"
-  [ -z "$_terms" ] && _terms="$(_gloss_scan "$_g" 's/^\*\*\([^*]\{1,\}\)\*\*.*$/\1/p')"
-  [ -z "$_terms" ] && _terms="$(_gloss_scan "$_g" 's/^##[[:space:]]\{1,\}//p')"
-  if [ -z "$_terms" ]; then
-    echo "$_lbl is $_sz bytes and is NOT loaded here; its shape was not recognised, so no term list could be built. Read the file before relying on any project vocabulary."
-    return
-  fi
-  _n="$(printf '%s\n' "$_terms" | grep -c . )"
-  echo "$_lbl defines these $_n terms (the definitions are NOT loaded here, $_sz bytes). Read the"
-  echo "file before using one of them in a sense of your own; do not answer from silence:"
-  printf '%s\n' "$_terms" | head -n "$_max" | sed -e 's/^/   - /'
-  [ "${_n:-0}" -gt "$_max" ] 2>/dev/null && echo "   (+$((_n - _max)) more — this list is truncated, so read glossary.md rather than concluding a term is absent)"
-}
-
-# ----------------------------------------------------------- included context repos
-# The cross-project layer: a context repo whose context.json declares
-#   "include": ["owner/repo", ...]
-# also gets each named repo's memory.md loaded read-only, plus POINTERS to its glossary (term
-# names, no definitions) and its threads (the six newest, by title) — the same shape the primary
-# repo's own layer uses, since an included repo cannot be the one that gets loaded more eagerly.
-# ONE level only (an included repo's own include list is ignored, by construction: only
-# the primary repo's context.json is ever read). The list is explicit and committed; nothing
-# is ever discovered from the filesystem. An *accidental* cross-project load is the failure
-# mode this plugin exists to prevent, so the deliberate one must be spelled out in config.
-# Entries are owner/repo names only — the contract stays route-agnostic, so a sandbox session
-# reading repos over the GitHub API (no git) can honour the same list.
-#
-# Each include resolves and pulls under the same rules as the primary repo (ff-only, capped,
-# token via transient helper — the resolver owns all of that) and degrades PER REPO: a stale
-# pull serves that repo's local copy under its own STALE warning; an unreachable repo is a
-# loud absence, never a silent one. A context.json with no include key pays nothing here.
-# Parsing the array needs node (the sed used for scalar keys cannot read a JSON list); if
-# node is missing the payload says the includes were skipped rather than quietly omitting
-# them. The sentinel filter below mirrors is_optout() — keep them in step.
-INC_NAMES=""; INC_STALE=""; INC_NOTE=""
-: > "$INC_TMP" 2>/dev/null || true
-if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"include"' "$ROOT/context.json" 2>/dev/null; then
-  if ! command -v node >/dev/null 2>&1; then
-    INC_NOTE="context.json declares an include list, but node is unavailable, so the cross-project context was NOT loaded this session — say so before answering anything that spans projects."
-  else
-    INCLUDE_LIST="$(node -e '
-      const fs = require("fs");
-      try {
-        const raw = fs.readFileSync(process.argv[1], "utf8");
-        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-        const seen = new Set();
-        for (const e of Array.isArray(ctx.include) ? ctx.include : []) {
-          if (typeof e !== "string") continue;
-          const v = e.trim();
-          if (["none", "off", "false", "no", "-", "disabled"].includes(v.toLowerCase())) continue;
-          if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(v)) continue;
-          if (v === process.argv[2] || seen.has(v)) continue;
-          seen.add(v);
-          console.log(v);
-        }
-      } catch { /* an unparseable context.json already has bigger problems; load nothing */ }
-    ' "$ROOT/context.json" "$CONTEXT_REMOTE" 2>/dev/null)"
-    for inc in $INCLUDE_LIST; do
-      INC_ROOT=""; INC_WARN=""
-      if [ -f "$RESOLVER" ]; then
-        # The resolver reads PROJECT_CONTEXT_REPO first, so overriding it per call reuses
-        # every rule the primary repo got. PROJECT_CONTEXT_DIR must be cleared: it pins the
-        # clone path outright, and with several repos in play it can only name one of them.
-        INC_ROOT="$(PROJECT_CONTEXT_DIR= PROJECT_CONTEXT_REPO="$inc" bash "$RESOLVER" 2>"$ERRFILE")" || INC_ROOT=""
-        [ -s "$ERRFILE" ] && INC_WARN="$(tr '\n' '; ' < "$ERRFILE" | sed -e 's/context-repo\.sh: //g' -e 's/[; ]*$//')"
-      else
-        # Inline fallback (packaging dropped scripts/): reuse the run_git/git_net helpers the
-        # primary repo's fallback branch defined above — that branch always ran if we are here.
-        INC_DIR="$HOME/.context/$inc"
-        if [ -d "$INC_DIR/.git" ]; then
-          INC_ROOT="$INC_DIR"
-        else
-          mkdir -p "$(dirname "$INC_DIR")" 2>/dev/null || true
-          if git_net 0 clone --depth 1 "https://github.com/$inc.git" "$INC_DIR"; then
-            INC_ROOT="$INC_DIR"
-          else
-            INC_WARN="clone failed (offline, or no git credential for a private repo?)"
-          fi
-        fi
-        if [ -n "$INC_ROOT" ] && ! git_net 1 -C "$INC_ROOT" pull --ff-only --autostash; then
-          INC_WARN="pull failed or timed out after ${CONTEXT_GIT_TIMEOUT:-30}s"
-        fi
-      fi
-      {
-        echo "=== Included context: $inc (read-only) ==="
-        if [ -z "$INC_ROOT" ]; then
-          echo "!!! UNAVAILABLE — $inc could not be reached: ${INC_WARN:-no checkout and the clone failed}"
-          echo "The combined context is incomplete. Say so before answering anything that depends on $inc."
-        else
-          if [ -n "$INC_WARN" ]; then
-            INC_AGE="$(git -C "$INC_ROOT" log -1 --format='%cd' --date=relative 2>/dev/null)" || INC_AGE=""
-            echo "!!! WARNING — THIS INCLUDED CONTEXT MAY BE STALE !!!"
-            echo "The refresh of $inc did not complete: $INC_WARN"
-            echo "Showing the local copy${INC_AGE:+ — its most recent commit is dated $INC_AGE}."
-            echo
-          fi
-          # memory.md whole; glossary and threads as POINTERS. The primary repo has always
-          # worked that way — its glossary is one line and its threads are the six newest — and
-          # an included repo is by construction the secondary one, so loading it *more* eagerly
-          # than the repo the session is actually in was backwards. It was also the largest
-          # single item in the payload: net-flex/context's glossary alone put 39 KB into every
-          # session that included it, before a word of the primary context had been read.
-          #
-          # memory.md stays whole for the reason the primary layer keeps it whole: a fact nobody
-          # is told about is not lazy, it is lost. A glossary and a thread index are different in
-          # kind — each is a *list of names*, so the names alone say what is in there, which is
-          # what a pointer has to do to be safe.
-          if [ -f "$INC_ROOT/memory.md" ]; then
-            echo "----- $inc · memory.md -----"
-            cat "$INC_ROOT/memory.md"
-            echo "----- end $inc · memory.md -----"
-          else
-            echo "($inc has no memory.md)"
-          fi
-          echo
-          if [ -f "$INC_ROOT/glossary.md" ]; then
-            glossary_terms "$INC_ROOT/glossary.md" "$inc · glossary.md" 120
-          else
-            echo "($inc has no glossary.md)"
-          fi
-          echo
-          if [ -d "$INC_ROOT/threads" ]; then
-            echo "$inc working threads (one topic per file; newest last):"
-            list_threads "$INC_ROOT/threads" "threads/" 6
-            [ -f "$INC_ROOT/threads/INDEX.md" ] && echo "   (full list: threads/INDEX.md under $INC_ROOT, NOT loaded here)"
-          else
-            echo "($inc has no threads/)"
-          fi
-          echo
-          echo "Depth on demand, still read-only, under $INC_ROOT: the whole of glossary.md and threads/INDEX.md summarised above, plus full threads/, meetings/ and any notion/ mirror."
-        fi
-        echo
-      } >> "$INC_TMP"
-      INC_NAMES="${INC_NAMES:+$INC_NAMES, }$inc"
-      if [ -z "$INC_ROOT" ] || [ -n "$INC_WARN" ]; then INC_STALE=1; fi
-    done
-  fi
-fi
 
 # Per-repo threads: .claude/threads/ in the WORKING directory, a different layer from the
 # project's context repo. A code repo's narrative travels with its own clone and is readable by
@@ -755,7 +586,7 @@ REPO_N=0
 [ -n "$REPO_THREADS" ] && REPO_N="$(find "$REPO_THREADS" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null | wc -l | tr -d ' ')"
 
 # The repo's own durable layer, injected rather than pointed at. A pointer in CLAUDE.md would
-# be a hint the model may or may not follow, which is the same failure as a roster sitting in a
+# be a hint the model may or may not follow, which is the same failure as a line sitting in a
 # payload nobody reads. Every layer therefore behaves the same way: memory is loaded, threads
 # are pointed at. Guarded on the same cwd-is-not-the-context-repo test as the threads above.
 REPO_MEMORY=""
@@ -764,68 +595,10 @@ if [ -n "$ROOT" ] && [ -f "$proj/.claude/memory.md" ]; then
   [ "$_pp" != "$_rp" ] && REPO_MEMORY="$proj/.claude/memory.md"
 fi
 
-# The assistant roster, computed here rather than inside the payload because it has TWO
-# consumers: the payload (which the model reads) and systemMessage (which the USER reads). The
-# roster was originally emitted into the payload alone, which put it 8% of the way into a 70KB
-# block the user never sees — discoverability aimed at the model, when the whole argument for
-# the line was that a memory layer the HUMAN forgets to consult does not work.
-#
-# Read with an INLINE node -e, not scripts/assistants.mjs. Packaging is only documented to ship
-# skills/, commands/, agents/ and hooks/, so a call to a .mjs would fail silently and the roster
-# would simply never appear. sed cannot do it; these are JSON objects, not scalars.
-ASST_NAMES=""; SUP_NAMES=""; ASST_NOTE=""
-if [ -n "$ROOT" ] && [ -f "$ROOT/context.json" ] && grep -q '"assistants"\|"supervisors"' "$ROOT/context.json" 2>/dev/null; then
-  if command -v node >/dev/null 2>&1; then
-    ASST_NAMES="$(node -e '
-      const fs = require("fs");
-      try {
-        const raw = fs.readFileSync(process.argv[1], "utf8");
-        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-        const o = ctx.assistants;
-        if (o && typeof o === "object" && !Array.isArray(o)) console.log(Object.keys(o).join(", "));
-      } catch { /* an unparseable context.json already has bigger problems */ }
-    ' "$ROOT/context.json" 2>/dev/null)"
-    SUP_NAMES="$(node -e '
-      const fs = require("fs");
-      try {
-        const raw = fs.readFileSync(process.argv[1], "utf8");
-        const ctx = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-        const o = ctx.supervisors;
-        if (o && typeof o === "object" && !Array.isArray(o)) console.log(Object.keys(o).join(", "));
-      } catch { }
-    ' "$ROOT/context.json" 2>/dev/null)"
-  else
-    # Never a silent absence: "no assistants" and "could not look" must stay distinguishable.
-    ASST_NOTE="context.json declares assistants or supervisors, but node is unavailable, so the roster was NOT read this session."
-  fi
-fi
-# Undrained handoff items are a debt created HERE and payable in another repo session. Nothing in
-# the target repo can announce them, so the only place the reminder can appear is the repo that
-# owes them.
-HO_N=0
-if [ -d "$ROOT/handoff" ]; then
-  HO_N="$(find "$ROOT/handoff" -maxdepth 1 -name '*.md' ! -name 'README.md' ! -name 'INDEX.md' -print 2>/dev/null | wc -l | tr -d ' ')"
-fi
-
-# The user-visible half. Names while the list is short enough to read at a glance; a bare count
-# once it is not, because a summary line nobody finishes reading is the same failure in a new
-# place.
-ASST_SUMMARY=""
-if [ -n "$ASST_NAMES" ]; then
-  ASST_N="$(printf '%s' "$ASST_NAMES" | awk -F', ' '{print NF}')"
-  if [ "${ASST_N:-0}" -le 4 ] 2>/dev/null; then
-    ASST_SUMMARY=" · assistants: $ASST_NAMES"
-  else
-    ASST_SUMMARY=" · $ASST_N assistants (/assistant to list)"
-  fi
-fi
-[ -n "$ASST_NOTE" ] && ASST_SUMMARY=" · ⚠ roster not read (no node)"
-[ "${HO_N:-0}" -gt 0 ] 2>/dev/null && ASST_SUMMARY="$ASST_SUMMARY · handoff: $HO_N undrained"
-[ "${REPO_N:-0}" -gt 0 ] 2>/dev/null && ASST_SUMMARY="$ASST_SUMMARY · repo threads: $REPO_N"
-
-INC_SUMMARY=""
-[ -n "$INC_NAMES" ] && INC_SUMMARY=" + included: $INC_NAMES${INC_STALE:+ (some STALE or unavailable)}"
-[ -n "$INC_NOTE" ] && INC_SUMMARY=" ⚠ includes skipped (no node)"
+# The user-visible half: systemMessage is the one line the USER reads, so a layer they would
+# otherwise forget to consult is named there and not only in the payload.
+REPO_SUMMARY=""
+[ "${REPO_N:-0}" -gt 0 ] 2>/dev/null && REPO_SUMMARY=" · repo threads: $REPO_N"
 
 {
 if [ "$MODE" = "refresh" ]; then
@@ -874,14 +647,7 @@ fi
 [ -f "$ROOT/glossary.md" ] && echo "Vocabulary: see glossary.md in $CONTEXT_REMOTE."
 if [ -d "$ROOT/threads" ]; then
   echo "Working threads (one topic per file; newest last):"
-  # Assistant threads are excluded from the six. They carry the filename form
-  # YYYY-MM-DD-asst-[role]-topic.md precisely so this filter costs one glob and opens no extra
-  # file: a working assistant writes daily, and without it would fill every slot within a week,
-  # pushing the repo's ordinary threads out of every session start — silently, since the list
-  # never says how much it is hiding. Counted below instead; /assistant loads a role's history.
   list_threads "$ROOT/threads" "threads/" 6
-  ASST_N="$(find "$ROOT/threads" -maxdepth 1 -name '*-asst-*.md' -print 2>/dev/null | wc -l | tr -d ' ')"
-  [ "${ASST_N:-0}" -gt 0 ] 2>/dev/null && echo "   (+$ASST_N assistant thread(s), not listed — adopt the role with /assistant)"
   [ -f "$ROOT/threads/INDEX.md" ] && echo "   (full list: threads/INDEX.md)"
 fi
 
@@ -934,30 +700,10 @@ if [ -f "$ROOT/notion/_synced.json" ]; then
   echo "Read-only Notion mirror in notion/${SYNCED:+ (last synced $SYNCED)}. A snapshot, not a live feed: Notion wins."
 fi
 [ -d "$ROOT/pending" ] && echo "No workspace access? Queue structured items in pending/."
-# The same roster, in the payload, because the model needs the names to act on rather than
-# merely to see. Computed above; this only renders it.
-if [ -n "$ASST_NAMES" ]; then
-  echo "Assistants here: $ASST_NAMES — adopt one with /assistant [name], which loads that role persona, memory and doctrine. /assistant on its own lists them."
-fi
-[ -n "$SUP_NAMES" ] && echo "Supervisors here (cross-project roles): $SUP_NAMES. supervisor-sweep distils each role LESSONS.md across the include list."
-[ -n "$ASST_NOTE" ] && echo "$ASST_NOTE"
-[ "${HO_N:-0}" -gt 0 ] 2>/dev/null && echo "handoff/: $HO_N undrained item(s) bound for other repos — drain each in that project own session (see handoff/INDEX.md)."
 # Only when the file actually changed this session — a line repeated every start is noise
 # nobody reads, but a fresh marker is something the user may want to attach to Cowork now.
 [ -n "$MARKER_NOTE" ] && echo "Cowork marker $MARKER_NOTE: .claude/context-project.json in $CONTEXT_REMOTE now mirrors this configuration — commit it there so every clone carries it, and attach that file to a Cowork project so its sandbox sessions load the same context and connections."
 echo
-# The cross-project layer, when this repo's context.json declares one (see the include
-# section above). Emitted after the repo's own material: the primary context stays primary.
-if [ -s "$INC_TMP" ]; then
-  echo "=== Cross-project context (this repo's context.json \"include\" list) ==="
-  echo "Every included repo below is READ-ONLY from this session: never commit to it, never"
-  echo "write to its Notion or Slack, never queue into its pending/ — its own facts are owned"
-  echo "by its own sessions, and this combined view must not leak writes into them."
-  [ -d "$ROOT/handoff" ] && echo "Anything belonging to an included project goes in handoff/ HERE (one file per item — see handoff/README.md), to be drained later in that project's own session."
-  echo
-  cat "$INC_TMP"
-fi
-[ -n "$INC_NOTE" ] && { echo "!!! $INC_NOTE"; echo; }
 echo "Full context repo: $CONTEXT_REMOTE."
 # Which checkout this actually came from, and how new it is. Only in --refresh mode: someone
 # asking for a re-pull is asking whether they now hold the latest, and on a surface that runs
@@ -970,8 +716,8 @@ fi
 } > "$OUT_TMP"
 
 if [ -n "$REFRESH_WARNING" ]; then
-  emit "⚠ Shared context loaded but may be STALE — refresh from $CONTEXT_REMOTE failed${LAST_UPDATED:+; newest local commit is $LAST_UPDATED}$INC_SUMMARY$ASST_SUMMARY"
+  emit "⚠ Shared context loaded but may be STALE — refresh from $CONTEXT_REMOTE failed${LAST_UPDATED:+; newest local commit is $LAST_UPDATED}$REPO_SUMMARY"
 else
   AGE="$(git -C "$ROOT" log -1 --format='%cd' --date=relative 2>/dev/null)" || AGE=""
-  emit "✓ Shared context loaded — $CONTEXT_REMOTE${AGE:+ · newest commit $AGE}$INC_SUMMARY$ASST_SUMMARY"
+  emit "✓ Shared context loaded — $CONTEXT_REMOTE${AGE:+ · newest commit $AGE}$REPO_SUMMARY"
 fi

@@ -29,13 +29,13 @@
 //
 // ONE PROVIDER MAY DECLARE MORE THAN ONE CONNECTION, because a fine-grained GitHub PAT has a
 // single resource owner: a project spanning two owners needs two tokens and therefore two
-// connectors, and before this it had nowhere to say so — the cross-project second brain is the
-// case that forced it. The allowlist grew from one entry to N; it did not become a weaker rule.
+// connectors, and before this it had nowhere to say so — a personal repo reaching both the
+// user's own repos and an org's was the case that forced it. The allowlist grew from one entry to N; it did not become a weaker rule.
 // Anything outside the declared set is still denied, and the set still has exactly one author.
 //
 // "Declares that provider" is deliberately strict. A project whose connections block is `{}` has
 // declared none, on purpose (see setup-connectors.mjs), so every provider connector is denied
-// there — that is the whole point of a cross-project layer that must not hold a workspace
+// there — that is the whole point of a personal repo that must not hold a project's
 // credential. A project with NO connections key has decided nothing, so nothing is denied: the
 // same absent-versus-empty distinction the resolvers draw between unconfigured and opted out.
 //

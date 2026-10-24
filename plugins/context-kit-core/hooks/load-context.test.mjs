@@ -37,14 +37,14 @@ test.after(() => { for (const d of tmps) rmSync(d, { recursive: true, force: tru
 // HOME is pinned to the scratch directory precisely because the hook globs `$HOME/mnt/...` and
 // falls back to a bounded find there: a test that inherited the real HOME would pass or fail
 // according to what the machine running it happens to have mounted.
-const fixture = ({ repo = 'c-energie/fixture-context' } = {}) => {
+const fixture = ({ repo = 'c-energie/fixture-context', extra = {} } = {}) => {
   const base = scratch();
   const proj = join(base, 'project');
   const clone = join(base, 'clone');
   mkdirSync(proj);
   mkdirSync(clone);
   writeFileSync(join(clone, 'memory.md'), `# Memory\n\n- ${MEMORY_MARK}\n`);
-  writeFileSync(join(clone, 'context.json'), JSON.stringify({ contextRepo: repo }, null, 2));
+  writeFileSync(join(clone, 'context.json'), JSON.stringify({ contextRepo: repo, ...extra }, null, 2));
   // No commit and no identity config: the resolver only looks for .git/, and a commit would
   // make this test depend on a git user.name being set wherever it runs.
   const git = spawnSync('git', ['init', '-q', clone], { encoding: 'utf8' });
@@ -122,4 +122,26 @@ test('--refresh still reports a project-level opt-out, flag or no flag', () => {
   // means there IS no repo (say so), off means not automatically (load it).
   const out = run({ fix: fixture(), repo: 'none', autoload: 'off', args: ['--refresh'] });
   assert.match(out, /opted out of a shared context repo/);
+});
+
+// ADR 0002 retired the cross-project layer and its roster (#54). A context repo that still
+// declares them must load exactly as one that never did: the keys are inert data now, so the
+// payload neither loads the includes nor names the roster, and nothing fails over them.
+test('a context repo still declaring retired keys loads, and prints no includes or roster', () => {
+  const fix = fixture({ extra: {
+    include: ['c-energie/other-context'],
+    assistants: { editor: {} },
+    supervisors: { editor: {} },
+    teaching: { x: { mission: 'teaching/x/MISSION.md' } },
+  } });
+  mkdirSync(join(fix.clone, 'handoff'));
+  writeFileSync(join(fix.clone, 'handoff', '2026-01-01-item.md'), '---\nproject: c-energie/other-context\n---\n');
+  mkdirSync(join(fix.clone, 'threads'));
+  writeFileSync(join(fix.clone, 'threads', '2026-01-02-asst-editor-notes.md'), '# Editor notes\n');
+  const out = run({ fix });
+  assert.ok(loaded(out));
+  assert.match(out, /2026-01-02-asst-editor-notes\.md/, 'an old assistant thread is an ordinary thread now');
+  assert.doesNotMatch(out, /Included context|Cross-project|included:|other-context/);
+  assert.doesNotMatch(out, /Assistants here|Supervisors here|assistants:|\/assistant/);
+  assert.doesNotMatch(out, /handoff/);
 });

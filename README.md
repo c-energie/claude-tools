@@ -61,7 +61,7 @@ and none of them writes to the network or to a Claude config without being asked
 
 | Step | Script | Skill over it |
 | --- | --- | --- |
-| Create the context repo (and, on the first run ever, the cross-project second brain) | `init-context.mjs <owner>/<project>-context --link . --yes` | `init-context` |
+| Create the context repo | `init-context.mjs <owner>/<project>-context --link . --yes` | `init-context` |
 | Point a project repo at an existing context repo | `link-context.mjs <owner>/<project>-context --load` | `context-setup` |
 | Opt a project out — it has no context repo, and the hook goes silent | `link-context.mjs none` | `context-setup` |
 | Provision the MCP connections the project's `context.json` declares | `mcp/setup-connectors.mjs` | `setup-connectors` |

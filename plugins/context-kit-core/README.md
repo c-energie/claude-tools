@@ -127,38 +127,6 @@ nothing of it and expands it to the empty string, turning the line above into
 instead — `bash scripts/plugin-repo.sh --plugin context-kit-core` prints it, resolving the
 source checkout rather than the read-only installed copy under `~/.claude/plugins/`.
 
-**Starting from the context instead of the project.** Everything above answers "which context
-does *this* project load", asked from a session that has already started somewhere. The two
-launchers go the other way — pick a checkout under `~/.context`, then start Claude in it —
-which is what a desktop shortcut needs, having no working directory to speak of:
-
-```powershell
-scripts\Start-ContextSession.ps1              # menu: owner -> repo, then runs `claude` there
-scripts\Start-ContextSession.ps1 -Shortcut    # ...and put a shortcut for it on the Desktop
-```
-
-```bash
-scripts/start-context-session.sh              # the same menu on macOS / Linux
-scripts/start-context-session.sh --shortcut   # ...writes a .desktop (Linux) or .command (macOS)
-```
-
-The menu descends one level at a time and stops as soon as the chosen directory *is* a repo —
-decided by content (`context.json`, `.claude-plugin/marketplace.json`, or a `.git` directory),
-never by depth, so a hand-made or non-standard layout still lists correctly. `-DryRun` /
-`--dry-run` prints the directory instead of launching, `-Root` / `--root` browses somewhere
-else, and anything unrecognised is passed through to `claude` verbatim. The launcher itself
-loads nothing: the new session's SessionStart hook does that, exactly as if you had cd'd there
-by hand. This is the one interactive script here — a menu is the point, not a fallback — so
-unlike `link-context.mjs` it prompts instead of taking its answer as an argument.
-
-`-Shortcut` / `--shortcut` first copies the script to `~/.context/` and points the shortcut at
-**that** copy. An installed plugin lives at a versioned path
-(`~/.claude/plugins/cache/.../context-kit-core/[version]/scripts/`), so a shortcut aimed straight
-at it breaks silently on the next plugin update; re-run with the flag after an update to
-refresh the copy, and the shortcut never needs touching. On Windows the shortcut runs
-PowerShell with `-ExecutionPolicy Bypass`, without which a stock machine refuses an unsigned
-`.ps1` and the double-click looks like it did nothing.
-
 **Cowork** is why the marker file exists: its sandbox sees neither your repo checkout nor any
 env var — the only channel in is files attached to the Cowork project. Attach a
 `context-project.json`:
@@ -210,21 +178,15 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 
 | Skill | What it does |
 | --- | --- |
-| `init-context` | Stamp a NEW context repo from `c-energie/context-template` — and, on the first run, the cross-project second brain (asks before creating anything) |
+| `init-context` | Stamp a NEW context repo from `c-energie/context-template` (asks before creating anything) |
 | `context-setup` | First-run wiring and diagnosis: how this project names its repo, is it reachable, load it now |
 | `context-doctor` | Health-check an already-linked repo for the drift that never announces itself; fixes derivable config keys only |
-| `context-status` | What is outstanding: lessons awaiting a sweep, sweeps awaiting distillation, undrained handoff, curation lag, native memory — and the skill that clears each |
+| `context-status` | What is outstanding: curation lag, thread outcomes never logged, the pending queue, native memory — and the skill that clears each |
 | `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
 | `save-thread` | 🔒 Write up the current work as a thread — a workspace's `docs/threads/`, else `threads/` — and push (never self-triggers) |
 | `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |
 | `setup-connectors` | Provision the MCP connections a project's `context.json` declares |
-| `assistant` | Adopt a role assistant — its persona, memory, doctrine and thread history; scaffolds one on first use |
-| `assistant-lesson` | 🔒 Record a transferable lesson into `LESSONS.md`, abstracted at write time |
-| `supervisor-sweep` | 🔒 Distil role lessons across every included project into a supervisor thread |
-| `supervisor-distil` | 🔒 Promote supervisor threads into durable doctrine and queue it to each project |
-| `teach-workspace` | 🔒 List the teaching workspaces a context repo declares, and prepare a new one for `teach` to work in (never self-triggers) |
-| `memory-triage` | 🔒 Drain Claude's own per-directory memory into the right layer — personal, project, role or local |
-| `assistant-contract` | _(hidden)_ The four-file contract behind role assistants, and why each rule exists |
+| `memory-triage` | 🔒 Drain Claude's own per-directory memory into the right layer — project, repo or local |
 | `context-access` | _(hidden)_ The GitHub-API route sandboxes use, and the rules that stop an API write truncating a file |
 | `update-plugin` | Change these plugins themselves — check, bump, and (after asking) push |
 
@@ -330,59 +292,13 @@ code repos belong to it, since the link runs child to parent only; there is no w
 code repo's name to a checkout on an arbitrary machine; and judging whether a thread has settled
 needs the code in front of you.
 
-### The cross-project layer: `include`
-
-A context repo may declare, in its `context.json`:
-
-```json
-"include": ["owner/repo-a", "owner/repo-b"]
-```
-
-Sessions on that repo then also load each included repo's `memory.md` in full, plus **pointers**
-to its `glossary.md` (the term names, not the definitions) and its `threads/` (the six newest,
-by title) — **read-only**, after the repo's own context, each pulled under the same
-ff-only/timeout/credential rules with its own per-repo STALE or UNAVAILABLE banner.
-`refresh-context` re-pulls them too. The contract, all load-bearing:
-
-- **Explicit list only.** The loaded set is committed config, never discovered from the
-  filesystem — an *accidental* cross-project load is the failure mode this plugin exists to
-  prevent, so the deliberate one must be spelled out.
-- **One level.** An included repo's own `include` list is ignored.
-- **Pointers, not the whole repo.** `memory.md` is loaded entire, because a fact nobody is told
-  about is not lazy, it is lost. A glossary and a thread index are different in kind — each is a
-  *list of names*, so the names alone say what is in there, which is all a pointer has to do to
-  be safe. Included context is then loaded no more eagerly than the repo the session is actually
-  in, whose own glossary and threads have always been pointers. A glossary under `SMALL_GLOSSARY`
-  bytes (default 4096) is loaded whole instead: below that the pointer costs more than the file.
-- **Read-only.** Nothing in a combined session writes into an included repo — not git, not
-  its structured-state backend, not its `pending/`. A combined repo that wants to route
-  items outward keeps its own outbox folder (by convention `handoff/`, which the payload
-  mentions when present).
-- **Route-agnostic.** Entries are `owner/repo` names only; nothing in the schema assumes a
-  local clone, so a sandbox route reading repos over the GitHub API can honour the same list.
-- Parsing the array needs `node`; without it the payload says loudly that the includes were
-  skipped rather than quietly omitting them.
-
 ### Creating the repos in the first place — `init-context`
 
 `scripts/init-context.mjs` stamps `c-energie/context-template` into a real repo, clones it to
 `~/.context/[owner]/[repo]` where the resolver looks, fills the template placeholders, applies
 the derivable `context-doctor` fixes, and pushes. **Nothing reaches the network without
-`--yes`:** the default run is a plan, and the skill asks before passing it.
-
-The **first** stamp on an account also bootstraps the cross-project **second brain** at
-`~/.context/[login]/second-brain` — the same template plus `assets/second-brain/`, the overlay
-that makes a context repo the layer *above* the projects (an `include` list, a `handoff/`
-outbox, the read-only contract in its `CLAUDE.md`). Three properties are load-bearing:
-
-- **Owned by the authenticated user, not the project's owner.** A project context repo often
-  lives under an org; a personal layer governed by one project's org is the wrong shape, and
-  invisible to the next project's owner.
-- **Stamped once, then adopted.** An existing repo — on GitHub or already cloned — is taken as
-  it is, never re-stamped. Re-running for a second project is safe by construction.
-- **The `include` list starts empty and is never written for you.** The script prints the exact
-  edit and stops: an *accidental* cross-project load is the failure mode the include contract
-  exists to prevent, so every entry is a deliberate, committed act.
+`--yes`:** the default run is a plan, and the skill asks before passing it. An existing repo — on
+GitHub or already cloned — is adopted as it is, never re-stamped, so re-running is safe.
 
 ### The connection gate
 
@@ -415,6 +331,20 @@ session-start hook already mirrors — which is what makes it the only mechanism
 
 A `permissions.deny` list still works and still composes; it is simply no longer the only thing
 standing between a session and another project's workspace.
+
+## Retired by ADR 0002
+
+Workspaces replace context repos (`docs/adr/0002-workspace-replaces-context-repo.md` in the
+marketplace repo), and v1.0.0 removed the features no migrated workspace will use. A context repo
+that still carries their keys or folders loads exactly as before; the data is simply inert.
+
+| Removed | Instead |
+| --- | --- |
+| `include` (cross-project loads) and the `handoff/` outbox | one workspace is the home; the personal layer is imported by the user-level `~/.claude/CLAUDE.md` |
+| assistants, roles, supervisors and lessons (`assistant`, `assistant-lesson`, `assistant-contract`, `supervisor-sweep`, `supervisor-distil`, `assistants.mjs`) | nothing — they were never used |
+| `teach-workspace` and `teaching-workspace.mjs` | run **`/mattpocock-skills:teach`** in `teaching/[slug]/` inside a workspace — the directory project-workspace's `.gitignore` already keeps |
+| `init-context`'s second-brain bootstrap and `assets/second-brain/` | the personal layer is a workspace of its own, migrated by hand |
+| the session launchers (`Start-ContextSession.ps1`, `start-context-session.sh`) | open the workspace directory; Claude Code reads its `CLAUDE.md` from there |
 
 ## Roadmap
 

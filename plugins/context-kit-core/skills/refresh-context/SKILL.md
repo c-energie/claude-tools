@@ -51,9 +51,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/hooks/load-context.sh" --refresh
 
 Deliberately the **same script the session-start hook runs** — one implementation, so the
 manual refresh cannot drift from the automatic one. Treat its output as the current shared
-context, superseding whatever loaded at session start. If the repo's `context.json` declares
-an `include` list (the cross-project layer), the same run re-pulls and re-reads every
-included repo too, each under its own STALE or UNAVAILABLE banner — relay those per repo.
+context, superseding whatever loaded at session start.
 
 **If it prints the `WARNING — THIS CONTEXT MAY BE STALE` banner, relay that.** The pull failed
 and you are still on the old copy. Retry once if it looks like a transient timeout
