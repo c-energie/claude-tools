@@ -150,6 +150,11 @@ What each prompt must actually say, concretely, and where the generic versions a
 - The test command, verbatim, and what "the suite passes" means here — including a known
   pre-existing failure if there is one, because an agent that finds one and stops has wasted a run.
 - The lint, format and typecheck commands, and whether each gates.
+- **Where to run things** — the contract's rule. In a clone root that includes **"run Python
+  through `uv run`"**: the engine injects `UV_PROJECT_ENVIRONMENT` but not `PATH` or
+  `VIRTUAL_ENV`, so after a `uv sync` the environment is on nobody's `PATH` and a bare `pytest`
+  finds the system interpreter. The harness's stub carries the line; a prompt written here does
+  not inherit it, so write it in — and lift it into the revision brief with the test command.
 - The project's own standards document, **by path**, as required reading.
 - What must never be touched: generated files, vendored trees, data directories, a lock file.
 - How this project writes comments, names things, and structures a module — from the code, not

@@ -49,18 +49,32 @@ than benefit, and two of them currently fail outright.
 ## 1. Install
 
 ```bash
+echo 'allow-git=root' >> .npmrc          # FIRST, and commit it — see below
 npm i -D @c-energie/sandcastle-harness@github:c-energie/sandcastle-harness#vX.Y.Z \
   "@ai-hero/sandcastle@^0.12.0" tsx typescript @types/node
 npm ls @c-energie/sandcastle-harness    # must print the tag you asked for
+npx tsx -e 'console.log(1)'             # must print 1
 ```
 
+- **Write `allow-git=root` into the workspace's `.npmrc`, and commit it, before the install —
+  not after it fails.** npm 12 changed `allow-git`'s default from `all` to `none`, and the harness
+  is installable *only* from git, so on npm 12 the install dies first with
+  `EALLOWGIT  Fetching packages of type git have been disabled` — an error that names npm's config
+  and nothing of ours. `root` permits the git dependencies the workspace's own `package.json`
+  declares (the harness) and still refuses any a dependency pulls in transitively, which `all`
+  would not; that is why it is `root` and not the wider value. Committed rather than per-command,
+  so `npm ci` and every other clone agree with the machine that ran the install. (Harness #21.)
 - **Pin the same tag every other consumer is on.** Consumers on different tags is the silent
   divergence this package exists to kill, and it has already happened once. `npm ls` in each
   workspace says which it is on.
-- **`--allow-git=all` may be required.** A machine with `allow-git = "none"` in its npm config
-  refuses a git dependency with `EALLOWGIT`, with no hint that a flag would fix it.
-- A blocked `esbuild` postinstall is usually harmless — esbuild ships prebuilt platform binaries
-  as optional deps. Confirm rather than assume: `npx tsx -e 'console.log(1)'`.
+- **A repin, unlike a fresh install, fails even with `root`** — `Fetching non-root packages of
+  type "git"`, because the lockfile's edge still names the old ref. `npm uninstall` the harness,
+  then re-run the install; the uninstall lands first, so if the install then fails the workspace
+  has no harness at all. Confirm with `npm ls`, not the exit code. The harness README's quickstart
+  carries the detail.
+- npm 12's `allow-scripts` default also skips `esbuild`'s postinstall. That is harmless — esbuild
+  ships its platform binary as its own package, and `tsx` runs without the postinstall (verified on
+  npm 12.0.2 / node 24.18.0). The `npx tsx -e` line above is the confirmation; do not assume it.
 
 There must be a root `package.json` with `"type": "module"` before `sandcastle-init` will be
 happy. If the root has none, `npm init -y` one and set `"type"` and `"private": true`.
@@ -164,7 +178,7 @@ promptSets: {
 },
 ```
 
-Two traps worth naming here because they are invisible in a diff:
+Three traps worth naming here because they are invisible in a diff:
 
 - **Nested standards.** A member whose sub-directories each carry their own authoritative
   `CLAUDE.md` cannot be summarised into a prompt. Have the prompt name them **by path, as required
@@ -178,6 +192,15 @@ Two traps worth naming here because they are invisible in a diff:
 ```bash
 grep -rn '/{{REPO}}' .sandcastle/
 ```
+
+- **A clone root's implementer must say `uv run`.** The engine injects `UV_PROJECT_ENVIRONMENT`
+  but deliberately not `VIRTUAL_ENV` or `PATH` — in a workspace that bakes no venv the directory
+  does not exist until something creates it, and a `VIRTUAL_ENV` naming a missing directory is
+  worse than none. So after a `uv sync` the environment is on **nobody's `PATH`**, and a bare
+  `python` or `pytest` finds the system interpreter, without the project's dependencies. The
+  harness's implementer stub says so; a prompt you write yourself does not inherit the line. Every
+  Python prompt set in a clone root carries "run Python through `uv run`" — implementer, revision
+  and group reviewer alike, wherever the suite is run (harness #18).
 
 ---
 
@@ -261,15 +284,37 @@ using it is named.
 - **`the suite could not run` on a Node member, from a Windows host.** The mounted checkout's
   `node_modules/.bin` shims are Windows shims that exec `node.exe`, which does not exist in a
   Linux container, and npm does not rebuild them. `uv` *does* rebuild for the platform, so Python
-  members are unaffected. Do **not** "fix" it by running `npm ci` in the mount — that is the
-  user's live checkout and it would overwrite their host `node_modules`. Either give the member an
-  environment the image owns, or leave `testCommand` undefined and say so.
+  members are unaffected. Do **not** "fix" it by running `npm ci` in the mount — that is one
+  instance of the rule below, and it would also overwrite the user's host `node_modules`, because
+  the mount is their live checkout. Either give the member an environment the image owns, or
+  leave `testCommand` undefined and say so. (Harness #5.)
+
+### Never install from the mount
+
+Any install step — in the Dockerfile, in a hook, in a prompt's instructions — runs from `<ws>`
+(or anywhere else the image owns), **never from the bind-mounted worktree**. Everything a
+container writes into the mount is written on the host, and on a **Windows host any Unix symlink
+written there makes `git worktree remove` fail with ENOSYS** (`Function not implemented`) at the
+end of the run — after the work is committed, with the worktree half-removed, and reported as a
+failed issue (harness #15, #16).
+
+- **uv** was the first case found: `uv sync` / `uv venv` in a member creates `.venv/lib64 -> lib`.
+  The engine now keeps uv's environment off the mount (`UV_PROJECT_ENVIRONMENT`, harness #18 —
+  see `## Clone roots`), but only for uv.
+- **npm** does the same with `node_modules/.bin/*`, and nothing redirects it (harness #5/#16).
+
+That redirect covers one tool; the rule covers all of them. Any other symlink written into the
+mount fails the same way.
 
 What you will see instead of a failure, on a workspace with no Python: `interpreter at <python>`
 reported as **SKIP** by the smoke test and as a `note` by the preflight. The two facts used to be
 one check — `test -d <ws>/src && test -x <python>` — which no venv-less workspace could pass and no
 config could disable. They are separate assertions now, and the interpreter is asserted only when
-some member declares an `importName` or the config sets `python` itself.
+some member declares an `importName` or the config sets `python` itself (`pythonExplicit`, harness
+#17) — so setting `python` turns this SKIP into a check that must pass.
+
+Also expect **`uv venv lands off the mount`** in the preflight, passing in every workspace, Python
+or not: it asserts the `UV_PROJECT_ENVIRONMENT` the engine injects (harness #18).
 
 ### Then a dry run, per prompt set
 
@@ -304,10 +349,23 @@ So, concretely:
 - `importName: null` on **every** member.
 - Drop `manifestFile`.
 - Rewrite the Dockerfile: no `uv sync`, no `VIRTUAL_ENV`, one COPY per member into `./src/<member>/`.
-- Expect `interpreter at <python>` to be skipped rather than asserted — with no `importName`
-  anywhere and no `python` in the config, there is no interpreter for it to be about.
+- **A clone root bakes no venv, and that is still right.** It used to be that an agent's `uv sync`
+  at task time wrote `.venv/` into the bind mount and failed the Windows teardown (harness #15).
+  The engine now starts every container — run, preflight and smoke test — with
+  `UV_PROJECT_ENVIRONMENT` set to a path off the mount, and the preflight asserts it
+  (`uv venv lands off the mount`, harness #18). The Dockerfile has nothing to do about it. **Do
+  not add a venv, a `uv sync` layer or a `VIRTUAL_ENV` to satisfy the harness** — none is asked
+  for, and a venv baked for one member is wrong for the others.
+- **Leave `python` unset in `sandcastle.config.mts`** unless the image really bakes an interpreter
+  at that path. Setting it is a claim, not a tidy default: it makes the interpreter assertion
+  required (`pythonExplicit`, harness #17), so a config that names `/usr/bin/python3` to look
+  complete turns a skipped check into one that has to pass. With no `importName` anywhere and no
+  `python` in the config, expect `interpreter at <python>` to be skipped rather than asserted —
+  there is no interpreter for it to be about.
 - Dependencies resolve inside the sandbox on first use (`uv run`, `npm`), which costs time on each
-  run and needs network.
+  run and needs network — and resolve **off the mount**: see `### Never install from the mount`.
+- **Agents run Python with `uv run`.** The engine does not put the environment on `PATH`; the
+  prompts must say so (step 4).
 
 **Record what you hit.** The engine is the right place to fix these, and a workspace that works
 around one silently is a workspace whose next reader repeats the work.
