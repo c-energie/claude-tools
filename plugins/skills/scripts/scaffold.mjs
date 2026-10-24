@@ -106,7 +106,8 @@ const SLUG = /^[a-z][a-z0-9-]*$/;
 // One language per extension. Python keeps its module-name rule (no hyphens); node files are
 // named like this marketplace's own scripts (setup-diagram-store.mjs).
 const LANG = { py: /^[a-z][a-z0-9_]*\.py$/, mjs: /^[a-z][a-z0-9_-]*\.mjs$/ };
-const STEP = /^[a-z][a-z0-9-]*$/;
+// Hyphens only between words: the node skeleton camel-cases a step name into its function name.
+const STEP = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const FLAG = /^--[a-z][a-z0-9-]*$/;
 
 // Flags the generated parser already owns, or that would shadow its dispatch.
@@ -164,7 +165,7 @@ function validate(s) {
   }
   const names = new Set(['check']);
   for (const [i, st] of (s.steps || []).entries()) {
-    if (!st || !str(st.name) || !STEP.test(st.name)) { errs.push(`steps[${i}].name: lower-case step name`); continue; }
+    if (!st || !str(st.name) || !STEP.test(st.name)) { errs.push(`steps[${i}].name: lower-case step name, hyphens only between words`); continue; }
     if (names.has(st.name)) errs.push(`steps[${i}].name: \`${st.name}\` is used twice (\`check\` is always generated)`);
     names.add(st.name);
     if (!str(st.does)) errs.push(`steps[${i}].does: one line on what the step does`);
@@ -335,6 +336,8 @@ const pyIdent = (name) => name.replace(/-/g, '_');
 const pyStr = (v) => JSON.stringify(String(v));
 // Prose pasted into the module docstring: nothing in it may close the docstring or start an escape.
 const doc = (v) => String(v).replace(/\\/g, '/').replace(/"""/g, "'''");
+// Prose pasted into a # or // comment: a line break would end the comment and run the rest as code.
+const oneLine = (v) => String(v).replace(/[\r\n]+/g, ' ');
 
 /** check, then the spec's steps, then the proof — the one sequence both skeletons share, so a
  *  .py and a .mjs from the same spec list the same steps in the same order. */
@@ -375,8 +378,8 @@ ROOT = None`);
   if (s.stateFile) L.push(`STATE_FILE = None  # ROOT / ${pyStr(s.stateFile)}`);
   else {
     L.push(`# Joined state: this setup fills in a record other skills define, in
-#   ${s.existingState.files.join(', ')}
-# and is done when this succeeds: ${s.existingState.check}
+#   ${oneLine(s.existingState.files.join(', '))}
+# and is done when this succeeds: ${oneLine(s.existingState.check)}
 # The schema is theirs, so there are no state helpers here — read and write it as they do.`);
   }
   L.push(`
@@ -539,7 +542,7 @@ def cmd_check(args):
 `);
   for (const st of steps) {
     L.push('', `def cmd_${pyIdent(st.name)}(args):`, `    ${pyStr(st.does)}`);
-    for (const c of stepComments(s, st)) L.push(`    # ${c}`);
+    for (const c of stepComments(s, st)) L.push(`    # ${oneLine(c)}`);
     L.push(`    say("${TODO}: implement step ${st.name}")`, '    return 4  # not implemented: never 0, so a stub cannot pass for a done step');
   }
   L.push('', '', `def main(argv=None):
@@ -611,9 +614,9 @@ function stepComments(s, st) {
 // shape. Node built-ins only: the script runs in someone else's project, with no install step.
 
 const jsIdent = (name) => `cmd${name.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join('')}`;
-const jsStr = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+const jsStr = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n')}'`;
 // Prose pasted into a // or /** comment: no line break may end it early, no */ close it.
-const jsDoc = (v) => String(v).replace(/[\r\n]+/g, ' ').replace(/\*\//g, '* /');
+const jsDoc = (v) => oneLine(v).replace(/\*\//g, '* /');
 // Text pasted into a template literal, kept verbatim: a backtick would end it, and ${ in a
 // plugin's run line (${CLAUDE_PLUGIN_ROOT}) would be read as an interpolation.
 const jsTpl = (v) => String(v).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
