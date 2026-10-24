@@ -142,8 +142,8 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
     repo has no `init.py`, it deletes itself after running.
   - **Document repo, either:** `layout.toml`, `.gitignore`,
     `Sections/Example/Figures/example_scatter.png` and `Sections/Example/tables.tex` (#10),
-    plus `setup-nested.sh` and `.gitattributes` when §3's step printed `added` or
-    `updated an outdated setup-nested.sh in …`. An example figure already committed
+    plus `setup-nested.sh` (and `.gitattributes`, if the document repo had none) when §3's
+    step printed `added` or `updated an outdated setup-nested.sh in …`. An example figure already committed
     regenerates byte-identical: no change to the PNG or `tables.tex` is then expected, not a
     failed proof.
 
