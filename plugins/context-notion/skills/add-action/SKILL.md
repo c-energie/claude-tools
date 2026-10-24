@@ -32,8 +32,8 @@ key in the config → say so and stop; the fix is a line in `context.json`.
   owner or date into it; those go in their properties.
 - **Owner-type properties**: user IDs from the roster (`state.notion.people`) — never
   `notion-search`. Unknown or `null` ID → omit the property and say so.
-- **Date properties**: both `date:Name:start` and `date:Name:is_datetime` = `0`. Dates from
-  `dates.mjs`, not head-math.
+- **Date properties**: shaped per tool — the flattened and REST forms differ, and `notion-config`
+  holds the one rule. Dates from `dates.mjs`, not head-math.
 - **Status**: the schema's listed options only; use its stated default when the user didn't
   say.
 

@@ -27,7 +27,7 @@ spaces in property names exist and must be reproduced, never trimmed.** Universa
 - The **title is the question itself**, phrased as a question. Ownership, status, category go
   in their properties.
 - Owners from the roster only; omit when unknown.
-- Any date property: `start` + `is_datetime` = `0`.
+- Any date property: shaped per tool, as `notion-config` states it.
 - Select/status values from the schema's listed options.
 
 ## Steps

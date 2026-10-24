@@ -279,8 +279,8 @@ title is the decision / task / question itself.
 
 - **Decisions** → follow `log-decision` (`databases.decisionLog`), each with a short body
   (what was decided, and why).
-- **Actions** → follow `add-action` (`databases.actions`), owner from the roster, due date as
-  `start` + `is_datetime` = `0`.
+- **Actions** → follow `add-action` (`databases.actions`), owner from the roster, due date in the
+  calling tool's shape (`notion-config`).
 - **Open questions** → follow `add-open-question` (`databases.openQuestions`).
 
 Owners resolve from `state.notion.people` only — never from a workspace search, which is blind to
