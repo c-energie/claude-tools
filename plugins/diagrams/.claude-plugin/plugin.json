@@ -1,7 +1,7 @@
 {
   "name": "diagrams",
   "description": "Capture diagrams Claude draws into a per-org git store and read them back: SVG/HTML source committed as text, an append-only index.jsonl carrying tags and the words drawn inside each picture, a taxonomy.json guard over the vocabulary, and a single self-contained HTML gallery over one or more stores. Which store is named by DIAGRAMS_STORE, the repo's .diagrams.json or the project's context.json (state.diagrams.repo) — context-kit optional, no default, and a cross-org store refused unless declared — so one install serves every project without ever crossing an org boundary.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": { "name": "c-energie" },
   "license": "MIT"
 }
