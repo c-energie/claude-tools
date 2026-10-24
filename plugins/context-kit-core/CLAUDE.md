@@ -18,6 +18,9 @@ A fix to the resolver or hook belongs in all three plugins' copies (see the mark
 node scripts/check-plugin.mjs .          # lint manifests/skills/hooks; exit 1 on error — run before any commit
 node --test hooks/load-context.test.mjs  # the autoload gate; stdlib only, no network, no clone
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
+node --test scripts/workspace.test.mjs   # the workspace resolver and its bash twin; stdlib only, no network
+node scripts/workspace.mjs --no-pull     # the nearest .claude/workspace.json's root, else the context repo (--json)
+bash scripts/workspace-root.sh --no-pull # the same, in bash, for hooks
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
 bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
 bash hooks/load-context.sh --refresh     # exactly what refresh-context runs, against $PWD
@@ -196,4 +199,19 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   read: a gate that blocked every MCP call on a missing checkout would be worse than none.
   `connections: {}` denies every provider connector; an absent `connections` key denies
   nothing — the same absent-versus-empty distinction drawn everywhere else.
+- **A workspace is the nearest `.claude/workspace.json`, and nothing else decides it** (ADR
+  0002). `scripts/workspace.mjs` walks from the working dir to the filesystem root and returns
+  the first directory holding one: nearest wins, levels never merge, and the walk does **not**
+  stop at a `.git` — members are nested clones, and stopping at the member's `.git` is how the
+  old resolver cloned a second copy of a context already on disk above it. Folder and repo names
+  are never consulted. A malformed nearest file is reported (path + parse error) and the walk
+  **stops** for the fallback rather than skipping on to an outer workspace, which would load the
+  wrong context over a typo. With no workspace it falls back to `context-repo.sh` unchanged, and
+  stderr always names the route (`route=workspace` / `route=context-repo`) — the fallback goes
+  when the last context repo is migrated. The resolver validates only "a JSON object": each
+  top-level key has one writing owner (`schema`/`name`/`repo`/`members` — project-workspace;
+  `connections` — setup-connectors; each `state.*` — the plugin reading it), member entries
+  carry kind-specific fields only project-workspace defines, and every writer preserves keys it
+  does not know at both levels. `scripts/workspace-root.sh` is its bash **twin** for hooks, not a
+  copy — `workspace.test.mjs` runs both against the same fixtures. Change both, or neither.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).
