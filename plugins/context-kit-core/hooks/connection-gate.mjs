@@ -46,11 +46,27 @@
 // never blocks wrongly. The cost is that "no output" means either "allowed" or "could not tell",
 // so the reason is always written.
 //
-// WHY IT WORKS IN COWORK. A sandbox has no checkout and no env var, but it does get the attached
-// .claude/context-project.json, and load-context.sh already mirrors `connections` into that file
-// every session. So the marker is the fallback source here, which is what makes this the only
-// mechanism that reaches both surfaces: settings.json permissions travel with a checkout, and a
-// Cowork sandbox never has one.
+// WHY IT WORKS IN COWORK. A sandbox has no checkout and no env var, but it does get the files
+// uploaded to the project. When the walk-up finds no workspace, the uploaded workspace.json is
+// looked for in the sandbox mount areas (scripts/cowork-workspace.mjs — the layouts the old
+// marker search covered); for a project not yet migrated, the attached context-project.json
+// marker that load-context.sh mirrors `connections` into is still read after that. This is what
+// makes the gate the only mechanism that reaches both surfaces: settings.json permissions travel
+// with a checkout, and a Cowork sandbox never has one.
+//
+// THE COWORK ROUTE IS NARROWER THAN THE LAPTOP ONE (ADR 0002, #61). From an UPLOADED
+// workspace.json, two more rules apply, because there the GitHub API is the only route and every
+// write through it is an immediate whole-file commit:
+//   - the github connector is the ONE chosen by the owner of the workspace's `repo` — a string,
+//     or that owner's entry in the owner-keyed map — exactly as context-access picks it. Other
+//     entries of the map are refused: they reach other owners' repositories, and nothing the
+//     Cowork route does needs one.
+//   - a write (any GitHub tool taking a path that is not a get_/list_/search_ read) must target
+//     the workspace's own `repo`, never a members[].repo, and every path in it must sit under
+//     COWORK_WRITE_ALLOWLIST. Curated files are read-only from Cowork; see that constant.
+// The gate reads the uploaded copy, not the repo's current one: it has no API access, and the
+// two keys it needs (`repo`, `connections`) are the bootstrap context-access trusts it for.
+// A laptop is untouched by both: it writes with git, members included.
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -131,6 +147,26 @@ try {
     process.stderr.write(`connection-gate: workspace resolver unavailable (${e && e.message ? e.message : e}); using the context-repo route\n`);
   }
 
+  // ------------------------------------------------------------ the Cowork route
+  // Only when the walk-up found NOTHING: a malformed nearest workspace.json goes to the legacy
+  // route below, as it always has, rather than being replaced by an upload. Imported the same
+  // guarded way as workspace.mjs, for the same reason.
+  let cowork = null;
+  if (!found) {
+    try {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const mod = await import(pathToFileURL(join(here, '..', 'scripts', 'cowork-workspace.mjs')).href);
+      const up = mod.findUploadedWorkspace({ project });
+      for (const r of up.rejected) process.stderr.write(`connection-gate: skipped ${r.file} — ${r.error}\n`);
+      if (up.file) {
+        found = { root: dirname(up.file), file: up.file, config: up.config };
+        cowork = { repo: up.config.repo, writeAllowed: mod.writeAllowed, allowlist: mod.COWORK_WRITE_ALLOWLIST };
+      }
+    } catch (e) {
+      process.stderr.write(`connection-gate: uploaded-workspace search unavailable (${e && e.message ? e.message : e}); using the context-repo route\n`);
+    }
+  }
+
   if (found?.root) {
     const ws = found.config;
     if (!Object.prototype.hasOwnProperty.call(ws, 'connections')) {
@@ -202,7 +238,9 @@ try {
         ? `${server}: ${unreadable} exists but will not parse, so the connection policy could NOT be `
           + 'read and this call is being allowed unchecked. Fix that file — a broken policy file '
           + 'silently disables this gate.'
-        : `${server}: no connections policy found${repo ? ` for ${repo}` : ''} — allowing, nothing to enforce`);
+        : `${server}: no connections policy found${repo ? ` for ${repo}` : ''} — no .claude/workspace.json `
+          + 'above the working directory or uploaded to the sandbox mount areas, and no context repo '
+          + 'policy — allowing, nothing to enforce');
     }
   }
 
@@ -231,7 +269,57 @@ try {
 
   const declared = connections[provider];
   const allowed = names(declared);
+  if (cowork && provider === 'github') coworkGithub(declared);    // exits: allows or denies
   if (allowed.includes(server)) process.exit(0);                  // a declared one: silent pass
+
+  // The two Cowork rules, for a github connector under an uploaded workspace.json. Never returns.
+  function coworkGithub(v) {
+    const [owner] = cowork.repo.split('/');
+    // The owner's connector: a plain string serves every owner, the map serves its key (GitHub
+    // owners are case-insensitive), and an array cannot say which — unless it holds just one.
+    let pick = null;
+    if (typeof v === 'string') pick = v || null;
+    else if (Array.isArray(v)) pick = names(v).length === 1 ? names(v)[0] : null;
+    else if (v && typeof v === 'object') {
+      const k = Object.keys(v).find((o) => o.toLowerCase() === owner.toLowerCase());
+      pick = k && typeof v[k] === 'string' && v[k] ? v[k] : null;
+    }
+    if (server !== pick) {
+      deny(pick
+        ? `Blocked: from Cowork the github connector is the one for ${cowork.repo}'s owner (${owner}), `
+          + `which ${source} names "${pick}" — not "${server}". The Cowork route reaches the `
+          + `workspace's own repo only, so no other connector is needed here, and using one is how `
+          + `another owner's repository gets written. Use ${pick}.`
+        : `Blocked: ${source} declares no github connection for ${cowork.repo}'s owner (${owner}), `
+          + `so no github connector may be used from Cowork. Declare it as `
+          + `{ "github": { "${owner}": "[connection]" } } with setup-connectors, from a laptop.`);
+    }
+
+    const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {};
+    const op = tool.slice(5).split('__').slice(1).join('__');
+    const paths = [];
+    for (const k of ['path', 'file_path']) if (k in input) paths.push(input[k]);
+    if (Array.isArray(input.files)) for (const f of input.files) paths.push(f && typeof f === 'object' ? f.path : f);
+    // Reads are not the allowlist's business; anything else that names a path is a write.
+    // Deliberately a read-list rather than a write-list: a server's next writing tool is then
+    // gated the day it appears, instead of passing because nobody had listed it yet.
+    if (!paths.length || /^(get|list|search|read|fetch|download)_/.test(op)) process.exit(0);
+
+    const target = typeof input.repo === 'string' && input.repo.includes('/')
+      ? input.repo : `${input.owner ?? ''}/${input.repo ?? ''}`;
+    const rule = `From Cowork, writes reach ${cowork.repo} only, and only under `
+      + `${cowork.allowlist.join(', ')}. docs/memory.md, GLOSSARY.md, docs/adr/ and everything `
+      + 'else are read-only here: an API write replaces the whole file, so a curated file rebuilt '
+      + 'from a partial read is silently truncated — curate those from a laptop, where git shows the diff.';
+    if (target.toLowerCase() !== cowork.repo.toLowerCase()) {
+      deny(`Blocked: ${op} would write to "${target}", which is not this workspace's repo. ${rule}`);
+    }
+    const bad = paths.filter((p) => !cowork.writeAllowed(p));
+    if (bad.length) {
+      deny(`Blocked: ${op} would write ${bad.map((p) => JSON.stringify(p)).join(', ')} in ${cowork.repo}. ${rule}`);
+    }
+    process.exit(0);
+  }
 
   const empty = !Object.keys(connections).length;
   deny(allowed.length
