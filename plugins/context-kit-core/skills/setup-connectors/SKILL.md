@@ -1,11 +1,12 @@
 ---
 name: setup-connectors
-description: Provision the MCP connections a project declares in its context.json — one credential per connection, scoped to that project's repos or workspace — and diagnose why a declared connection is missing or wrong. Triggers like "set up my connectors", "the project's github connection isn't there", "I'm getting the wrong notion workspace", "add a scoped PAT for this project", "why can't Claude see this repo".
+description: Provision the MCP connections a project declares in its workspace.json or context.json — one credential per connection, scoped to that project's repos or workspace — and diagnose why a declared connection is missing or wrong. Triggers like "set up my connectors", "the project's github connection isn't there", "I'm getting the wrong notion workspace", "add a scoped PAT for this project", "why can't Claude see this repo".
 ---
 
 # Provision this project's declared connections
 
-The `connections` block in the project's `context.json` names which MCP server serves each
+The `connections` block in the nearest `.claude/workspace.json` (or, for a project not yet in a
+workspace, its context repo's `context.json`) names which MCP server serves each
 provider here — e.g. `{ "github": "github-thesis", "notion": "notion-thesis" }`. This skill
 makes those exist on the current machine, each backed by its own narrowly-scoped credential.
 
@@ -37,10 +38,13 @@ Reports each declared connection as configured or missing, and names any other c
 the same provider present on this machine — those belong to other projects and are off-limits
 here. Read the output back to the user before changing anything.
 
-The script finds `context.json` on its own: `PROJECT_CONTEXT_REPO` (the env var, or the
-project's `.claude/settings*.json`) names the repo, and its managed clone lives at
-`~/.context/owner/repo` — cloned there on first use. `--context path` is an override for
-odd layouts, not the normal route.
+The script finds the policy on its own: first the nearest `.claude/workspace.json` at or above
+the project dir — a member repo inside a workspace uses the workspace's — and only without one,
+`context.json`, via `PROJECT_CONTEXT_REPO` (the env var, or the project's
+`.claude/settings*.json`), whose managed clone lives at `~/.context/owner/repo` — cloned there on
+first use. `--context path` is an override for odd layouts, not the normal route. In a workspace
+it edits **only** the `connections` key and leaves every other byte alone; a malformed nearest
+`workspace.json` is refused — fix it, rather than letting the script edit some other file.
 
 If it can't find `context.json`, that's `context-setup`'s job, not this one — the context repo
 isn't configured. If it finds the file but there's **no `connections` key at all**, offer to add
