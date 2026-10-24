@@ -210,7 +210,8 @@ class Workspace(unittest.TestCase):
     def write_json(self, body):
         (self.tmp / ".claude").mkdir(exist_ok=True)
         (self.tmp / ".claude" / "workspace.json").write_text(
-            body if isinstance(body, str) else json.dumps(body, indent=2), encoding="utf-8")
+            body if isinstance(body, str) else json.dumps(body, indent=2), encoding="utf-8",
+            newline="")
 
     def fake_clone(self, repo, directory):
         checkout = self.tmp / directory
@@ -1017,9 +1018,9 @@ class FindsTheRoot(unittest.TestCase):
         self.assertEqual(self.root_from(outer / "projects"), outer)
 
     def test_a_malformed_workspace_json_is_reported_with_its_path_and_error(self):
-        for body in ('{ "schema": 1, "name": ', "[1, 2]"):
+        for case, body in enumerate(('{ "schema": 1, "name": ', "[1, 2]")):
             with self.subTest(body):
-                root = self.workspace(self.tmp / body[:3].strip(), body)
+                root = self.workspace(self.tmp / f"case{case}", body)
                 found = sw.find_workspace(root / "sub")
                 self.assertIsNone(found["root"])
                 self.assertEqual(found["file"], root / ".claude" / "workspace.json")
