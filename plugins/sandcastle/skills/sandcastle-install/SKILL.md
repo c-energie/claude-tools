@@ -228,6 +228,51 @@ git -C <member> status --porcelain | grep -i sandcastle   # must print nothing
   freely. `GH_TOKEN` often does **not** — a fine-grained PAT (~93 chars, `github_pat_`) is scoped
   to **one owner**, so a token from a workspace under a different owner will fail every
   `gh --repo` call. Check the owner before copying.
+- **`GH_TOKEN` is not a GitHub Packages credential.** It is in `DEFAULT_ENV_KEYS`, so it is the
+  obvious thing to point a private-registry `rebuild` at, and a fine-grained PAT does reach
+  `npm.pkg.github.com` — and comes back `403 permission_denied: The token provided does not match
+  expected scopes`. That reads like a scope typo; it is the wrong *kind* of token, and no scope
+  you can tick on a fine-grained PAT fixes it. GitHub Packages' npm registry needs a **classic PAT
+  with `read:packages`**, by convention as `NODE_AUTH_TOKEN`. Its value goes in the root
+  `.sandcastle/.env` beside the others; its name goes in `envKeys`:
+
+```ts
+import { defineWorkspace, DEFAULT_ENV_KEYS } from "@c-energie/sandcastle-harness";
+
+export default defineWorkspace({
+  // ...
+  envKeys: [...DEFAULT_ENV_KEYS, "NODE_AUTH_TOKEN"],
+});
+```
+
+  **`envKeys` replaces the defaults; it does not add to them** (`config.envKeys ??
+  DEFAULT_ENV_KEYS`). `envKeys: ["NODE_AUTH_TOKEN"]` on its own silently drops the Claude token
+  and `GH_TOKEN` from every container — always spread `DEFAULT_ENV_KEYS`. Then re-run
+  `sandcastle:setup`, which adds the new key to each member's manifest.
+
+  The variable only gets the token into the container; npm still has to be told to send it,
+  from an `.npmrc` **npm reads inside the container**:
+
+```ini
+@<scope>:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```
+
+  The `${NODE_AUTH_TOKEN}` is literal — npm interpolates it at read time, so the file holds no
+  secret and can be committed. **Your host `~/.npmrc` does not reach the container**: the image's
+  `$HOME` is `/home/agent`, and nothing in the base image or the scaffold puts an `.npmrc` there.
+  The rebuild runs with cwd = the directory containing the `hostBuilt` path, inside the mount, so
+  the candidates are npm's usual two:
+  - **the member's own project `.npmrc`**, beside its `package.json`. It must be **committed**:
+    the preflight and a run mount a fresh *git worktree* of the member, which holds tracked files
+    only. (The smoke test mounts the live checkout instead, so an untracked one would reach
+    smoke and nothing else — the opposite of what you want to learn from it.)
+  - **`/home/agent/.npmrc`, written by the workspace Dockerfile** — the user-level file, but the
+    container's user, not yours.
+
+  Which one is right depends on the member, and neither has yet been confirmed end to end on a
+  real GitHub Packages member — prove the one you choose with `sandcastle:preflight` before
+  trusting it.
 
 ---
 
@@ -279,7 +324,7 @@ reaches the container.
 Run them for **one member of every prompt set**; a set's prompts are only resolved when a member
 using it is named.
 
-### One failure to expect, and what it means
+### Two results to expect, and what they mean
 
 - **`the suite could not run` on a Node member, from a Windows host.** The mounted checkout's
   `node_modules/.bin` shims are Windows shims that exec `node.exe`, which does not exist in a
@@ -288,6 +333,34 @@ using it is named.
   instance of the rule below, and it would also overwrite the user's host `node_modules`, because
   the mount is their live checkout. Either give the member an environment the image owns, or
   leave `testCommand` undefined and say so. (Harness #5.)
+- **A `SKIP`, not a `FAIL`, on a `hostBuilt` member whose `rebuild` installs from a private
+  registry.** That is the environment the image owns from the entry above, and its rebuild runs
+  in the container — where the smoke test injects **no credentials**, by design, so that its
+  failures are image faults. A rebuild that dies auth-shaped is therefore reported as
+  `SKIP  <path>: <rebuild> - <reason>` with the registry's own output after it, and that
+  directory's shadow assertions and the member's test harness are skipped too, as
+  `rebuild did not complete`. None of it counts against the smoke test. **The place to get it
+  green is `sandcastle:preflight`**, which runs the rebuild with the credentials a run gets. The
+  smoke reason says which of two things happened, read from the output alone (harness #52, since
+  v2.11.0):
+  - **`the registry answered 401: no credential arrived`** — expected under smoke, which sent
+    none.
+  - **`the registry answered 403: a credential arrived and was REFUSED (wrong kind of token, or a
+    missing scope)`** — smoke supplied nothing, so it came from configuration in the member or
+    the image.
+  - **Anything else is still a real `FAIL`** — a stale lockfile, a network error, a package
+    manager the image does not carry. Only a 401/403-shaped output is waved through, and a bare
+    `permission denied` (a filesystem `EACCES`) is deliberately not one.
+
+  The preflight does **not** print those reasons. Its rebuild is an `onSandboxReady` hook, and a
+  failed hook is silent: what you see is `<path> was rebuilt (non-empty)` failing (or, after a
+  partial install, the member's suite failing), and the registry's answer is only in the setup
+  log, `/tmp/sandbox-setup.log` in the container. Read it the same way. **401** there means no
+  credential arrived: the key is missing from `envKeys` (and so from the member's
+  `.sandcastle/.env` manifest — re-run `sandcastle:setup` after adding it), there is no value for
+  it in the root `.sandcastle/.env`, or the `.npmrc` that should reference it is not in the
+  container. **403** means it arrived and was refused — usually the wrong *kind* of token rather
+  than a missing scope; see GitHub Packages in step 5.
 
 ### Never install from the mount
 
