@@ -229,3 +229,19 @@ environment above the members (an editable install the harness swaps), the membe
 from `{{MEMBER_DIR}}` inside `{{WS}}`, and an agent that `cd`s into the mount gets import errors that
 look like a broken image. In a clone root, `{{MEMBER_DIR}}` *is* the mount and each member resolves
 its own environment (`uv run`, `npm`). The prompt has to say which of the two this workspace is.
+
+In a clone root, the implementer (and the revision brief, which lifts its commands) must say
+**run Python through `uv run`**, and why. The engine starts every container with
+`UV_PROJECT_ENVIRONMENT` pointing off the mount, so an agent's `uv sync` cannot write a `.venv`
+whose `lib64 -> lib` symlink then fails the Windows worktree teardown with ENOSYS (harness #15,
+fixed by #18). It deliberately sets neither `VIRTUAL_ENV` nor `PATH`: in a workspace that bakes no
+venv the directory does not exist until something creates it, and a `VIRTUAL_ENV` naming a
+missing directory is worse than none. So after a `uv sync` the environment is on **nobody's
+`PATH`** — a bare `python` or `pytest` finds the system interpreter, without the project's
+dependencies, and fails in a way that looks like a broken image. The harness's implementer stub
+carries this line; a project's own prompt does not inherit it.
+
+And never tell the agent to install anything from `{{MOUNT}}` — `npm install` there writes
+`node_modules/.bin/*` symlinks onto the host, which is the same ENOSYS teardown failure, and
+nothing redirects npm except a member's `hostBuilt` shadow, which the engine rebuilds itself
+(harness #5/#16).

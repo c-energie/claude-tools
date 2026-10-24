@@ -49,18 +49,32 @@ than benefit, and two of them currently fail outright.
 ## 1. Install
 
 ```bash
+echo 'allow-git=root' >> .npmrc          # FIRST, and commit it — see below
 npm i -D @c-energie/sandcastle-harness@github:c-energie/sandcastle-harness#vX.Y.Z \
   "@ai-hero/sandcastle@^0.12.0" tsx typescript @types/node
 npm ls @c-energie/sandcastle-harness    # must print the tag you asked for
+npx tsx -e 'console.log(1)'             # must print 1
 ```
 
+- **Write `allow-git=root` into the workspace's `.npmrc`, and commit it, before the install —
+  not after it fails.** npm 12 changed `allow-git`'s default from `all` to `none`, and the harness
+  is installable *only* from git, so on npm 12 the install dies first with
+  `EALLOWGIT  Fetching packages of type git have been disabled` — an error that names npm's config
+  and nothing of ours. `root` permits the git dependencies the workspace's own `package.json`
+  declares (the harness) and still refuses any a dependency pulls in transitively, which `all`
+  would not; that is why it is `root` and not the wider value. Committed rather than per-command,
+  so `npm ci` and every other clone agree with the machine that ran the install. (Harness #21.)
 - **Pin the same tag every other consumer is on.** Consumers on different tags is the silent
   divergence this package exists to kill, and it has already happened once. `npm ls` in each
   workspace says which it is on.
-- **`--allow-git=all` may be required.** A machine with `allow-git = "none"` in its npm config
-  refuses a git dependency with `EALLOWGIT`, with no hint that a flag would fix it.
-- A blocked `esbuild` postinstall is usually harmless — esbuild ships prebuilt platform binaries
-  as optional deps. Confirm rather than assume: `npx tsx -e 'console.log(1)'`.
+- **A repin, unlike a fresh install, fails even with `root`** — `Fetching non-root packages of
+  type "git"`, because the lockfile's edge still names the old ref. `npm uninstall` the harness,
+  then re-run the install; the uninstall lands first, so if the install then fails the workspace
+  has no harness at all. Confirm with `npm ls`, not the exit code. The harness README's quickstart
+  carries the detail.
+- npm 12's `allow-scripts` default also skips `esbuild`'s postinstall. That is harmless — esbuild
+  ships its platform binary as its own package, and `tsx` runs without the postinstall (verified on
+  npm 12.0.2 / node 24.18.0). The `npx tsx -e` line above is the confirmation; do not assume it.
 
 There must be a root `package.json` with `"type": "module"` before `sandcastle-init` will be
 happy. If the root has none, `npm init -y` one and set `"type"` and `"private": true`.
@@ -164,7 +178,7 @@ promptSets: {
 },
 ```
 
-Two traps worth naming here because they are invisible in a diff:
+Three traps worth naming here because they are invisible in a diff:
 
 - **Nested standards.** A member whose sub-directories each carry their own authoritative
   `CLAUDE.md` cannot be summarised into a prompt. Have the prompt name them **by path, as required
@@ -178,6 +192,15 @@ Two traps worth naming here because they are invisible in a diff:
 ```bash
 grep -rn '/{{REPO}}' .sandcastle/
 ```
+
+- **A clone root's implementer must say `uv run`.** The engine injects `UV_PROJECT_ENVIRONMENT`
+  but deliberately not `VIRTUAL_ENV` or `PATH` — in a workspace that bakes no venv the directory
+  does not exist until something creates it, and a `VIRTUAL_ENV` naming a missing directory is
+  worse than none. So after a `uv sync` the environment is on **nobody's `PATH`**, and a bare
+  `python` or `pytest` finds the system interpreter, without the project's dependencies. The
+  harness's implementer stub says so; a prompt you write yourself does not inherit the line. Every
+  Python prompt set in a clone root carries "run Python through `uv run`" — implementer, revision
+  and group reviewer alike, wherever the suite is run (harness #18).
 
 ---
 
@@ -205,6 +228,51 @@ git -C <member> status --porcelain | grep -i sandcastle   # must print nothing
   freely. `GH_TOKEN` often does **not** — a fine-grained PAT (~93 chars, `github_pat_`) is scoped
   to **one owner**, so a token from a workspace under a different owner will fail every
   `gh --repo` call. Check the owner before copying.
+- **`GH_TOKEN` is not a GitHub Packages credential.** It is in `DEFAULT_ENV_KEYS`, so it is the
+  obvious thing to point a private-registry `rebuild` at, and a fine-grained PAT does reach
+  `npm.pkg.github.com` — and comes back `403 permission_denied: The token provided does not match
+  expected scopes`. That reads like a scope typo; it is the wrong *kind* of token, and no scope
+  you can tick on a fine-grained PAT fixes it. GitHub Packages' npm registry needs a **classic PAT
+  with `read:packages`**, by convention as `NODE_AUTH_TOKEN`. Its value goes in the root
+  `.sandcastle/.env` beside the others; its name goes in `envKeys`:
+
+```ts
+import { defineWorkspace, DEFAULT_ENV_KEYS } from "@c-energie/sandcastle-harness";
+
+export default defineWorkspace({
+  // ...
+  envKeys: [...DEFAULT_ENV_KEYS, "NODE_AUTH_TOKEN"],
+});
+```
+
+  **`envKeys` replaces the defaults; it does not add to them** (`config.envKeys ??
+  DEFAULT_ENV_KEYS`). `envKeys: ["NODE_AUTH_TOKEN"]` on its own silently drops the Claude token
+  and `GH_TOKEN` from every container — always spread `DEFAULT_ENV_KEYS`. Then re-run
+  `sandcastle:setup`, which adds the new key to each member's manifest.
+
+  The variable only gets the token into the container; npm still has to be told to send it,
+  from an `.npmrc` **npm reads inside the container**:
+
+```ini
+@<scope>:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```
+
+  The `${NODE_AUTH_TOKEN}` is literal — npm interpolates it at read time, so the file holds no
+  secret and can be committed. **Your host `~/.npmrc` does not reach the container**: the image's
+  `$HOME` is `/home/agent`, and nothing in the base image or the scaffold puts an `.npmrc` there.
+  The rebuild runs with cwd = the directory containing the `hostBuilt` path, inside the mount, so
+  the candidates are npm's usual two:
+  - **the member's own project `.npmrc`**, beside its `package.json`. It must be **committed**:
+    the preflight and a run mount a fresh *git worktree* of the member, which holds tracked files
+    only. (The smoke test mounts the live checkout instead, so an untracked one would reach
+    smoke and nothing else — the opposite of what you want to learn from it.)
+  - **`/home/agent/.npmrc`, written by the workspace Dockerfile** — the user-level file, but the
+    container's user, not yours.
+
+  Which one is right depends on the member, and neither has yet been confirmed end to end on a
+  real GitHub Packages member — prove the one you choose with `sandcastle:preflight` before
+  trusting it.
 
 ---
 
@@ -256,20 +324,75 @@ reaches the container.
 Run them for **one member of every prompt set**; a set's prompts are only resolved when a member
 using it is named.
 
-### One failure to expect, and what it means
+### Two results to expect, and what they mean
 
 - **`the suite could not run` on a Node member, from a Windows host.** The mounted checkout's
   `node_modules/.bin` shims are Windows shims that exec `node.exe`, which does not exist in a
   Linux container, and npm does not rebuild them. `uv` *does* rebuild for the platform, so Python
-  members are unaffected. Do **not** "fix" it by running `npm ci` in the mount — that is the
-  user's live checkout and it would overwrite their host `node_modules`. Either give the member an
-  environment the image owns, or leave `testCommand` undefined and say so.
+  members are unaffected. Do **not** "fix" it by running `npm ci` in the mount — that is one
+  instance of the rule below, and it would also overwrite the user's host `node_modules`, because
+  the mount is their live checkout. Either give the member a tree the container owns — declare
+  `hostBuilt: [{ path: "node_modules", rebuild: "npm ci" }]` on it, and the engine lays a
+  directory of its own over the checkout's and rebuilds it there — or leave `testCommand`
+  undefined and say so. (Harness #5.)
+- **A `SKIP`, not a `FAIL`, on a `hostBuilt` member whose `rebuild` installs from a private
+  registry.** That is the `hostBuilt` tree from the entry above, and its rebuild runs
+  in the container — where the smoke test injects **no credentials**, by design, so that its
+  failures are image faults. A rebuild that dies auth-shaped is therefore reported as
+  `SKIP  <path>: <rebuild> - <reason>` with the registry's own output after it, and that
+  directory's shadow assertions and the member's test harness are skipped too, as
+  `rebuild did not complete`. None of it counts against the smoke test. **The place to get it
+  green is `sandcastle:preflight`**, which runs the rebuild with the credentials a run gets. The
+  smoke reason says which of two things happened, read from the output alone (harness #52, since
+  v2.11.0):
+  - **`the registry answered 401: no credential arrived`** — expected under smoke, which sent
+    none.
+  - **`the registry answered 403: a credential arrived and was REFUSED (wrong kind of token, or a
+    missing scope)`** — smoke supplied nothing, so it came from configuration in the member or
+    the image.
+  - **Anything else is still a real `FAIL`** — a stale lockfile, a network error, a package
+    manager the image does not carry. Only a 401/403-shaped output is waved through, and a bare
+    `permission denied` (a filesystem `EACCES`) is deliberately not one.
+
+  The preflight does **not** print those reasons. Its rebuild is an `onSandboxReady` hook, and a
+  failed hook is silent: what you see is `<path> was rebuilt (non-empty)` failing (or, after a
+  partial install, the member's suite failing), and the registry's answer is only in the setup
+  log, `/tmp/sandbox-setup.log` in the container. Read it the same way. **401** there means no
+  credential arrived: the key is missing from `envKeys` (and so from the member's
+  `.sandcastle/.env` manifest — re-run `sandcastle:setup` after adding it), there is no value for
+  it in the root `.sandcastle/.env`, or the `.npmrc` that should reference it is not in the
+  container. **403** means it arrived and was refused — usually the wrong *kind* of token rather
+  than a missing scope; see GitHub Packages in step 5.
+
+### Never install from the mount
+
+Any install step — in the Dockerfile, in a hook, in a prompt's instructions — runs from `<ws>`
+(or anywhere else the image owns), **never from the bind-mounted worktree**. Everything a
+container writes into the mount is written on the host, and on a **Windows host any Unix symlink
+written there makes `git worktree remove` fail with ENOSYS** (`Function not implemented`) at the
+end of the run — after the work is committed, with the worktree half-removed, and reported as a
+failed issue (harness #15, #16).
+
+- **uv** was the first case found: `uv sync` / `uv venv` in a member creates `.venv/lib64 -> lib`.
+  The engine now keeps uv's environment off the mount (`UV_PROJECT_ENVIRONMENT`, harness #18 —
+  see `## Clone roots`), but only for uv.
+- **npm** does the same with `node_modules/.bin/*`, and nothing redirects it unless the member
+  declares `hostBuilt` — whose rebuild is the one install that runs in the mount, because it
+  writes into a shadow backed under `~/.sandcastle/shadow/`, outside every git checkout
+  (harness #5/#16).
+
+Those redirects cover what they name; the rule covers everything else. Any other symlink written into the
+mount fails the same way.
 
 What you will see instead of a failure, on a workspace with no Python: `interpreter at <python>`
 reported as **SKIP** by the smoke test and as a `note` by the preflight. The two facts used to be
 one check — `test -d <ws>/src && test -x <python>` — which no venv-less workspace could pass and no
 config could disable. They are separate assertions now, and the interpreter is asserted only when
-some member declares an `importName` or the config sets `python` itself.
+some member declares an `importName` or the config sets `python` itself (`pythonExplicit`, harness
+#17) — so setting `python` turns this SKIP into a check that must pass.
+
+Also expect **`uv venv lands off the mount`** in the preflight, passing in every workspace, Python
+or not: it asserts the `UV_PROJECT_ENVIRONMENT` the engine injects (harness #18).
 
 ### Then a dry run, per prompt set
 
@@ -304,10 +427,23 @@ So, concretely:
 - `importName: null` on **every** member.
 - Drop `manifestFile`.
 - Rewrite the Dockerfile: no `uv sync`, no `VIRTUAL_ENV`, one COPY per member into `./src/<member>/`.
-- Expect `interpreter at <python>` to be skipped rather than asserted — with no `importName`
-  anywhere and no `python` in the config, there is no interpreter for it to be about.
+- **A clone root bakes no venv, and that is still right.** It used to be that an agent's `uv sync`
+  at task time wrote `.venv/` into the bind mount and failed the Windows teardown (harness #15).
+  The engine now starts every container — run, preflight and smoke test — with
+  `UV_PROJECT_ENVIRONMENT` set to a path off the mount, and the preflight asserts it
+  (`uv venv lands off the mount`, harness #18). The Dockerfile has nothing to do about it. **Do
+  not add a venv, a `uv sync` layer or a `VIRTUAL_ENV` to satisfy the harness** — none is asked
+  for, and a venv baked for one member is wrong for the others.
+- **Leave `python` unset in `sandcastle.config.mts`** unless the image really bakes an interpreter
+  at that path. Setting it is a claim, not a tidy default: it makes the interpreter assertion
+  required (`pythonExplicit`, harness #17), so a config that names `/usr/bin/python3` to look
+  complete turns a skipped check into one that has to pass. With no `importName` anywhere and no
+  `python` in the config, expect `interpreter at <python>` to be skipped rather than asserted —
+  there is no interpreter for it to be about.
 - Dependencies resolve inside the sandbox on first use (`uv run`, `npm`), which costs time on each
-  run and needs network.
+  run and needs network — and resolve **off the mount**: see `### Never install from the mount`.
+- **Agents run Python with `uv run`.** The engine does not put the environment on `PATH`; the
+  prompts must say so (step 4).
 
 **Record what you hit.** The engine is the right place to fix these, and a workspace that works
 around one silently is a workspace whose next reader repeats the work.
