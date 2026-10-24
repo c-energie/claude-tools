@@ -2,8 +2,16 @@
 // What is OUTSTANDING across the context ladder: the queues that have filled up and the skill
 // that drains each one.
 //
-//   node context-status.mjs <context-repo-root> [--role name] [--json] [--today YYYY-MM-DD]
+//   node context-status.mjs <workspace-or-context-repo-root> [--role name] [--json] [--today YYYY-MM-DD]
 //   node context-status.mjs <root> --no-memory     # skip the native-memory scan (the slow part)
+//
+// IN A WORKSPACE (ADR 0002 — workspace.mjs's rootKind(), the same test context-doctor applies)
+// the queues that survive are counted from their new homes: unlogged thread outcomes and
+// curation lag in docs/threads/ against docs/memory.md, the Notion queue in .context/pending/,
+// and native memory through memory-triage.mjs, which already knows a workspace. The queues that
+// belonged to retired machinery — lessons, sweeps, doctrine, handoff/ — are not applicable there
+// rather than empty, and --role is refused: a workspace declares no roles. A legacy context repo
+// is counted exactly as before while the fallback lasts.
 //
 // WHY A SCRIPT. Every number here is a count against a threshold, and a queue whose depth is
 // re-estimated in prose each time is a queue nobody trusts enough to drain. `unswept` already
@@ -30,6 +38,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, dirname, resolve, basename } from 'node:path';
+import { rootKind } from './workspace.mjs';
 
 const OPTIONS = ['json', 'role', 'today', 'no-memory'];
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,8 +62,11 @@ for (const f of flags) if (!OPTIONS.includes(f)) die(`unknown option --${f}`);
 const today = opts.today ?? new Date().toISOString().slice(0, 10);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) die(`--today needs YYYY-MM-DD, got ${opts.today}`);
 
-const root = resolve(positional[0] ?? '.');
-if (!existsSync(root)) die(`no such directory: ${root}`);
+const start = resolve(positional[0] ?? '.');
+if (!existsSync(start)) die(`no such directory: ${start}`);
+const where = rootKind(start);
+const WS = where?.kind === 'workspace';
+const root = where?.root ?? start;
 
 // ---------------------------------------------------------------- small helpers
 
@@ -126,23 +138,34 @@ const sibling = (script, args) => {
 
 // ---------------------------------------------------------------- the repo
 
-const cfgFile = join(root, 'context.json');
-if (!existsSync(cfgFile)) die(`no context.json at ${root} — not a context repo`);
+// A malformed workspace.json is fatal, as in memory-triage.mjs: counting the queues of a
+// workspace no route is using would report on a home the session is not in. context-doctor is
+// where it is diagnosed.
 let ctx;
-try { ctx = readJson(cfgFile); } catch (e) { die(`context.json is not valid JSON (${e.message})`); }
+if (WS) {
+  if (where.error) die(`${where.file} is malformed — ${where.error} (context-doctor reports it)`);
+  ctx = where.config;
+} else {
+  const cfgFile = join(root, 'context.json');
+  if (!existsSync(cfgFile)) die(`no context.json at ${root} — not a context repo, and no .claude/workspace.json above it`);
+  try { ctx = readJson(cfgFile); } catch (e) { die(`context.json is not valid JSON (${e.message})`); }
+}
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
-const assistants = obj(ctx.assistants);
-const supervisors = obj(ctx.supervisors);
-const includes = (Array.isArray(ctx.include) ? ctx.include : []).filter((v) => typeof v === 'string');
+// Retired keys are not read from a workspace even if one still carries them: nothing there acts
+// on them, so a queue counted from them would be a queue nothing can drain.
+const assistants = WS ? {} : obj(ctx.assistants);
+const supervisors = WS ? {} : obj(ctx.supervisors);
+const includes = WS ? [] : (Array.isArray(ctx.include) ? ctx.include : []).filter((v) => typeof v === 'string');
 
 // `supervisors` is what makes a repo the layer that distils — the same test supervisor-sweep
 // applies before it will run at all. Not `include`, which says only which repos may be READ.
 const sweeps = Object.keys(supervisors).length > 0;
-const repoName = ctx.contextRepo ?? basename(root);
+const repoName = (WS ? ctx.repo ?? ctx.name : ctx.contextRepo) ?? basename(root);
 
 const wantRole = opts.role ? String(opts.role).trim().toLowerCase() : null;
 const roleList = (names) => (wantRole ? names.filter((r) => r === wantRole) : names);
+if (wantRole && WS) die('--role does not apply in a workspace — roles and assistants are retired there (ADR 0002)');
 if (wantRole && ![...Object.keys(supervisors), ...Object.keys(assistants)].includes(wantRole)) {
   die(`role "${wantRole}" is not declared in ${repoName} (assistants: ${Object.keys(assistants).join(', ') || 'none'})`);
 }
@@ -273,7 +296,7 @@ if (sweeps) {
 
 // ---------------------------------------------------------------- 3. handoff awaiting a drain
 
-const handoff = { applicable: existsSync(join(root, 'handoff')), items: [], byProject: [] };
+const handoff = { applicable: !WS && existsSync(join(root, 'handoff')), items: [], byProject: [] };
 
 if (handoff.applicable) {
   for (const f of itemsIn(join(root, 'handoff'))) {
@@ -333,16 +356,19 @@ if (sweeps) {
 
 // ---------------------------------------------------------------- 5. threads awaiting curation
 
-const threadsDir = join(root, 'threads');
+// ADR 0002's layout in a workspace. No archive is defined there yet (curate-context has not
+// moved), so none is counted rather than one guessed at.
+const THREADS_REL = WS ? 'docs/threads' : 'threads';
+const threadsDir = join(root, THREADS_REL);
 const allThreads = itemsIn(threadsDir);
-const reviewed = stampedDate(join(root, 'memory.md'), 'last reviewed');
+const reviewed = stampedDate(join(root, WS ? 'docs/memory.md' : 'memory.md'), 'last reviewed');
 const since = reviewed ? allThreads.filter((f) => (fileDate(f) ?? '9999-99-99') > reviewed) : allThreads;
 
 const indexFile = join(threadsDir, 'INDEX.md');
 const indexed = existsSync(indexFile)
   ? (readFileSync(indexFile, 'utf8').match(/^\s*[-*]?\s*`?\d{4}-\d{2}-\d{2}/gm) ?? []).length
   : null;
-const archived = itemsIn(join(root, 'Archive', 'threads')).length;
+const archived = WS ? 0 : itemsIn(join(root, 'Archive', 'threads')).length;
 
 const threads = {
   total: allThreads.length,
@@ -358,7 +384,7 @@ const threads = {
     : { present: false, entries: null, covers: allThreads.length + archived, behind: allThreads.length > 0 },
 };
 
-if (threads.index.behind) actions.push(`/curate-context  (threads/INDEX.md lists ${threads.index.entries ?? 0} of ${threads.index.covers} threads)`);
+if (threads.index.behind) actions.push(`/curate-context  (${THREADS_REL}/INDEX.md lists ${threads.index.entries ?? 0} of ${threads.index.covers} threads)`);
 else if (threads.sinceReview >= 5) actions.push(`/curate-context  (${threads.sinceReview} threads since the last review${reviewed ? ` on ${reviewed}` : ''})`);
 
 // ---------------------------------------------------------------- 6. outcomes that never landed
@@ -434,9 +460,10 @@ if (reconcile.carrying > 0) {
 // pending/ belongs to whichever backend layer is installed — context-notion owns its format.
 // Counting files needs none of that, and a queue nobody counts is a queue nobody drains, so
 // the count is reported and the parsing is left to the layer entitled to do it.
-const pendingDir = join(root, 'pending');
+const PENDING_REL = WS ? '.context/pending' : 'pending';
+const pendingDir = join(root, PENDING_REL);
 const pending = { present: existsSync(pendingDir), count: itemsIn(pendingDir).length };
-if (pending.count > 0) actions.push(`drain the pending/ queue (${pending.count} item(s)) — /process-pending if this project uses Notion`);
+if (pending.count > 0) actions.push(`drain the ${PENDING_REL}/ queue (${pending.count} item(s)) — /process-pending if this project uses Notion`);
 
 let memory = { available: false, why: 'skipped (--no-memory)' };
 if (!flags.has('no-memory')) {
@@ -454,7 +481,8 @@ if (!flags.has('no-memory')) {
 
 const data = {
   root, repo: repoName, today,
-  kind: sweeps ? 'cross-project layer' : 'project context repo',
+  kind: WS ? 'workspace' : (sweeps ? 'cross-project layer' : 'project context repo'),
+  layout: { threads: THREADS_REL, pending: PENDING_REL },
   declared: { assistants: Object.keys(assistants), supervisors: Object.keys(supervisors), include: includes },
   queues: { lessons, slices, sweptThreads, handoff, doctrine, threads, reconcile, pending, memory },
   actions,
@@ -474,7 +502,8 @@ const head = (title, owner) => {
 };
 
 L.push(`context-status — ${repoName}  (${today})`);
-L.push(`  ${data.kind} · ${Object.keys(assistants).length} assistant(s) · ${Object.keys(supervisors).length} supervisor(s)${includes.length ? ` · include: ${includes.length}` : ''}`);
+if (WS) L.push(`  workspace · threads in ${THREADS_REL}/ · pending in ${PENDING_REL}/`);
+else L.push(`  ${data.kind} · ${Object.keys(assistants).length} assistant(s) · ${Object.keys(supervisors).length} supervisor(s)${includes.length ? ` · include: ${includes.length}` : ''}`);
 
 if (lessons.applicable) {
   head('LESSONS AWAITING A SWEEP', '/supervisor-sweep');
@@ -492,7 +521,7 @@ if (lessons.applicable) {
       L.push(`        ${String(s.count).padStart(3)}  ${s.repo}${s.self ? ' (this repo)' : ''}`);
     }
   }
-} else {
+} else if (!WS) {
   head('LESSONS', '');
   L.push('    This repo declares no supervisors, so it is a project rather than the layer that');
   L.push('    distils. Whether its lessons have been swept is only knowable where the sweeping');
@@ -550,11 +579,11 @@ if (doctrine.applicable && doctrine.rows.length) {
 }
 
 head('THREADS AWAITING CURATION', '/curate-context');
-L.push(`    ${threads.total} thread(s) in threads/${threads.assistant ? ` (${threads.assistant} assistant)` : ''}, ${threads.archived} archived`);
-L.push(`    last review: ${threads.lastReviewed ?? 'never stamped in memory.md'}${threads.reviewedAge !== null ? ` (${threads.reviewedAge}d ago)` : ''} · ${threads.sinceReview} thread(s) since`);
+L.push(`    ${threads.total} thread(s) in ${THREADS_REL}/${threads.assistant ? ` (${threads.assistant} assistant)` : ''}, ${threads.archived} archived`);
+L.push(`    last review: ${threads.lastReviewed ?? `never stamped in ${WS ? 'docs/memory.md' : 'memory.md'}`}${threads.reviewedAge !== null ? ` (${threads.reviewedAge}d ago)` : ''} · ${threads.sinceReview} thread(s) since`);
 L.push(threads.index.present
-  ? `    threads/INDEX.md lists ${threads.index.entries} of ${threads.index.covers}${threads.index.behind ? '  — BEHIND' : ''}`
-  : '    threads/INDEX.md is absent');
+  ? `    ${THREADS_REL}/INDEX.md lists ${threads.index.entries} of ${threads.index.covers}${threads.index.behind ? '  — BEHIND' : ''}`
+  : `    ${THREADS_REL}/INDEX.md is absent`);
 
 if (reconcile.total) {
   head('THREAD OUTCOMES NEVER LOGGED', '/log-decision · /add-action');
@@ -575,7 +604,7 @@ if (reconcile.total) {
 
 if (pending.present) {
   head('PENDING QUEUE', '');
-  L.push(`    ${pending.count} item(s) in pending/`);
+  L.push(`    ${pending.count} item(s) in ${PENDING_REL}/`);
 }
 
 head('NATIVE MEMORY AWAITING TRIAGE', '/memory-triage');
@@ -590,13 +619,15 @@ else {
 L.push('');
 // "Every queue is clear" must never be said from a repo that cannot see every queue. A project
 // run is blind to the sweep backlog and to the handoff items addressed to it, and an empty
-// punchline there would read as an all-clear it has no standing to give.
+// punchline there would read as an all-clear it has no standing to give. A workspace is not
+// blind to them: they are retired, so there is no layer above it holding a queue for it.
+const seesAll = sweeps || WS;
 if (actions.length) L.push(`  WHAT TO RUN (${actions.length}):`);
-else if (sweeps) L.push('  WHAT TO RUN: nothing — every queue is clear.');
+else if (seesAll) L.push('  WHAT TO RUN: nothing — every queue is clear.');
 else L.push('  WHAT TO RUN: nothing HERE. The sweep backlog and any handoff bound for this repo');
-if (!actions.length && !sweeps) L.push('    are only visible in the cross-project layer — run this there as well.');
+if (!actions.length && !seesAll) L.push('    are only visible in the cross-project layer — run this there as well.');
 for (const a of actions) L.push(`    - ${a}`);
-if (actions.length && !sweeps) {
+if (actions.length && !seesAll) {
   L.push('');
   L.push('  Cross-project queues (sweeps, and handoff addressed to this repo) are not visible');
   L.push('  from a project repo — run this in the cross-project layer as well.');

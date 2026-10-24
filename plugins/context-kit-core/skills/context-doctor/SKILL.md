@@ -1,9 +1,9 @@
 ---
 name: context-doctor
-description: Health-check a context repo for the drift and misconfiguration that never announces itself — a dead plugin id, an include entry the hook silently drops, a stale template stamp, an index missing threads, front-matter the ingester discards, a pending queue nobody drained. Reports everything and can fix the config keys whose correct value is derivable. Triggers like "check my context repo", "context doctor", "is my context set up right", "why is this thread not showing up", "audit the context config", "what is wrong with my context repo".
+description: Health-check a workspace or a context repo for the drift and misconfiguration that never announces itself — a dead plugin id, an include entry the hook silently drops, a stale template stamp, an index missing threads, front-matter the ingester discards, a pending queue nobody drained, a member not cloned, a public workspace repo holding meetings. Reports everything and can fix the config keys whose correct value is derivable. Triggers like "check my context repo", "check my workspace", "context doctor", "is my context set up right", "why is this thread not showing up", "audit the context config", "what is wrong with my context repo".
 ---
 
-# Check a context repo's health
+# Check a workspace's or a context repo's health
 
 Every failure this looks for is **silent**. A plugin id that names nothing still parses; an
 `include` entry with a typo is dropped without a word; a thread whose front-matter contains an
@@ -16,12 +16,19 @@ never rewrites prose.
 ## 1. Find the checkout
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
 ```
 
-`--no-pull` because a diagnostic has no business autostashing a working tree it was asked to
-inspect. If the resolver exits non-zero, the problem is the *link*, not the repo's health —
-that is `context-setup`, so route there rather than guessing at a path.
+The nearest `.claude/workspace.json` above the working directory, else — while unmigrated
+projects remain — the context repo `context-repo.sh` resolves. `--no-pull` because a diagnostic
+has no business autostashing a working tree it was asked to inspect. If the resolver exits
+non-zero, the problem is the *link*, not the repo's health — that is `context-setup`, so route
+there rather than guessing at a path.
+
+The doctor decides for itself which kind of root it was given: a directory holding
+`context.json` and no `.claude/workspace.json` is a context repo and gets today's checks
+unchanged; anything else is checked as the nearest workspace. The first line of the report (and
+`mode` in `--json`) says which ran.
 
 ## 2. Run it
 
@@ -35,6 +42,19 @@ Useful flags:
   are read-only from here, and `--fix` never touches them.
 - `--json` — the same findings machine-readably.
 - `--today 2026-08-18` — pin the date so ages are reproducible.
+
+**In a workspace** it checks `workspace.json` itself (parses, `schema` 1, `repo`, every
+`members[]` entry on disk, `connections`' shape), that `CLAUDE.md` imports `@docs/memory.md`,
+the threads and `INDEX.md` in `docs/threads/`, and `.context/pending/` for stale items. A member
+that is not cloned is a `note` — normal on a fresh clone — with the `gh repo clone` to run. The
+checks for retired keys (`include`, `template`, assistants and roles, `teaching`, `handoff/`, the
+marker) do not run there.
+
+**A `visibility` warning is the one to raise first in a workspace.** A PUBLIC workspace repo
+holding `docs/meetings/` or `.context/pending/` gives those to anyone who clones it (ADR 0002):
+the workspace repo must be private even when its members are public. This is the doctor's only
+network call (`gh repo view`), made only when one of those directories exists; if `gh` cannot
+answer, a `note` says the visibility was NOT checked — report that as unchecked, never as fine.
 
 Findings come at three levels: `err` is actively broken or actively misleading, `warn` is worth
 a look, `note` is context rather than a defect.
@@ -77,7 +97,8 @@ An **absent** audience is not a finding at all. Absent is absent: a workspace th
 has not been classified, and reporting it would push people to supply a value to silence the
 check — which is how a repo ends up full of audiences nobody chose.
 
-`--fix` writes **only JSON keys, and only where the correct value is derivable** from something
+`--fix` never writes `workspace.json` — every key there has another writing owner — so in a
+workspace it can only fix `.claude/settings.json`. It writes **only JSON keys, and only where the correct value is derivable** from something
 already in the repo — a plugin id that resolves to exactly one real plugin, or a
 `PROJECT_CONTEXT_REPO` that disagrees with the `contextRepo` sitting next to it. It never
 touches markdown, and it never writes a value it would have to guess. That envelope is the

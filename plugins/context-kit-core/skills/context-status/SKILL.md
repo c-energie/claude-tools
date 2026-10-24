@@ -17,8 +17,15 @@ counts it.
 ## 1. Find the repo
 
 ```bash
-ROOT="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
 ```
+
+The nearest workspace, else (until the last context repo is migrated) the context repo. In a
+workspace the same queues are counted from their new homes — thread outcomes and curation in
+`docs/threads/` against `docs/memory.md`, the pending queue in `.context/pending/`, native memory
+as before — and the retired ones (lessons, sweeps, doctrine, handoff) are simply not shown:
+nothing in a workspace fills them, so there is no layer above it to check either. `--role` is
+refused there for the same reason.
 
 `--no-pull` deliberately: a status check should be instant and change nothing, and the
 session-start hook already pulled this repo when the session opened. If the numbers matter
@@ -77,7 +84,10 @@ triggered a sweep would have converted a read into six writes.
 Draining a handoff item is the one that cannot be done from here at all: it has to happen in
 the target project's own session, where the write is legitimate and a human watches it land.
 
-## 5. From a project repo, say what you cannot see
+## 5. From a project context repo, say what you cannot see
+
+(Not in a workspace: the queues this section is about are retired there, so a workspace's
+all-clear is a real one.)
 
 Run in a project's context repo, this reports that repo's threads, slices, pending queue and
 native memory — and it is **blind** to two queues that concern it: whether its lessons have been
