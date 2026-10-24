@@ -344,9 +344,54 @@ def wait_for_content(repo, timeout=90):
     sys.exit(f"{repo} still has no commits after {timeout}s. Check it on GitHub, then re-run.")
 
 
+# Files at writing-template's root that an unrelated repo is unlikely to have both of: the
+# fallback when GitHub does not report the repo's template (one made by pushing a clone of
+# the template rather than "Use this template" has none).
+TEMPLATE_MARKERS = {WRITING_TEMPLATE: ("main.tex", "document_settings.sty")}
+
+
+def template_of(repo):
+    """`OWNER/NAME` of the template `repo` was generated from, or None. gh has reported
+    `templateRepository` both with `nameWithOwner` and as `name` plus `owner.login`, so
+    either is read; a failed lookup is None, and the marker files then decide."""
+    result = quiet(["gh", "repo", "view", repo, "--json", "templateRepository"])
+    if result.returncode != 0:
+        return None
+    try:
+        source = json.loads(result.stdout or "{}").get("templateRepository")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    if not isinstance(source, dict):
+        return None
+    if source.get("nameWithOwner"):
+        return source["nameWithOwner"]
+    owner = (source.get("owner") or {}).get("login")
+    return f"{owner}/{source['name']}" if owner and source.get("name") else None
+
+
+def made_from_template(repo, template):
+    """Whether an existing `repo` is a copy of `template`. Reads only, so a dry run asks
+    GitHub the same question a real run does and stops at the same place."""
+    origin = template_of(repo)
+    if origin:
+        return origin.lower() == template.lower()
+    markers = TEMPLATE_MARKERS.get(template, ())
+    return bool(markers) and all(
+        quiet(["gh", "api", f"repos/{repo}/contents/{name}", "--silent"]).returncode == 0
+        for name in markers)
+
+
 def create_from_template(template, repo, visibility):
     if repo_exists(repo):
-        say(f"{repo} already exists; using it as-is.")
+        # Only a repo this template made is taken as-is: that is the re-run of an
+        # interrupted fresh run. Anything else was adopted silently — an unrelated Python
+        # package with the chosen name was cloned, called "already initialised" for lacking
+        # an init.py, and recorded as a document, exit 0 (#40). Stopping here comes before
+        # the clone and before any workspace file is written.
+        if not made_from_template(repo, template):
+            sys.exit(f"{repo} already exists and was not made from {template}; pick another "
+                     "name, or use --mode adapt if it is a writing-template / Overleaf repo.")
+        say(f"{repo} already exists and was made from {template}; using it as-is.")
     else:
         run(["gh", "repo", "create", repo, "--template", template, f"--{visibility}"])
     wait_for_content(repo)

@@ -366,6 +366,103 @@ class AddDocument(Workspace):
         self.assertIn("code member", str(caught.exception))
 
 
+class FakeGh:
+    """Stands in for `quiet`: answers the `gh` reads create_from_template makes about one
+    existing repo. `template` is what templateRepository holds; `files` are at its root."""
+
+    def __init__(self, template=None, files=(), view_fails=False):
+        self.template, self.files, self.view_fails = template, set(files), view_fails
+
+    def __call__(self, cmd, **kwargs):
+        def answer(code, out=""):
+            return subprocess.CompletedProcess(cmd, code, out, "")
+        if cmd[:3] == ["gh", "repo", "view"] and cmd[-1] == "name":
+            return answer(0, '{"name": "thesis"}')
+        if cmd[:3] == ["gh", "repo", "view"]:
+            if self.view_fails:
+                return answer(1)
+            return answer(0, json.dumps({"templateRepository": self.template}))
+        if cmd[:2] == ["gh", "api"] and "/contents/" in cmd[2]:
+            return answer(0 if cmd[2].split("/contents/")[1] in self.files else 1)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+
+class CreateFromTemplate(Workspace):
+    """Fresh mode takes an existing repo only if writing-template made it (#40)."""
+
+    def create(self, gh, exists=True):
+        out = io.StringIO()
+        with mock.patch.object(sw, "repo_exists", return_value=exists), \
+                mock.patch.object(sw, "quiet", side_effect=gh), \
+                mock.patch.object(sw, "run") as run, \
+                mock.patch.object(sw, "wait_for_content"), \
+                contextlib.redirect_stdout(out):
+            sw.create_from_template(sw.WRITING_TEMPLATE, "o/thesis", "private")
+        return out.getvalue(), run
+
+    def test_missing_repo_is_created_from_the_template(self):
+        _, run = self.create(FakeGh(), exists=False)
+        run.assert_called_once_with(["gh", "repo", "create", "o/thesis", "--template",
+                                     sw.WRITING_TEMPLATE, "--private"])
+
+    def test_repo_made_from_the_template_is_used_as_is(self):
+        printed, run = self.create(FakeGh(template={"nameWithOwner": sw.WRITING_TEMPLATE}))
+        self.assertIn("using it as-is", printed)
+        run.assert_not_called()
+
+    def test_template_given_as_name_and_owner_counts(self):
+        owner, name = sw.WRITING_TEMPLATE.split("/")
+        printed, run = self.create(FakeGh(template={"name": name, "owner": {"login": owner}}))
+        self.assertIn("using it as-is", printed)
+
+    def test_no_template_but_the_marker_files_is_used_as_is(self):
+        printed, run = self.create(FakeGh(files={"main.tex", "document_settings.sty"}))
+        self.assertIn("using it as-is", printed)
+        run.assert_not_called()
+
+    def test_failed_template_lookup_falls_back_to_the_markers(self):
+        printed, _ = self.create(FakeGh(view_fails=True,
+                                        files={"main.tex", "document_settings.sty"}))
+        self.assertIn("using it as-is", printed)
+
+    def test_unrelated_repo_stops(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.create(FakeGh(files={"pyproject.toml"}))
+        message = str(caught.exception)
+        self.assertIn("o/thesis already exists and was not made from", message)
+        self.assertIn("--mode adapt", message)
+
+    def test_one_marker_alone_is_not_enough(self):
+        with self.assertRaises(SystemExit):
+            self.create(FakeGh(files={"main.tex"}))
+
+    def test_made_from_another_template_stops_whatever_its_files(self):
+        with self.assertRaises(SystemExit):
+            self.create(FakeGh(template={"nameWithOwner": "c-energie/analysis-template"},
+                               files={"main.tex", "document_settings.sty"}))
+
+    def test_dry_run_stops_too(self):
+        # Reads are honest under --dry-run, so the plan shown for confirmation fails
+        # where the real run would, not after the user has said yes.
+        with mock.patch.object(sw, "DRY_RUN", True), self.assertRaises(SystemExit):
+            self.create(FakeGh())
+
+    def test_add_document_on_an_unrelated_repo_clones_and_writes_nothing(self):
+        self.call("init", "--name", "w")
+        before = self.read(".claude/workspace.json"), self.read("CLAUDE.md")
+        with mock.patch.object(sw, "repo_exists", return_value=True), \
+                mock.patch.object(sw, "quiet", side_effect=FakeGh()), \
+                mock.patch.object(sw, "clone") as clone, \
+                mock.patch.object(sw, "run_init") as run_init, \
+                self.assertRaises(SystemExit):
+            self.call("add-document", "--mode", "fresh", "--repo", "o/thesis",
+                      "--title", "T", "--author", "A")
+        clone.assert_not_called()
+        run_init.assert_not_called()
+        self.assertEqual(before, (self.read(".claude/workspace.json"), self.read("CLAUDE.md")))
+        self.assertFalse((self.tmp / "thesis").exists())
+
+
 class FindDocument(Workspace):
     def setUp(self):
         super().setUp()

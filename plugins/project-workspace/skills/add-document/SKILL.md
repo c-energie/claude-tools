@@ -31,7 +31,10 @@ Ask in this order, a few at a time; collect everything before running anything.
 
 1. **Document short name** — lower-case, dashes (`thesis`, `gridflex-report`). It is the
    default repo name and directory, and must not clash with a document already listed
-   (`SETUP document --all`).
+   (`SETUP document --all`). Once the owner is known (question 2), also run
+   `gh repo view <owner>/<name>`: if it exists, tell the user now. A repo made from
+   writing-template is `adapt` (or a `fresh` re-run after an interrupted one); anything else
+   needs another name — `fresh` and `import` refuse a repo the template did not make.
 2. **GitHub owner** — default the `gh` login; may be an org they belong to.
 3. **Visibility** — default `private` (a template's visibility is not inherited).
 4. **Where is the document now?** This picks the mode:
