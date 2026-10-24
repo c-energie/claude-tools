@@ -6,7 +6,7 @@ skill of the kinds it knows.
 
 | Skill | What it does |
 | --- | --- |
-| `author-setup-skill` | Interview an author about a setup they want automated, scaffold the setup skill (`SKILL.md` + a stdlib Python step script, plus the step-0 `setup-observer` if wanted) from the answers, then smoke-test and audit it |
+| `author-setup-skill` | Interview an author about a setup they want automated, scaffold the setup skill (`SKILL.md` + a dependency-free Python or node step script, repo-local or plugin-shipped, plus the step-0 `setup-observer` if wanted) from the answers, then smoke-test and audit it |
 
 ## What `author-setup-skill` is actually for
 
@@ -23,15 +23,24 @@ the result is smoke-tested in a scratch workspace (guardrails attacked, every st
 audited — `writing-for-agents`, then a fresh agent checking the SKILL.md against the script's
 real CLI.
 
-The generated script is **Python**, not Node like this marketplace's own scripts: it runs in the
-user's repo through `uv run --no-project --python 3.12`, which needs no system Python, and the
-setups it drives are Python projects. `scaffold.mjs` itself is Node because it runs here.
+The generated script's extension picks its language. **Python** (`.py`, stdlib only) runs in the
+user's repo through `uv run --no-project --python 3.12`, which needs no system Python, and suits
+setups that drive Python projects. **Node** (`.mjs`, built-ins only) suits a node-only plugin,
+where uv would be one more install for the script alone; it owns JSON state only, since node has
+no built-in TOML. The two skeletons share one contract — same steps, flags, messages and exit
+codes. `scaffold.mjs` itself is Node because it runs here.
+
+A setup skill is either **repo-local** (`--out [repo]/.claude/skills/[skill]`, the script beside
+its SKILL.md) or **plugin-shipped** (`--plugin [plugin dir]`: SKILL.md under `skills/`, the
+script under `scripts/`, called with `--root "${CLAUDE_PROJECT_DIR}"`). Its state is either
+**owned** (`stateFile`, a file it creates) or **joined** (`existingState`, a record other skills
+already define that it fills in).
 
 ## Layout
 
 ```
 plugins/skills/
-  scripts/scaffold.mjs                 spec JSON -> SKILL.md draft + step-script skeleton (+ observer)
+  scripts/scaffold.mjs                 spec JSON -> SKILL.md draft + .py or .mjs step-script skeleton (+ observer)
   skills/author-setup-skill/
     SKILL.md
     references/recipe.md               the fifteen lessons
@@ -47,11 +56,12 @@ the guide and reality disagree (failed commands caught by a skill-scoped `PostTo
 hook), and with consent files redacted issues or PRs on the repo that owns each problem. The
 master here is inert; it runs from one of two kinds of copy, both verbatim:
 
-- **In a target repo's `.claude/skills/`** — `scaffold.mjs` copies it in and writes the only
+- **Beside the new skill** — a target repo's `.claude/skills/`, or with `--plugin` a plugin's
+  `skills/` — `scaffold.mjs` copies it in and writes the only
   per-repo part, `observer.toml`, from the interview. A repo that already has one is left alone
   and checked for drift from the master.
-- **In another plugin's `skills/`** — `project-workspace` ships it as a live skill beside its
-  own `observer.toml`, and `check-plugin.mjs` errors if that copy drifts.
+- **In another plugin's `skills/`** — `project-workspace` and `diagrams` ship it as a live skill
+  beside their own `observer.toml`, and `check-plugin.mjs` errors if a copy drifts.
 
 Either way it is run as `"${CLAUDE_SKILL_DIR}/observe.py" --root "${CLAUDE_PROJECT_DIR}"`, so the
 same two files work wherever they sit.

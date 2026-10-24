@@ -25,7 +25,7 @@ uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/observe.py" --root "${CLA
 ```
 
 Abbreviated `OBSERVE <step>`. Both paths are filled in when this skill loads, so the command
-works from any directory, and whether this skill was copied into the repo or ships in a plugin. Everything lives in `.setup/observer/` (gitignored). The hook
+works from any directory, and whether this skill was copied into the repo or ships in a plugin. Everything lives in `.setup/observer/` (git-ignored; `baseline` adds `/.setup/` to `.git/info/exclude` if nothing else ignores it). The hook
 in this skill's frontmatter appends every failed shell command to `events.jsonl` for the
 rest of the session; it needs nothing installed.
 

@@ -86,12 +86,62 @@ def probe(cmd):
     return text.splitlines()[0] if text else f"exit {out.returncode}"
 
 
+def git_out(*args):
+    """stdout of a git command run in ROOT, or None when git is missing or the command fails
+    (not a repo, a bare repo): the callers treat both as "nothing to do"."""
+    if shutil.which("git") is None:
+        return None
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True,
+                             timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def ignore_setup():
+    """Make sure git ignores ROOT/.setup/, which holds machine facts and env-var names. Only
+    the skills plugin's scaffold and project-workspace's `track` wrote a .gitignore entry, so a
+    plugin-shipped observer baselining an existing repo (or any diagrams root) left `?? .setup/`
+    in `git status`, one `git add .` away from a commit. Writes to info/exclude, never to
+    .gitignore, so the observer never modifies a tracked file; `check-ignore` counts every
+    source (.gitignore, global excludes, info/exclude), so an existing rule anywhere is left
+    alone and a second baseline adds nothing."""
+    if git_out("rev-parse", "--is-inside-work-tree") != "true":
+        return
+    # 0 = ignored, 1 = not ignored; anything else is git failing, which is not ours to fix.
+    try:
+        ignored = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", "--", ".setup"],
+                                 capture_output=True, timeout=20).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if ignored != 1:
+        return
+    # --git-path, not ROOT/.git/info/exclude: in a worktree or submodule .git is a file. Its
+    # answer is relative to ROOT. --show-prefix anchors the pattern when ROOT is below the top
+    # of the work tree, since info/exclude patterns are relative to the top.
+    exclude, prefix = git_out("rev-parse", "--git-path", "info/exclude"), git_out(
+        "rev-parse", "--show-prefix")
+    if exclude is None or prefix is None:
+        return
+    exclude = (ROOT / exclude).resolve()
+    line = f"/{prefix}.setup/"
+    text = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if line in text.splitlines():
+        return
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    with exclude.open("a", encoding="utf-8") as handle:
+        handle.write(("" if not text or text.endswith("\n") else "\n") + line + "\n")
+    print(f"Added {line} to {exclude} so git ignores the observer's files")
+
+
 def cmd_baseline(args):
     cfg = config()
     tools = {**TOOLS, **{name: [name, "--version"] for name in cfg.get("tools", [])}}
     secret = set(cfg.get("secret_vars", []))
     env_vars = (*ENV_VARS, *cfg.get("env_vars", []), *secret)
     OBS.mkdir(parents=True, exist_ok=True)
+    ignore_setup()
     gh_auth = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True) \
         if shutil.which("gh") else None
     state = {name: (ROOT / name).exists() for name in cfg.get("state_files", [])}

@@ -22,19 +22,23 @@ only edits this marketplace's plugins is `update-plugin`'s job, in context-kit-c
 - **`assets/setup-observer/` is the master of the step-0 observer**, and it stays here because
   any setup skill can use it, not only the doc-workspace ones. Its `SKILL.md` and `observe.py`
   are copied *verbatim* to two kinds of place: `scaffold.mjs` copies them into a target repo's
-  `.claude/skills/` beside an `observer.toml` it writes from the spec; and `project-workspace`
-  ships them as a live skill beside its own `observer.toml`. The `observer.toml` is the one
-  per-deployment file (owner table, env vars, state files, extra tools). Keep both master files
+  `.claude/skills/` (or, with `--plugin`, a plugin's `skills/`) beside an `observer.toml` it
+  writes from the spec; and every plugin that ships
+  `skills/setup-observer/` carries them as a live skill beside its own `observer.toml`. The
+  `observer.toml` is the one per-deployment file (owner table, env vars, state files, extra tools). Keep both master files
   free of anything project-specific, or every copy inherits it. **Location-independent**: the
   command is `"${CLAUDE_SKILL_DIR}/observe.py" --root "${CLAUDE_PROJECT_DIR}"`, and without
   `--root` the script falls back to three levels up when it sits in `.claude/skills/`, else the
-  current directory. **A change here is copied to `plugins/project-workspace/skills/setup-observer/`
-  in the same commit** — `check-plugin.mjs` errors on drift, and both plugins get a bump.
+  current directory. **A change here is copied to every plugin's `skills/setup-observer/` in the
+  same commit** — `check-plugin.mjs` finds those copies itself (a plugin with that directory is
+  bound; there is no list to edit), errors on drift or on a half-copied directory, and every
+  plugin touched gets a bump.
 - `assets/` sits outside `skills/` on purpose: only `skills/[name]/SKILL.md` registers as a
   plugin skill, so the observer's `SKILL.md` is inert here and live only once copied.
 - **`scaffold.mjs` and `SKILL.md` must agree** on the spec keys and on what the skeleton
   contains. Change one, check the other: `scaffold.mjs --example` piped into a scratch
-  `--out` is the test, then `--help` on the generated script.
+  `--out` is the test, then `--help` on the generated script — and again with `script` renamed
+  to `.mjs`, and once with `--plugin` on a scratch plugin.
 
 ## Invariants
 
@@ -43,10 +47,18 @@ only edits this marketplace's plugins is `update-plugin`'s job, in context-kit-c
 - **`scaffold.mjs` never overwrites.** Its output is hand-edited from the first minute; a re-run
   that clobbered it would destroy the author's work. Exit 2 on an existing skill file; an
   existing `setup-observer/` is left untouched and only drift-checked against the master.
-- **Generated front-matter carries no angle brackets** — `scaffold.mjs` rejects them in `does`
-  and `trigger`, which become the generated `description`.
-- **The generated script is stdlib-only Python with LF endings**, every write routed through
-  `write`/`run` so `--dry-run` covers it, `write` confined to the repo root, and unimplemented
-  steps exit 4 rather than 0 — a stub
-  must never pass for a done step.
+- **Generated front-matter carries no angle brackets** — `scaffold.mjs` rejects them in `does`,
+  `trigger`, `title`, `stateFile` and `existingState.check`, all of which can reach the
+  generated `description` (the derived trigger names the state file or the check command).
+- **The generated script is dependency-free** (Python stdlib or node built-ins, picked by the
+  script's extension), **LF endings**, every write routed through `write`/`run` so `--dry-run`
+  covers it, `write` confined to `--root`, and unimplemented steps exit 4 rather than 0 — a stub
+  must never pass for a done step. **The two skeletons keep one contract**: same steps, flags,
+  OK/REFUSED/FAILED lines and exit codes from the same spec, so a change to one is made to the
+  other (`--help` and `--dry-run` on a `.py` and a `.mjs` from one spec is the test). There is
+  no TOML in the node skeleton, on purpose: node has no built-in parser, and the scaffold rejects
+  a `.mjs` script owning a `.toml` state file rather than take a dependency.
+- **`--root` is required in a plugin-shipped script**: it sits in the plugin's install
+  directory, so its location says nothing about the project, and defaulting to the cwd would
+  write into wherever the agent happened to be.
 - No shared script copies: nothing here calls `context-repo.sh`, `dates.mjs` or `bash-bin.mjs`.
