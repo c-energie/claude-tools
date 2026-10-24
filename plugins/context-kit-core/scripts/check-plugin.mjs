@@ -180,6 +180,12 @@ const COPIES = [
   // backend in it, so core owns it. It is what context-repo.sh is spawned with, and so has to
   // sit beside every copy of that script.
   { file: 'scripts/bash-bin.mjs',      origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
+  // The workspace resolver (ADR 0002) and its bash twin. Core originates them — finding the
+  // workspace is generic — and they go wherever context-repo.sh goes, since both fall back to
+  // it and workspace.mjs runs it through bash-bin.mjs. No other plugin ships them yet; each
+  // consumer ticket copies them in, and from then on a copy that drifts is an error here.
+  { file: 'scripts/workspace.mjs',     origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
+  { file: 'scripts/workspace-root.sh', origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
   // Notion-coupled, so context-notion is the origin: lib.mjs reads state.notion and resolves
   // people by notionUserId; pending-parse.mjs defines the queue format those rows land in.
   { file: 'scripts/lib.mjs',           origin: 'context-notion',   copies: ['context-slack'] },

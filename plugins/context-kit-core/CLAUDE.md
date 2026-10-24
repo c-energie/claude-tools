@@ -17,7 +17,15 @@ A fix to the resolver or hook belongs in all three plugins' copies (see the mark
 ```bash
 node scripts/check-plugin.mjs .          # lint manifests/skills/hooks; exit 1 on error — run before any commit
 node --test hooks/load-context.test.mjs  # the autoload gate; stdlib only, no network, no clone
+node --test hooks/workspace-freshness.test.mjs  # the hook inside a workspace; local bare repos, no network
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
+node --test scripts/workspace.test.mjs   # the workspace resolver and its bash twin; stdlib only, no network
+node --test hooks/connection-gate.test.mjs   # the connection gate + setup-connectors' workspace write; no network
+node scripts/workspace.mjs --no-pull     # the nearest .claude/workspace.json's root, else the context repo (--json)
+bash scripts/workspace-root.sh --no-pull # the same, in bash, for hooks
+bash scripts/workspace-root.sh --no-fallback  # the workspace route only — never runs context-repo.sh
+node scripts/thread-target.mjs           # where save-thread writes: docs/threads/ in a workspace (+ member repo), else context-repo
+node --test scripts/thread-target.test.mjs scripts/memory-triage.test.mjs   # workspace thread/memory targets; offline
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
 bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
 bash hooks/load-context.sh --refresh     # exactly what refresh-context runs, against $PWD
@@ -35,7 +43,7 @@ node scripts/context-doctor.mjs "$ROOT" --include   # health-check a context rep
 node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every queue (--json, --role, --no-memory)
 node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
 node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not yet distilled
-node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion
+node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion (workspace root -> docs/memory.md)
 node scripts/teaching-workspace.mjs resolve --json               # which context repo, or WHY not (no network)
 node scripts/teaching-workspace.mjs roster "$ROOT"                # the teaching workspaces it DECLARES (--json)
 node scripts/teaching-workspace.mjs scaffold "$ROOT" "deep learning"   # PLAN a workspace; --yes --audience writes it
@@ -80,6 +88,20 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   because PowerShell strips the quotes off `--settings '{...}'`. Do not "fix" this by having the
   resolver prefer some other channel: the ladder is correct, and the environment is genuinely the
   highest-precedence *channel* — what is counter-intuitive is who last wrote to it.
+- **Inside a workspace the session-start hook LOADS NOTHING; it only says when the workspace is
+  behind.** Claude Code already reads `CLAUDE.md` from the cwd and every parent (with `@`
+  imports), so printing memory and glossary as well would load them twice. What it cannot say is
+  that the checkout is behind its origin, so the hook runs a `git fetch` capped at
+  `CONTEXT_KIT_FETCH_TIMEOUT` seconds (default 10), and prints one line, to the user and to the
+  model alike, when the workspace is behind or has diverged. It prints **nothing** when up to
+  date, ahead only, or there is no upstream. It **never pulls**: a fetch moves remote-tracking refs
+  only, and the line names the command. If the fetch fails or times out, it prints one line
+  saying the check could not run. The cap is a background watcher, not `timeout`, which stock
+  macOS lacks. "Is this a workspace" is `workspace-root.sh --no-fallback`. Without that flag the
+  question is answered by `context-repo.sh`, which may clone just to say no. A malformed
+  `workspace.json` therefore falls through to the legacy loader, as the resolver does, and so do
+  `--refresh` and every session outside a workspace, unchanged until the fallback is deleted. The
+  kill switch above is checked first and silences this too.
 - **The hook never prompts, never hangs, never exits non-zero.** Unknown args are ignored.
   Failed refreshes serve the local copy under a STALE banner naming the reason — a silent
   stale load is the one failure mode that actively misleads.
@@ -189,11 +211,49 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   array is accepted but says nothing about which is which, so `context-doctor` nudges it to a
   map. `names()` in the gate and in `setup-connectors.mjs` must stay in step, and the gate's
   copy must be **total** — it sits in front of a fail-open catch, so a throw there would allow
-  every MCP call on the machine rather than deny one. The policy is *derived* from
-  `context.json` (falling back to the marker's mirrored copy, which is what reaches a Cowork
-  sandbox) — never a hand-written deny list, which enumerates the others and is stale the day
-  a connection is added. It **fails open and says so on stderr** when the policy cannot be
+  every MCP call on the machine rather than deny one. The policy is *derived* from the
+  nearest `.claude/workspace.json` (`findWorkspace()` only — never `resolveWorkspace()`, whose
+  fallback can pull or clone), and only when there is none from `context.json` (falling back to
+  the marker's mirrored copy, which is what reaches a Cowork sandbox) — never a hand-written deny
+  list, which enumerates the others and is stale the day a connection is added. It **fails open and says so on stderr** when the policy cannot be
   read: a gate that blocked every MCP call on a missing checkout would be worse than none.
   `connections: {}` denies every provider connector; an absent `connections` key denies
-  nothing — the same absent-versus-empty distinction drawn everywhere else.
+  nothing — the same absent-versus-empty distinction drawn everywhere else. A workspace that is
+  found is the whole answer: its absent `connections` does not fall through to a context.json or
+  marker. A malformed nearest `workspace.json` goes to the legacy route, as the resolver does,
+  and the gate fails open naming it if that finds nothing; `setup-connectors` instead **refuses**
+  it, since a writer that fell back would edit a policy the directory no longer uses. In a
+  workspace `setup-connectors` writes only the top-level `connections` key, through
+  `json-block.mjs`'s `upsertBlockInFile()`, and names connections from `name` with `repo`'s owner
+  as the default owner key.
+- **A workspace is the nearest `.claude/workspace.json`, and nothing else decides it** (ADR
+  0002). `scripts/workspace.mjs` walks from the working dir to the filesystem root and returns
+  the first directory holding one: nearest wins, levels never merge, and the walk does **not**
+  stop at a `.git` — members are nested clones, and stopping at the member's `.git` is how the
+  old resolver cloned a second copy of a context already on disk above it. Folder and repo names
+  are never consulted. A malformed nearest file is reported (path + parse error) and the walk
+  **stops** for the fallback rather than skipping on to an outer workspace, which would load the
+  wrong context over a typo. With no workspace it falls back to `context-repo.sh` unchanged, and
+  stderr always names the route (`route=workspace` / `route=context-repo`) — the fallback goes
+  when the last context repo is migrated. The resolver validates only "a JSON object": each
+  top-level key has one writing owner (`schema`/`name`/`repo`/`members` — project-workspace;
+  `connections` — setup-connectors; each `state.*` — the plugin reading it), member entries
+  carry kind-specific fields only project-workspace defines, and every writer preserves keys it
+  does not know at both levels. `scripts/workspace-root.sh` is its bash **twin** for hooks, not a
+  copy — `workspace.test.mjs` runs both against the same fixtures. Change both, or neither.
+- **Inside a workspace, threads and memory have ONE home: the workspace root** (ADR 0002,
+  #51). `save-thread` writes `docs/threads/YYYY-MM-DD-topic.md` and regenerates the committed
+  `docs/threads/INDEX.md` (`thread-index.mjs --dir docs/threads`), so the workspace's `CLAUDE.md`
+  can point at one file; `memory-triage` promotes into `docs/memory.md`, the file `CLAUDE.md`
+  imports. From a member that is still the workspace root — never the member's
+  `.claude/threads/` or `.claude/memory.md`, the second home the ADR retires — and no routing
+  question is asked: `PROJECT_CONTEXT_THREADS` is not consulted in a workspace at all. The
+  member is recorded instead, as `repo: owner/name` front-matter, decided by
+  `scripts/thread-target.mjs` (declared `members[]` entry first, then a nested clone's origin;
+  null for the workspace's own repo) — a script, because two sessions in one directory must
+  record the same provenance. It finds the workspace with `workspace.mjs`'s `findWorkspace()`
+  rather than a walk of its own, so a thread can never be routed to a different home from the
+  context the session loaded. A workspace is never the cross-project layer for
+  `memory-triage.mjs` (`include` is retired). Both skills ask before pushing; outside a
+  workspace both behave as before.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).

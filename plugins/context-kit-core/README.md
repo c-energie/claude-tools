@@ -215,7 +215,7 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 | `context-doctor` | Health-check an already-linked repo for the drift that never announces itself; fixes derivable config keys only |
 | `context-status` | What is outstanding: lessons awaiting a sweep, sweeps awaiting distillation, undrained handoff, curation lag, native memory — and the skill that clears each |
 | `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
-| `save-thread` | 🔒 Write up the current work as a `threads/` entry and push (never self-triggers) |
+| `save-thread` | 🔒 Write up the current work as a thread — a workspace's `docs/threads/`, else `threads/` — and push (never self-triggers) |
 | `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |
 | `setup-connectors` | Provision the MCP connections a project's `context.json` declares |
 | `assistant` | Adopt a role assistant — its persona, memory, doctrine and thread history; scaffolds one on first use |
@@ -232,6 +232,15 @@ The SessionStart hook loads `memory.md` + thread pointers automatically, with a 
 when the refresh fails — a silently stale context is the one failure mode that actively
 misleads. A project that will never have a context repo opts out with `none`, and a whole machine
 opts out of the automatic load with `CONTEXT_KIT_AUTOLOAD`; see above.
+
+**Inside a workspace** (a `.claude/workspace.json` at or above the working directory, ADR 0002)
+the hook loads nothing: Claude Code's own `CLAUDE.md` loading already brings the workspace's
+memory in. It runs a `git fetch` on the workspace root instead, capped at
+`CONTEXT_KIT_FETCH_TIMEOUT` seconds (default 10). If the workspace is behind its upstream, it
+prints one line saying how far and naming the `git pull` to run. If the branch has diverged, the
+line gives both counts. Up to date, it prints nothing. It never pulls. If the fetch fails or times
+out, the line says that the check could not run. The kill switch silences it too. Everywhere
+else, the loader described here runs as before until the last context repo is migrated.
 
 ### What is loaded eagerly, and what is announced
 
@@ -250,6 +259,15 @@ curation lossless from a session's point of view.
 Lazy-loading `memory.md` itself is deliberately **not** done. Threads can be lazy because
 missing one loses depth; authoritative facts cannot, because a topic index fails exactly when a
 question is phrased in a way it did not anticipate, and fails silently.
+
+### Inside a workspace: one layer, at the root
+
+In a workspace (the nearest `.claude/workspace.json`, ADR 0002) there is no layer choice to make.
+`save-thread` writes to the workspace root's `docs/threads/` from wherever the session is,
+member repos included, records the member as `repo: owner/name`, and regenerates the committed
+`docs/threads/INDEX.md`. `memory-triage` promotes into `docs/memory.md`. Both ask before
+pushing. Everything below describes the context-repo route, which still applies outside a
+workspace until the last context repo is migrated.
 
 ### Two thread layers
 
@@ -385,9 +403,13 @@ that existed the day it was written, and goes stale silently in the dangerous di
 | no `connections` key at all | pass — nobody has decided |
 | policy unreadable (no repo, no clone, broken JSON) | pass, with the reason on stderr |
 
+The policy is the nearest `.claude/workspace.json`'s `connections`, found by walking up from the
+project dir — so a member repo nested in a workspace is gated by the workspace. Only when no
+workspace is found does it fall back to the context repo's `context.json` and the marker.
+
 Two properties are load-bearing. It **fails open and says why**, because a gate that blocks every
 MCP call the moment a checkout is missing is worse than no gate and breaks the hook contract. And
-it reads `context.json` *or* the `.claude/context-project.json` marker, whose `connections` the
+without a workspace it reads `context.json` *or* the `.claude/context-project.json` marker, whose `connections` the
 session-start hook already mirrors — which is what makes it the only mechanism that reaches
 **Cowork**, where there is no checkout and so no `.claude/settings.json` to carry permissions.
 

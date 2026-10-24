@@ -1,16 +1,21 @@
-"""Tests for setup_workspace.py's import staging. Stdlib only: no pandoc, no network.
+"""Tests for setup_workspace.py. Stdlib only: no pandoc, no network. The worktree-repair
+test drives a real throwaway git repository, so git must be on PATH.
 
     uv run --no-project --python 3.12 -m unittest discover -s plugins/project-workspace/skills/setup-project-workspace
 """
 import contextlib
 import io
+import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import setup_workspace as sw
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 class StripCaptionPrefixes(unittest.TestCase):
@@ -197,7 +202,16 @@ class Workspace(unittest.TestCase):
         return (self.tmp / name).read_text(encoding="utf-8")
 
     def state(self):
-        return sw.tomllib.loads(self.read("workspace.toml"))
+        return json.loads((self.tmp / ".claude" / "workspace.json").read_text(encoding="utf-8-sig"))
+
+    def docs(self):
+        return [m for m in self.state()["members"] if m["kind"] == "document"]
+
+    def write_json(self, body):
+        (self.tmp / ".claude").mkdir(exist_ok=True)
+        (self.tmp / ".claude" / "workspace.json").write_text(
+            body if isinstance(body, str) else json.dumps(body, indent=2), encoding="utf-8",
+            newline="")
 
     def fake_clone(self, repo, directory):
         checkout = self.tmp / directory
@@ -217,9 +231,11 @@ class Workspace(unittest.TestCase):
 
 
 class Init(Workspace):
-    def test_writes_schema_2_and_claude_md(self):
+    def test_writes_workspace_json_and_claude_md(self):
         self.call("init", "--name", "w")
-        self.assertEqual(self.state(), {"schema": 2, "name": "w"})
+        self.assertEqual(self.read(".claude/workspace.json"),
+                         '{\n  "schema": 1,\n  "name": "w",\n  "members": []\n}\n')
+        self.assertFalse((self.tmp / "workspace.toml").exists())
         claude = self.read("CLAUDE.md")
         self.assertIn("The `w` project workspace", claude)
         self.assertIn("_none yet", claude)
@@ -237,7 +253,7 @@ class Init(Workspace):
         self.add_document()
         (self.tmp / "CLAUDE.md").write_text("mine\n", encoding="utf-8")
         self.call("init")
-        self.assertEqual(len(self.state()["document"]), 1)
+        self.assertEqual(len(self.docs()), 1)
         self.assertEqual(self.read("CLAUDE.md"), "mine\n")
 
     def test_schema_1_is_sent_to_migrate(self):
@@ -245,6 +261,27 @@ class Init(Workspace):
         with self.assertRaises(SystemExit) as caught:
             self.call("init")
         self.assertIn("migrate", str(caught.exception))
+
+    def test_a_workspace_json_made_by_another_owner_gains_ours_and_keeps_its_own(self):
+        # setup-connectors may write `connections` first; its formatting is not ours to touch.
+        theirs = '{\n  "connections": { "github": ["o"] }\n}\n'
+        self.write_json(theirs)
+        self.call("init", "--name", "w")
+        text = self.read(".claude/workspace.json")
+        self.assertIn('  "connections": { "github": ["o"] },\n', text)
+        self.assertEqual(self.state(), {"connections": {"github": ["o"]}, "schema": 1,
+                                        "name": "w", "members": []})
+
+    def test_tracked_init_says_when_it_skips_a_duplicate_ignore_line(self):
+        # #37: init edits .gitignore in a tracked root, and must not repeat the user's lines.
+        (self.tmp / ".git").mkdir()
+        (self.tmp / ".gitignore").write_text("thesis/\n", encoding="utf-8")
+        self.call("init")
+        self.add_document()
+        text = self.read(".gitignore")
+        self.assertNotIn("/thesis/", text)
+        self.assertIn("already ignores thesis/", self.out)
+        self.assertEqual(text.count("thesis/"), 1)
 
 
 class Track(Workspace):
@@ -278,14 +315,15 @@ class AddDocument(Workspace):
 
     def test_lists_the_document_dir_defaulting_to_the_repo_name(self):
         self.add_document()
-        self.assertEqual(self.state()["document"],
-                         [{"name": "thesis", "dir": "thesis", "repo": "o/thesis"}])
+        self.assertEqual(self.state()["members"],
+                         [{"dir": "thesis", "repo": "o/thesis", "kind": "document",
+                           "name": "thesis"}])
         self.created.assert_called_once_with(sw.WRITING_TEMPLATE, "o/thesis", "private")
 
     def test_several_documents_and_the_claude_md_table(self):
         self.add_document()
         self.add_document("--dir", "p", "--name", "paper", repo="o/paper")
-        self.assertEqual([d["name"] for d in self.state()["document"]], ["thesis", "paper"])
+        self.assertEqual([d["name"] for d in self.docs()], ["thesis", "paper"])
         claude = self.read("CLAUDE.md")
         self.assertIn("| thesis | `thesis/` | `o/thesis` | — |", claude)
         self.assertIn("| paper | `p/` | `o/paper` | — |", claude)
@@ -293,9 +331,9 @@ class AddDocument(Workspace):
 
     def test_re_run_changes_nothing(self):
         self.add_document()
-        before = self.read("workspace.toml"), self.read("CLAUDE.md")
+        before = self.read(".claude/workspace.json"), self.read("CLAUDE.md")
         self.add_document()
-        self.assertEqual(before, (self.read("workspace.toml"), self.read("CLAUDE.md")))
+        self.assertEqual(before, (self.read(".claude/workspace.json"), self.read("CLAUDE.md")))
 
     def test_same_dir_from_another_repo_stops(self):
         self.add_document()
@@ -315,9 +353,17 @@ class AddDocument(Workspace):
         self.assertTrue((self.tmp / ".setup" / "thesis" / "import-source" / "main.tex").exists())
 
     def test_needs_init_first(self):
-        (self.tmp / "workspace.toml").unlink()
+        (self.tmp / ".claude" / "workspace.json").unlink()
         with self.assertRaises(SystemExit):
             self.add_document()
+
+    def test_a_dir_held_by_another_kind_of_member_stops(self):
+        state = self.state()
+        state["members"].append({"dir": "thesis", "repo": "o/tool", "kind": "code"})
+        self.write_json(state)
+        with self.assertRaises(SystemExit) as caught:
+            self.add_document()
+        self.assertIn("code member", str(caught.exception))
 
 
 class FindDocument(Workspace):
@@ -342,16 +388,20 @@ class FindDocument(Workspace):
         self.assertIn("thesis, paper", str(caught.exception))
 
     def test_only_one_needs_no_name(self):
-        state = {"document": self.state_["document"][:1]}
+        state = {"members": sw.documents(self.state_)[:1]}
         self.assertEqual(sw.find_document(state, cwd=self.tmp)["name"], "thesis")
 
     def test_analysis_comes_from_layout_toml(self):
         (self.tmp / "thesis" / "layout.toml").write_text(
             'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n', encoding="utf-8")
-        info = sw.describe(self.state_["document"][0])
+        thesis, paper = sw.documents(self.state_)
+        info = sw.describe(thesis)
         self.assertEqual(info["analysis_dir"], "thesis-analysis")
         self.assertEqual(info["analysis_path"], (self.tmp / "thesis" / "thesis-analysis").as_posix())
-        self.assertIsNone(sw.describe(self.state_["document"][1])["analysis_dir"])
+        self.assertIsNone(sw.describe(paper)["analysis_dir"])
+
+    def test_a_document_without_a_name_is_named_by_its_dir(self):
+        self.assertEqual(sw.describe({"dir": "x", "repo": "o/x", "kind": "document"})["name"], "x")
 
 
 class AddAnalysis(Workspace):
@@ -366,7 +416,8 @@ class AddAnalysis(Workspace):
     def add(self, *flags):
         def nested(cmd, cwd=None, **kw):
             (self.tmp / "thesis" / "layout.toml").write_text(
-                'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n',
+                'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n'
+                'nested_remote = "https://github.com/o/thesis-analysis.git"\n',
                 encoding="utf-8")
         with mock.patch.object(sw, "run", side_effect=nested) as run, \
                 mock.patch.object(sw, "find_sh", return_value="/bin/sh"), \
@@ -389,8 +440,34 @@ class AddAnalysis(Workspace):
 
     def test_records_extras_and_the_table_shows_the_analysis(self):
         self.add("--backend", "matplotlib")
-        self.assertEqual(self.state()["document"][0]["extras"], ["dev", "notebooks", "matplotlib"])
+        self.assertEqual(self.docs()[0]["extras"], ["dev", "notebooks", "matplotlib"])
         self.assertIn("`thesis/thesis-analysis/`", self.read("CLAUDE.md"))
+
+    def test_records_the_nested_analysis_as_a_member_feeding_its_document(self):
+        self.add()
+        self.assertEqual(self.state()["members"][1], {
+            "dir": "thesis/thesis-analysis", "repo": "o/thesis-analysis", "kind": "analysis",
+            "documents": ["thesis"]})
+        # A re-run records it once, and the tracked .gitignore lists only the document.
+        self.add()
+        self.assertEqual(len(self.state()["members"]), 2)
+
+    def test_a_bare_analysis_dir_is_not_given_the_documents_origin(self):
+        (self.tmp / "thesis" / "thesis-analysis").mkdir()
+        with mock.patch.object(sw, "origin_url", return_value="https://github.com/o/thesis.git"):
+            self.add()
+        self.assertEqual(self.state()["members"][1]["repo"], "o/thesis-analysis")
+
+    def test_an_existing_analysis_member_keeps_its_other_fields(self):
+        state = self.state()
+        state["members"].append({"dir": "thesis/thesis-analysis", "kind": "analysis",
+                                 "documents": ["paper"], "mine": 1})
+        self.write_json(state)
+        self.add()
+        member = self.state()["members"][1]
+        self.assertEqual(member["documents"], ["paper", "thesis"])
+        self.assertEqual(member["mine"], 1)
+        self.assertEqual(member["repo"], "o/thesis-analysis")
 
     def test_a_document_without_the_script_gets_it(self):
         (self.tmp / "thesis" / "setup-nested.sh").unlink()
@@ -424,23 +501,23 @@ class Sync(Workspace):
         (self.tmp / "thesis" / "layout.toml").write_text(
             'layout = "writing-hosts-analysis"\nnested_dir = "a"\n', encoding="utf-8")
         state = sw.read_state()
-        state["document"][0]["extras"] = ["dev", "plotly"]
+        sw.documents(state)[0]["extras"] = ["dev", "plotly"]
         sw.write_state(state)
         with mock.patch.object(sw, "run") as run:
             self.call("sync", "--extra", "publish")
         self.assertEqual(run.call_args.args[0],
                          ["uv", "sync", "--extra", "dev", "--extra", "plotly", "--extra", "publish"])
         self.assertEqual(run.call_args.kwargs["cwd"], self.tmp / "thesis" / "a")
-        self.assertEqual(self.state()["document"][0]["extras"], ["dev", "plotly", "publish"])
+        self.assertEqual(self.docs()[0]["extras"], ["dev", "plotly", "publish"])
 
     def test_no_analysis_repo_stops(self):
         with self.assertRaises(SystemExit):
             self.call("sync")
 
 
-class Migrate(Workspace):
-    """Schema 1 -> 2: the analysis repo moves inside the document, the root loses its
-    Python, and everything removed is backed up first."""
+class MigrateSchema1(Workspace):
+    """Schema 1 -> workspace.json: the analysis repo moves inside the document, the root
+    loses its Python, and everything removed is backed up first."""
 
     LEGACY_FULL = ('[workspace]\nname = "thesis"\nlayout = "full"\nwriting_dir = "thesis-writing"\n'
                    'writing_repo = "o/thesis-writing"\nwriting_mode = "adapt"\n'
@@ -472,6 +549,8 @@ class Migrate(Workspace):
         def nested(cmd, cwd=None, **kw):
             # uv looks upward for a workspace root: the old one must be gone by now.
             self.root_pyproject_seen = (self.tmp / "pyproject.toml").exists()
+            if cmd[:3] == ["git", "worktree", "repair"]:
+                return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
             if "setup-nested.sh" in cmd:
                 (self.tmp / "thesis-writing" / "layout.toml").write_text(
                     'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n',
@@ -524,11 +603,14 @@ class Migrate(Workspace):
         self.migrate()
         self.assertFalse(self.root_pyproject_seen)
 
-    def test_writes_schema_2_with_one_document_and_its_extras(self):
+    def test_writes_workspace_json_with_the_document_its_extras_and_its_analysis(self):
         self.migrate()
-        self.assertEqual(self.state(), {"schema": 2, "name": "thesis", "document": [{
-            "name": "thesis", "dir": "thesis-writing", "repo": "o/thesis-writing",
-            "extras": ["dev", "notebooks", "plotly", "publish"]}]})
+        self.assertEqual(self.state(), {"schema": 1, "name": "thesis", "members": [
+            {"dir": "thesis-writing", "repo": "o/thesis-writing", "kind": "document",
+             "name": "thesis", "extras": ["dev", "notebooks", "plotly", "publish"]},
+            {"dir": "thesis-writing/thesis-analysis", "repo": "https://x/a.git",
+             "kind": "analysis", "documents": ["thesis-writing"]}]})
+        self.assertFalse((self.tmp / "workspace.toml").exists())
 
     def test_root_python_is_backed_up_and_removed(self):
         self.migrate()
@@ -582,15 +664,316 @@ class Migrate(Workspace):
                                   'writing_dir = "thesis-writing"\nwriting_repo = "o/w"\n'
                                   'extras = ["publish"]\n')
         run.assert_not_called()
-        self.assertEqual(self.state()["document"], [{"name": "p", "dir": "thesis-writing",
-                                                     "repo": "o/w"}])
+        self.assertEqual(self.state()["members"], [{"dir": "thesis-writing", "repo": "o/w",
+                                                    "kind": "document", "name": "p"}])
         self.assertFalse((self.tmp / "pyproject.toml").exists())
 
-    def test_schema_2_reports_leftovers(self):
+    def test_a_migrated_workspace_reports_leftovers(self):
         self.migrate()
         (self.tmp / "uv.lock").write_text("", encoding="utf-8")
         self.call("migrate")
         self.assertIn("uv.lock", self.out)
+
+    def test_a_load_bearing_root_pyproject_stops_before_anything_changes(self):
+        # #34: a root uv workspace with members outside the analysis repo, sources from
+        # elsewhere, and extras of its own is not schema 1's to delete.
+        pyproject = ('[project]\nname = "w"\n[project.optional-dependencies]\ntooling = ["x"]\n'
+                     '[tool.uv.workspace]\nmembers = ["thesis-analysis", "../other/src/*"]\n'
+                     '[tool.uv.sources]\nlib = { git = "https://example.org/lib" }\n')
+        (self.tmp / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+        with self.assertRaises(SystemExit) as caught:
+            self.migrate()
+        message = str(caught.exception)
+        for reason in ("../other/src/*", "lib", "tooling"):
+            self.assertIn(reason, message)
+        self.assertEqual(self.read("pyproject.toml"), pyproject)
+        self.assertTrue((self.tmp / "thesis-analysis" / ".git").exists())
+        self.assertIn("[workspace]", self.read("workspace.toml"))
+
+    def test_a_root_pyproject_for_the_analysis_repo_alone_is_not_load_bearing(self):
+        (self.tmp / "pyproject.toml").write_text(
+            '[project]\nname = "w"\n[tool.uv.workspace]\nmembers = ["./thesis-analysis/"]\n'
+            '[tool.uv.sources]\nthesis-analysis = { workspace = true }\n', encoding="utf-8")
+        self.migrate()
+        self.assertFalse((self.tmp / "pyproject.toml").exists())
+
+    def test_moving_the_analysis_repo_repairs_its_linked_worktrees(self):
+        # #35: a real repository, since what breaks is git's own bookkeeping of the paths.
+        analysis = self.tmp / "thesis-analysis"
+        shutil.rmtree(analysis)
+        git = lambda *a, cwd=analysis: subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd,
+            capture_output=True, text=True, check=True)
+        analysis.mkdir()
+        git("init", "-q")
+        git("commit", "-q", "--allow-empty", "-m", "x")
+        git("remote", "add", "origin", "https://github.com/o/thesis-analysis.git")
+        git("worktree", "add", "-q", str(analysis / ".claude" / "worktrees" / "wt"))
+        outside = self.tmp / ".setup" / "wt-outside"
+        git("worktree", "add", "-q", str(outside))
+        self.migrate("--dry-run")
+        self.assertIn("repair its 2 linked git worktree(s)", self.out)
+        self.migrate()
+        moved = self.tmp / "thesis-writing" / "thesis-analysis"
+        for wt in (moved / ".claude" / "worktrees" / "wt", outside):
+            status = subprocess.run(["git", "status", "--short"], cwd=wt,
+                                    capture_output=True, text=True)
+            self.assertEqual(status.returncode, 0, f"{wt}: {status.stderr}")
+
+
+class MigrateSchema2(Workspace):
+    """workspace.toml schema 2 -> .claude/workspace.json: nothing moves, every document and
+    extra survives, a nested analysis becomes an analysis member, and the TOML goes."""
+
+    def place(self, fixture, analysis_in_first=True):
+        """The fixture's workspace.toml at the root, each document a checkout, the first
+        hosting a nested analysis repo as setup-nested.sh records one."""
+        text = (FIXTURES / fixture).read_text(encoding="utf-8")
+        (self.tmp / "workspace.toml").write_text(text, encoding="utf-8")
+        toml = sw.tomllib.loads(text)
+        for i, doc in enumerate(toml["document"]):
+            (self.tmp / doc["dir"] / ".git").mkdir(parents=True)
+            if i == 0 and analysis_in_first:
+                (self.tmp / doc["dir"] / "layout.toml").write_text(
+                    'layout = "writing-hosts-analysis"\nnested_dir = "analysis"\n'
+                    f'nested_remote = "git@github.com:o/{doc["dir"]}-analysis.git"\n',
+                    encoding="utf-8")
+        return toml
+
+    def expected(self, toml):
+        """What the conversion must say, worked out from the TOML independently: every key
+        of every [[document]] kept, an analysis member after the first."""
+        members = []
+        for i, doc in enumerate(toml["document"]):
+            members.append({"dir": doc["dir"], "repo": doc["repo"], "kind": "document",
+                            "name": doc.get("name", doc["dir"]), **doc})
+            if i == 0:
+                members.append({"dir": f"{doc['dir']}/analysis", "repo": f"o/{doc['dir']}-analysis",
+                                "kind": "analysis", "documents": [doc["dir"]]})
+        return {"schema": 1, "name": toml["name"], "members": members}
+
+    def dry_run_json(self):
+        """The workspace.json the dry run printed, parsed back."""
+        lines = self.out.split(" will read")[1].split("\n")[1:]
+        return json.loads("\n".join(line[4:] for line in lines if line.startswith("    ")))
+
+    def test_fixtures_convert_with_no_lost_document_extra_or_analysis(self):
+        for fixture in ("smeter-validation-workspace.toml", "corson94-thesis.toml"):
+            with self.subTest(fixture):
+                for child in self.tmp.iterdir():
+                    shutil.rmtree(child) if child.is_dir() else child.unlink()
+                toml = self.place(fixture)
+                self.call("--dry-run", "migrate")
+                self.assertEqual(self.dry_run_json(), self.expected(toml))
+                self.assertFalse((self.tmp / ".claude").exists(), "the dry run wrote")
+                self.assertTrue((self.tmp / "workspace.toml").exists())
+                self.call("migrate")
+                self.assertEqual(self.state(), self.expected(toml))
+                self.assertFalse((self.tmp / "workspace.toml").exists())
+                backup = self.tmp / ".setup" / "migrate-backup" / "workspace.toml"
+                self.assertEqual(backup.read_text(encoding="utf-8"),
+                                 (FIXTURES / fixture).read_text(encoding="utf-8"))
+
+    def test_dry_run_output(self):
+        self.place("corson94-thesis.toml")
+        (self.tmp / "paper" / "extra").mkdir()
+        self.call("--dry-run", "migrate")
+        self.assertIn("Converting workspace.toml (schema 2, 2 document(s)) into "
+                      ".claude/workspace.json:\n"
+                      "  - write .claude/workspace.json: 2 document member(s), 1 analysis member(s)\n"
+                      "  - record thesis/analysis/ as an analysis member feeding thesis/ "
+                      "(from its layout.toml)\n"
+                      "  - back up workspace.toml (-> .setup/migrate-backup/), then remove it\n",
+                      self.out)
+        self.assertIn(
+            "    {\n"
+            '      "schema": 1,\n'
+            '      "name": "thesis",\n'
+            '      "members": [\n'
+            # Longer than a line allows, so one key to a line, as json-block.mjs renders it.
+            "        {\n"
+            '          "dir": "thesis",\n'
+            '          "repo": "corson94/thesis-writing",\n'
+            '          "kind": "document",\n'
+            '          "name": "thesis",\n'
+            '          "extras": ["dev", "notebooks", "matplotlib", "publish"]\n'
+            "        },\n"
+            '        { "dir": "thesis/analysis", "repo": "o/thesis-analysis", "kind": "analysis", '
+            '"documents": ["thesis"] },\n'
+            '        { "dir": "paper", "repo": "corson94/paper-flex", "kind": "document", '
+            '"name": "paper-flex" }\n'
+            "      ]\n"
+            "    }\n", self.out)
+
+    def test_nothing_else_at_the_root_is_touched(self):
+        # #34: schema 2 has no Python at the root, so a pyproject.toml there is something else's.
+        self.place("corson94-thesis.toml")
+        for name in ("pyproject.toml", "uv.lock", ".python-version"):
+            (self.tmp / name).write_text("mine\n", encoding="utf-8")
+        (self.tmp / ".venv").mkdir()
+        self.call("migrate")
+        for name in ("pyproject.toml", "uv.lock", ".python-version"):
+            self.assertEqual(self.read(name), "mine\n")
+        self.assertTrue((self.tmp / ".venv").is_dir())
+
+    def test_unknown_document_keys_travel_and_unknown_top_level_keys_are_reported(self):
+        (self.tmp / "thesis" / ".git").mkdir(parents=True)
+        (self.tmp / "workspace.toml").write_text(
+            'schema = 2\nname = "w"\nowner = "me"\n[[document]]\nname = "t"\ndir = "thesis"\n'
+            'repo = "o/t"\nnotes = "kept"\n', encoding="utf-8")
+        self.call("migrate")
+        self.assertEqual(self.docs(), [{"dir": "thesis", "repo": "o/t", "kind": "document",
+                                        "name": "t", "notes": "kept"}])
+        self.assertIn("not carried over: workspace.toml's `owner`", self.out)
+        self.assertNotIn("owner", self.state())
+
+    def test_an_existing_workspace_json_without_members_is_merged_into(self):
+        self.place("corson94-thesis.toml", analysis_in_first=False)
+        theirs = ('{\n    "_comment_connections": "hand-written",\n'
+                  '    "connections": {"github": ["o"]}\n}\n')
+        self.write_json(theirs)
+        self.call("migrate")
+        text = self.read(".claude/workspace.json")
+        self.assertTrue(text.startswith(theirs[:-3]), text)
+        self.assertIn('\n    "schema": 1,\n', text, "the file's own indent is used")
+        self.assertEqual(self.state()["connections"], {"github": ["o"]})
+
+    def test_both_manifests_listing_members_is_refused(self):
+        self.place("corson94-thesis.toml")
+        self.write_json({"schema": 1, "name": "w", "members": [{"dir": "x", "repo": "o/x",
+                                                               "kind": "code"}]})
+        with self.assertRaises(SystemExit) as caught:
+            self.call("migrate")
+        self.assertIn("refusing to merge", str(caught.exception))
+        self.assertTrue((self.tmp / "workspace.toml").exists())
+
+    def test_claude_md_naming_the_toml_is_flagged_not_rewritten(self):
+        self.place("corson94-thesis.toml")
+        old = f"workspace.toml lists them.\n{sw.DOCS_START}\n{sw.DOCS_END}\n"
+        (self.tmp / "CLAUDE.md").write_text(old, encoding="utf-8")
+        self.call("migrate")
+        self.assertIn("CLAUDE.md still names workspace.toml", self.out)
+        self.assertTrue(self.read("CLAUDE.md").startswith("workspace.toml lists them.\n"))
+        self.assertIn("| paper-flex | `paper/` |", self.read("CLAUDE.md"))
+
+    def test_a_second_run_has_nothing_to_do(self):
+        self.place("corson94-thesis.toml")
+        self.call("migrate")
+        before = self.read(".claude/workspace.json")
+        self.call("migrate")
+        self.assertIn("is the manifest already", self.out)
+        self.assertEqual(self.read(".claude/workspace.json"), before)
+
+
+class TomlStillTheManifest(Workspace):
+    """With workspace.toml and no workspace.json, every step but `migrate` and `check`
+    refuses in one line naming `migrate`: there is no dual-writing."""
+
+    STEPS = (("init",), ("track",), ("document", "--all"), ("sync",),
+             ("add-document", "--mode", "adapt", "--repo", "o/x"), ("add-analysis",))
+
+    def test_every_step_refuses_and_names_migrate(self):
+        for toml in ('schema = 2\nname = "w"\n[[document]]\nname = "t"\ndir = "t"\nrepo = "o/t"\n',
+                     '[workspace]\nname = "w"\nwriting_dir = "t"\n'):
+            (self.tmp / "workspace.toml").write_text(toml, encoding="utf-8")
+            for step in self.STEPS:
+                with self.subTest(step=step[0], toml=toml[:10]), \
+                        mock.patch.object(sw, "run") as run, \
+                        self.assertRaises(SystemExit) as caught:
+                    self.call(*step)
+                message = str(caught.exception)
+                self.assertIn("migrate", message)
+                self.assertEqual(len(message.splitlines()), 1)
+                run.assert_not_called()
+            self.assertFalse((self.tmp / ".claude").exists())
+            self.assertFalse((self.tmp / "CLAUDE.md").exists())
+
+    def test_a_workspace_json_with_connections_only_does_not_count(self):
+        (self.tmp / "workspace.toml").write_text('schema = 2\nname = "w"\n', encoding="utf-8")
+        self.write_json({"connections": {}})
+        with self.assertRaises(SystemExit) as caught:
+            self.call("document", "--all")
+        self.assertIn("migrate", str(caught.exception))
+
+
+class UnknownKeysSurvive(Workspace):
+    """workspace.json's other keys belong to other plugins, and member entries carry fields
+    only later code defines: every write keeps them, and other blocks byte for byte."""
+
+    HAND = ('{\r\n'
+            '  "_comment_connections": "which orgs the gate allows",\r\n'
+            '  "connections": {"github":   ["o"]},\r\n'
+            '  "schema": 1,\r\n'
+            '  "name": "w",\r\n'
+            '  "members": [{"dir": "tool", "repo": "o/tool", "kind": "code", "pinned": "v2"}],\r\n'
+            '  "state": {"notion": {"db": "x"}},\r\n'
+            '  "future": [1, 2]\r\n'
+            '}\r\n')
+
+    def test_every_write_keeps_them(self):
+        self.write_json(self.HAND)
+        (self.tmp / ".git").mkdir()
+        self.add_document()
+        (self.tmp / "thesis" / "setup-nested.sh").write_text("MODE=in-place\n", encoding="utf-8")
+
+        def nested(cmd, cwd=None, **kw):
+            (self.tmp / "thesis" / "layout.toml").write_text(
+                'layout = "writing-hosts-analysis"\nnested_dir = "a"\n', encoding="utf-8")
+        with mock.patch.object(sw, "run", side_effect=nested), \
+                mock.patch.object(sw, "find_sh", return_value="/bin/sh"):
+            self.call("add-analysis")
+            self.call("sync", "--extra", "publish")
+        with mock.patch.object(sw, "origin_url", return_value="git@github.com:o/w.git"):
+            self.call("track")
+        self.call("init")
+        state = self.state()
+        self.assertEqual(state["members"][0], {"dir": "tool", "repo": "o/tool", "kind": "code",
+                                               "pinned": "v2"})
+        self.assertEqual(state["repo"], "o/w")
+        self.assertEqual(state["future"], [1, 2])
+        text = (self.tmp / ".claude" / "workspace.json").read_bytes().decode("utf-8")
+        self.assertTrue(text.startswith(self.HAND[:self.HAND.index('"members"')]))
+        for line in self.HAND.splitlines(keepends=True):
+            if not line.lstrip().startswith(('"members"', '"future"', "}")):
+                self.assertIn(line, text, "a block this script does not own was reformatted")
+        self.assertNotIn("\n", text.replace("\r\n", ""), "line endings were mixed")
+        # The tracked .gitignore ignores the code member too: every member is its own repo.
+        self.assertIn("/tool/\n/thesis/\n", self.read(".gitignore"))
+
+    def test_a_bom_is_kept(self):
+        self.write_json("\ufeff" + '{"schema": 1, "name": "w", "members": []}\n')
+        self.add_document()
+        raw = (self.tmp / ".claude" / "workspace.json").read_text(encoding="utf-8")
+        self.assertTrue(raw.startswith("\ufeff{"))
+        self.assertEqual(len(self.docs()), 1)
+
+
+class JsonBlockWriter(unittest.TestCase):
+    """upsert_json_key: json-block.mjs's guarantee, ported -- one value span changes."""
+
+    def test_replaces_only_the_value(self):
+        raw = '{\n  "a": {"x":1},\n  "members": [],\n  "b": "}{"\n}\n'
+        new = sw.upsert_json_key(raw, "members", [{"dir": "d"}])
+        self.assertEqual(new, '{\n  "a": {"x":1},\n  "members": [{ "dir": "d" }],\n  "b": "}{"\n}\n')
+
+    def test_appends_a_missing_key_last(self):
+        self.assertEqual(sw.upsert_json_key('{\n\t"a": 1\n}\n', "name", "w"),
+                         '{\n\t"a": 1,\n\t"name": "w"\n}\n')
+
+    def test_into_an_empty_object(self):
+        self.assertEqual(sw.upsert_json_key("{}\n", "schema", 1), '{\n  "schema": 1\n}\n')
+
+    def test_long_values_go_one_entry_to_a_line(self):
+        members = [{"dir": f"member-{i}", "repo": f"owner/member-{i}", "kind": "code"}
+                   for i in range(3)]
+        new = sw.upsert_json_key('{\n  "members": []\n}\n', "members", members)
+        self.assertEqual(new.count("\n"), 7)
+        self.assertEqual(json.loads(new)["members"], members)
+
+    def test_a_nested_key_of_the_same_name_is_not_the_top_level_one(self):
+        raw = '{"state": {"members": 1}}'
+        self.assertEqual(json.loads(sw.upsert_json_key(raw, "members", []))["state"],
+                         {"members": 1})
 
 
 class FindsTheRoot(unittest.TestCase):
@@ -603,7 +986,81 @@ class FindsTheRoot(unittest.TestCase):
         saved = sw.ROOT
         self.addCleanup(sw.set_root, saved)
 
-    def test_walks_up_to_workspace_toml(self):
+    # The cases workspace.test.mjs holds context-kit-core's findWorkspace() to (#47): this is
+    # its Python port, and two walks that disagree would act on two different workspaces.
+    def workspace(self, d, body=None):
+        (d / ".claude").mkdir(parents=True, exist_ok=True)
+        (d / ".claude" / "workspace.json").write_text(
+            body if isinstance(body, str) else json.dumps(body or {"schema": 1, "members": []}),
+            encoding="utf-8")
+        return d
+
+    def root_from(self, cwd):
+        cwd.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(sw.Path, "cwd", return_value=cwd):
+            return sw.default_root()
+
+    def test_three_levels_below_a_workspace_json_that_root_is_found(self):
+        self.workspace(self.tmp)
+        self.assertEqual(self.root_from(self.tmp / "a" / "b" / "c"), self.tmp)
+
+    def test_the_walk_does_not_stop_at_a_member_clones_git(self):
+        self.workspace(self.tmp)
+        (self.tmp / "thesis" / ".git").mkdir(parents=True)
+        self.assertEqual(self.root_from(self.tmp / "thesis" / "chapters"), self.tmp)
+
+    def test_nested_workspaces_the_inner_wins_and_nothing_merges(self):
+        outer = self.workspace(self.tmp, {"schema": 1, "name": "outer", "connections": {"x": 1}})
+        inner = self.workspace(outer / "projects" / "inner", {"schema": 1, "name": "inner"})
+        self.assertEqual(self.root_from(inner / "src"), inner)
+        found = sw.find_workspace(inner / "src")
+        self.assertEqual(found["config"], {"schema": 1, "name": "inner"}, "levels never merge")
+        self.assertEqual(self.root_from(outer / "projects"), outer)
+
+    def test_a_malformed_workspace_json_is_reported_with_its_path_and_error(self):
+        for case, body in enumerate(('{ "schema": 1, "name": ', "[1, 2]")):
+            with self.subTest(body):
+                root = self.workspace(self.tmp / f"case{case}", body)
+                found = sw.find_workspace(root / "sub")
+                self.assertIsNone(found["root"])
+                self.assertEqual(found["file"], root / ".claude" / "workspace.json")
+                self.assertTrue(found["error"])
+                with mock.patch.object(sw.Path, "cwd", return_value=root), \
+                        self.assertRaises(SystemExit) as caught:
+                    sw.set_root(sw.default_root())
+                    sw.main(["document", "--all"])
+                message = str(caught.exception)
+                self.assertIn(str(root / ".claude" / "workspace.json"), message)
+                self.assertIn("malformed", message)
+                self.assertIn(found["error"], message)
+
+    def test_a_malformed_inner_workspace_never_falls_through_to_the_outer(self):
+        outer = self.workspace(self.tmp)
+        inner = self.workspace(outer / "inner", "not json")
+        self.assertEqual(self.root_from(inner / "sub"), inner)
+        self.assertIsNone(sw.find_workspace(inner)["root"])
+
+    def test_a_directory_named_workspace_json_is_malformed_not_skipped(self):
+        outer = self.workspace(self.tmp)
+        (outer / "inner" / ".claude" / "workspace.json").mkdir(parents=True)
+        self.assertEqual(self.root_from(outer / "inner"), outer / "inner")
+        self.assertIsNone(sw.find_workspace(outer / "inner")["root"])
+
+    def test_unknown_keys_reach_the_caller_untouched(self):
+        body = {"schema": 1, "future": {"x": 1}, "members": [
+            {"dir": "a", "repo": "o/a", "kind": "analysis", "documents": ["t"], "extra": True}]}
+        self.workspace(self.tmp, body)
+        self.assertEqual(sw.find_workspace(self.tmp)["config"], body)
+
+    def test_the_nearer_of_a_workspace_json_and_a_workspace_toml_wins(self):
+        self.workspace(self.tmp)
+        (self.tmp / "old").mkdir()
+        (self.tmp / "old" / "workspace.toml").write_text("schema = 2\n", encoding="utf-8")
+        self.assertEqual(self.root_from(self.tmp / "old" / "thesis"), self.tmp / "old")
+        self.workspace(self.tmp / "old" / "thesis")
+        self.assertEqual(self.root_from(self.tmp / "old" / "thesis"), self.tmp / "old" / "thesis")
+
+    def test_walks_up_to_an_unmigrated_workspace_toml(self):
         (self.tmp / "workspace.toml").write_text("", encoding="utf-8")
         (self.tmp / "thesis" / "Sections").mkdir(parents=True)
         with mock.patch.object(sw.Path, "cwd", return_value=self.tmp / "thesis" / "Sections"):
@@ -618,7 +1075,7 @@ class FindsTheRoot(unittest.TestCase):
         step = lambda args: seen.update(root=sw.ROOT, state=sw.STATE_FILE, setup=sw.SETUP_DIR)
         with mock.patch.object(sw, "cmd_check", step):
             sw.main(["--root", str(self.tmp), "check"])
-        self.assertEqual(seen, {"root": self.tmp, "state": self.tmp / "workspace.toml",
+        self.assertEqual(seen, {"root": self.tmp, "state": self.tmp / ".claude" / "workspace.json",
                                 "setup": self.tmp / ".setup"})
 
 

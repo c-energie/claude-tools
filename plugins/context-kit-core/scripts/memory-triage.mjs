@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Drain Claude's native per-directory memory into the context ladder.
 //
-//   node memory-triage.mjs scan <context-repo-root> [--dir path] [--json] [--today YYYY-MM-DD]
+//   node memory-triage.mjs scan <workspace-or-context-repo-root> [--dir path] [--json] [--today YYYY-MM-DD]
 //   node memory-triage.mjs mark <memory-file> --to "your-user/second-brain memory.md" [--today ...]
 //
 // THE PROBLEM. Claude's own memory lives in ~/.claude/projects/[mangled-cwd]/memory/, keyed by
@@ -23,9 +23,18 @@
 //     `feedback`). Those belong to the person, not to the directory they were captured in, so
 //     no mapping is needed to place them.
 //
+// IN A WORKSPACE (a root holding .claude/workspace.json, ADR 0002) the project layer is the
+// workspace's docs/memory.md, which its CLAUDE.md imports — not a context repo's memory.md. A
+// workspace is always a PROJECT here: ADR 0002 retires `include`, and the personal layer loads
+// through the user-level CLAUDE.md rather than by being a workspace that declares anything, so
+// there is no committed statement in workspace.json that would entitle a scan of every store.
+// Inventing one (a name, a path under ~/gh-orgs) would be the guess the asymmetry refuses.
+//
 // It never writes into a repo. `scan` is read-only; `mark` stamps one metadata key on a native
 // memory file so a promoted entry is not promoted twice. The skill does the promotion itself,
 // into the repo the session is already in — which is the only repo it is allowed to write to.
+// In a workspace that is the WORKSPACE's repo even from inside a member, because the workspace
+// is the session's home: a member's checkout is where the code lives, not where context does.
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, basename } from 'node:path';
@@ -119,16 +128,34 @@ if (command === 'mark') {
 const root = resolve(positional[1] ?? '.');
 if (!existsSync(root)) die(`no such directory: ${root}`);
 
+const readJson = (file) => {
+  const raw = readFileSync(file, 'utf8');
+  return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
+};
+
+// The workspace file is checked FIRST and at the root given only — no walk. The caller passes
+// what workspace.mjs resolved, so the walk has already happened once; a second one here could
+// only find a different answer. A malformed file is fatal rather than a reason to look for
+// context.json: workspace.mjs would have fallen back to a context repo and passed THAT root,
+// so arriving here with a broken workspace.json means the root came from somewhere else.
+const isWorkspace = existsSync(join(root, '.claude', 'workspace.json'));
 let ctx = {};
-try {
-  const raw = readFileSync(join(root, 'context.json'), 'utf8');
-  ctx = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
-} catch { die(`no readable context.json at ${root} — not a context repo`); }
+if (isWorkspace) {
+  try { readJson(join(root, '.claude', 'workspace.json')); }
+  catch (e) { die(`${join(root, '.claude', 'workspace.json')} is malformed — ${String(e?.message ?? e).split('\n')[0]}`); }
+} else {
+  try { ctx = readJson(join(root, 'context.json')); }
+  catch { die(`no .claude/workspace.json and no readable context.json at ${root} — neither a workspace nor a context repo`); }
+}
+
+// Where a promoted project fact lands, relative to root.
+const MEMORY = isWorkspace ? 'docs/memory.md' : 'memory.md';
 
 // `include` is what makes a repo the cross-project layer. Not `roles` or `supervisors`: those
 // say a repo runs supervisors, whereas `include` is the committed statement of which projects
-// this repo is entitled to see, which is the question being asked here.
-const isCrossProject = Array.isArray(ctx.include) && ctx.include.length > 0;
+// this repo is entitled to see, which is the question being asked here. A workspace never is —
+// see the header.
+const isCrossProject = !isWorkspace && Array.isArray(ctx.include) && ctx.include.length > 0;
 
 const stores = [];
 if (isCrossProject) {
@@ -192,12 +219,15 @@ const suggest = (e) => {
       ? 'personal — this repo, memory.md'
       : 'personal — NOT promotable from here (a session writes only to its own repo). The cross-project layer reads every store, so run triage there; nothing to carry over.';
   }
-  if (e.type === 'reference') return 'reference — the project context repo, or leave local if it is a laptop path';
-  return 'project — the project context repo memory.md, unless it is a code convention (CLAUDE.md) or machine-local (leave)';
+  const home = isWorkspace ? `the workspace's ${MEMORY}` : `the project context repo ${MEMORY}`;
+  if (e.type === 'reference') return `reference — ${home}, or leave local if it is a laptop path`;
+  return `project — ${home}, unless it is a code convention (that repo's CLAUDE.md) or machine-local (leave)`;
 };
 
 const data = {
   root,
+  layer: isWorkspace ? 'workspace' : 'context-repo',
+  memory: MEMORY,
   today,
   mode: isCrossProject ? 'cross-project (all stores, personal entries only)' : 'project (this working directory only)',
   storesRead: stores.length,
@@ -209,6 +239,7 @@ if (flags.has('json')) {
 } else {
   console.log(`memory-triage — ${root}  (${today})`);
   console.log(`  mode: ${data.mode}; ${stores.length} store(s) read`);
+  console.log(`  project facts go to: ${join(root, MEMORY)}`);
   if (!candidates.length) {
     console.log('  ok    nothing to promote');
   } else {
@@ -221,7 +252,7 @@ if (flags.has('json')) {
       console.log(`            ${e.file}`);
       console.log();
     }
-    console.log('  Nothing has been changed. Promote by hand into THIS repo, then stamp each');
+    console.log(`  Nothing has been changed. Promote by hand into ${isWorkspace ? 'THIS workspace' : 'THIS repo'}, then stamp each`);
     console.log('  source with:  memory-triage.mjs mark [file] --to "[where]"');
   }
 }

@@ -9,8 +9,17 @@
 // and one context repo has no permissions block at all.
 //
 // This derives the decision instead. The policy has exactly one author — `connections` in the
-// project's context.json — and a connection provisioned tomorrow is covered without anyone
+// nearest `.claude/workspace.json` (ADR 0002), or, for a project not yet migrated to one, in its
+// context repo's context.json — and a connection provisioned tomorrow is covered without anyone
 // editing anything.
+//
+// THE WORKSPACE IS ASKED FIRST, and found by walking up. The legacy route reads the repo name
+// from env / settings / a marker in the project dir ONLY, so a member repo nested inside a
+// workspace and opened as the project found no policy at all and allowed every connector. Only
+// findWorkspace() is used, never resolveWorkspace(): the latter's fallback runs context-repo.sh,
+// which may pull or clone, and this runs on every MCP call. When a workspace is found it is the
+// whole answer — levels never merge, so an absent `connections` there denies nothing rather than
+// falling through to a context.json or marker that is no longer this directory's policy.
 //
 // THE RULE, for a tool named mcp__[server]__[tool]:
 //   - [server] resembles no known provider          -> stay silent (not ours to judge)
@@ -30,7 +39,8 @@
 // credential. A project with NO connections key has decided nothing, so nothing is denied: the
 // same absent-versus-empty distinction the resolvers draw between unconfigured and opted out.
 //
-// FAIL OPEN, LOUDLY. If the policy cannot be read — no context repo, no clone, unparseable JSON —
+// FAIL OPEN, LOUDLY. If the policy cannot be read — no workspace and no context repo, no clone,
+// unparseable JSON —
 // this allows the call and says why on stderr. A gate that blocks every MCP call the moment a
 // checkout is missing would be worse than the status quo, and the hook contract is that a hook
 // never blocks wrongly. The cost is that "no output" means either "allowed" or "could not tell",
@@ -43,7 +53,8 @@
 // Cowork sandbox never has one.
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Providers this plugin knows by name, so a connector can be recognised even when the project
 // declares nothing for it. A `connections` block naming something else adds to this at runtime.
@@ -103,59 +114,96 @@ try {
 
   const project = process.env.CLAUDE_PROJECT_DIR || payload.cwd || process.cwd();
 
-  // ------------------------------------------------------------ which repo holds the policy
-  // Resolution order matches the resolvers exactly, minus the network: this runs on every MCP
-  // call, so it may never pull, clone or block.
-  const settingsRepo = (file) => readJson(file)?.env?.PROJECT_CONTEXT_REPO ?? null;
-  const MARKERS = [
-    join(project, '.claude', 'context-project.json'),
-    join(project, 'context-project.json'),
-    join(project, 'docs', 'context-project.json'),
-    '/mnt/project/context-project.json',
-    join(homedir(), 'mnt', 'uploads', 'context-project.json'),
-  ];
-
-  let repo = process.env.PROJECT_CONTEXT_REPO
-    || settingsRepo(join(project, '.claude', 'settings.local.json'))
-    || settingsRepo(join(project, '.claude', 'settings.json'));
-  let markerJson = null;
-  for (const m of MARKERS) {
-    if (!existsSync(m)) continue;
-    const held = readJson(m);
-    if (!held) continue;
-    markerJson = markerJson ?? held;
-    repo = repo || held.contextRepo;
-  }
-
-  if (repo && OPTOUT.includes(String(repo).trim().toLowerCase())) {
-    allow(`${server}: this project opts out of a context repo, so it declares no connection policy`);
-  }
-
-  // ------------------------------------------------------------ the policy itself
-  // context.json is authoritative; the marker is the fallback that reaches a Cowork sandbox,
-  // where there is no clone to read.
+  // ------------------------------------------------------------ the workspace route
+  // Imported dynamically, inside the try, rather than statically: a static import that failed
+  // (packaging is not guaranteed to ship scripts/ beside hooks/ — see load-context.sh's inline
+  // resolver) would throw before any catch and exit non-zero on every MCP call. Losing it here
+  // costs only the workspace route, and says so.
   let connections = null;
   let source = null;
   let unreadable = null;      // present but broken is NOT the same as absent — say which
-  if (repo && /^[^/]+\/[^/]+$/.test(repo)) {
-    const ctxFile = join(process.env.PROJECT_CONTEXT_DIR || join(homedir(), '.context', ...repo.split('/')), 'context.json');
-    const ctx = readJson(ctxFile);
-    if (!ctx && existsSync(ctxFile)) unreadable = ctxFile;
-    if (ctx && Object.prototype.hasOwnProperty.call(ctx, 'connections') && ctx.connections && typeof ctx.connections === 'object') {
-      connections = ctx.connections;
-      source = `${repo} context.json`;
+  let found = null;
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const { findWorkspace } = await import(pathToFileURL(join(here, '..', 'scripts', 'workspace.mjs')).href);
+    found = findWorkspace(project);
+  } catch (e) {
+    process.stderr.write(`connection-gate: workspace resolver unavailable (${e && e.message ? e.message : e}); using the context-repo route\n`);
+  }
+
+  if (found?.root) {
+    const ws = found.config;
+    if (!Object.prototype.hasOwnProperty.call(ws, 'connections')) {
+      allow(`${server}: ${found.file} declares no connections — allowing, nothing to enforce`);
     }
-  }
-  if (!connections && markerJson?.connections && typeof markerJson.connections === 'object') {
-    connections = markerJson.connections;
-    source = 'the context-project.json marker';
-  }
-  if (!connections) {
-    allow(unreadable
-      ? `${server}: ${unreadable} exists but will not parse, so the connection policy could NOT be `
-        + 'read and this call is being allowed unchecked. Fix that file — a broken context.json '
-        + 'silently disables this gate.'
-      : `${server}: no connections policy found${repo ? ` for ${repo}` : ''} — allowing, nothing to enforce`);
+    // A string, array or null where the map belongs is a policy this cannot read, not "none":
+    // treating it as {} would deny every provider connector over a typo.
+    if (!ws.connections || typeof ws.connections !== 'object' || Array.isArray(ws.connections)) {
+      allow(`${server}: "connections" in ${found.file} is not an object, so the connection policy `
+        + 'could NOT be read and this call is being allowed unchecked. Fix that file — a broken '
+        + 'workspace.json silently disables this gate.');
+    }
+    connections = ws.connections;
+    source = found.file;
+  } else {
+    // A malformed nearest workspace.json goes to the legacy route, exactly as workspace.mjs does
+    // for the session's context — never on to an outer workspace. It is remembered so that, if
+    // the legacy route finds nothing either, the allow names the file that broke the gate.
+    if (found?.error) {
+      unreadable = found.file;
+      process.stderr.write(`connection-gate: ${found.file} is malformed (${found.error}); falling back to the context-repo route\n`);
+    }
+    // ------------------------------------------------------------ which repo holds the policy
+    // Resolution order matches the resolvers exactly, minus the network: this runs on every MCP
+    // call, so it may never pull, clone or block.
+    const settingsRepo = (file) => readJson(file)?.env?.PROJECT_CONTEXT_REPO ?? null;
+    const MARKERS = [
+      join(project, '.claude', 'context-project.json'),
+      join(project, 'context-project.json'),
+      join(project, 'docs', 'context-project.json'),
+      '/mnt/project/context-project.json',
+      join(homedir(), 'mnt', 'uploads', 'context-project.json'),
+    ];
+
+    let repo = process.env.PROJECT_CONTEXT_REPO
+      || settingsRepo(join(project, '.claude', 'settings.local.json'))
+      || settingsRepo(join(project, '.claude', 'settings.json'));
+    let markerJson = null;
+    for (const m of MARKERS) {
+      if (!existsSync(m)) continue;
+      const held = readJson(m);
+      if (!held) continue;
+      markerJson = markerJson ?? held;
+      repo = repo || held.contextRepo;
+    }
+
+    if (repo && OPTOUT.includes(String(repo).trim().toLowerCase())) {
+      allow(`${server}: this project opts out of a context repo, so it declares no connection policy`);
+    }
+
+    // ------------------------------------------------------------ the policy itself
+    // context.json is authoritative; the marker is the fallback that reaches a Cowork sandbox,
+    // where there is no clone to read.
+    if (repo && /^[^/]+\/[^/]+$/.test(repo)) {
+      const ctxFile = join(process.env.PROJECT_CONTEXT_DIR || join(homedir(), '.context', ...repo.split('/')), 'context.json');
+      const ctx = readJson(ctxFile);
+      if (!ctx && existsSync(ctxFile)) unreadable = unreadable ?? ctxFile;
+      if (ctx && Object.prototype.hasOwnProperty.call(ctx, 'connections') && ctx.connections && typeof ctx.connections === 'object') {
+        connections = ctx.connections;
+        source = `${repo} context.json`;
+      }
+    }
+    if (!connections && markerJson?.connections && typeof markerJson.connections === 'object') {
+      connections = markerJson.connections;
+      source = 'the context-project.json marker';
+    }
+    if (!connections) {
+      allow(unreadable
+        ? `${server}: ${unreadable} exists but will not parse, so the connection policy could NOT be `
+          + 'read and this call is being allowed unchecked. Fix that file — a broken policy file '
+          + 'silently disables this gate.'
+        : `${server}: no connections policy found${repo ? ` for ${repo}` : ''} — allowing, nothing to enforce`);
+    }
   }
 
   // ------------------------------------------------------------ decide

@@ -7,9 +7,10 @@
 //   node setup-connectors.mjs --add slack     also declare a provider not yet in the block
 //   node setup-connectors.mjs --add github:c-energie   declare a SECOND github connection,
 //                                             the one serving that resource owner
-//   node setup-connectors.mjs --context <path/to/context.json>
+//   node setup-connectors.mjs --context <path/to/context.json or workspace.json>
 //
-// The `connections` block in the project's context.json is the source of truth — e.g.
+// The `connections` block in the nearest `.claude/workspace.json` (ADR 0002) — or, for a project
+// not yet migrated to a workspace, its context repo's context.json — is the source of truth, e.g.
 //   { "github": "github-acme", "notion": "notion-acme" }
 // It names which MCP server serves each provider HERE, which is what stops a machine holding
 // several projects' connections from writing through the wrong one. If the block is missing,
@@ -33,16 +34,26 @@
 // exactly the repo that writes `{}` and means it; treating that as an omission nags forever and
 // invites someone to "fix" it. `--add [provider]` is how a deliberate none is reopened.
 //
+// IN A WORKSPACE, `connections` IS THE ONLY KEY THIS WRITES. workspace.json has one writing owner
+// per top-level key (see workspace.mjs) and this script owns `connections`, so the edit goes
+// through json-block.mjs's top-level upsert: every other byte survives, and a `connections` nested
+// inside `state` or a member entry cannot be mistaken for the root one — which the raw-text
+// search the context.json path still uses could not promise. A malformed nearest workspace.json
+// is REFUSED rather than stepped past: the resolver falls back to the context repo for loading,
+// but a writer that did the same would edit a file that is no longer this directory's policy.
+//
 // The runtime is copied out of the plugin into ~/.mcp/ before use, so the paths written into
 // the Claude configs survive a plugin update, reinstall or marketplace re-sync.
 import { createInterface } from 'node:readline/promises';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, dirname, resolve, basename } from 'node:path';
+import { join, dirname, resolve, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bashBin, bashPath } from '../bash-bin.mjs';
 import { homedir } from 'node:os';
 import { configPaths, detectConfigPaths } from './secret-store.mjs';
+import { findWorkspace, WORKSPACE_FILE } from '../workspace.mjs';
+import { upsertBlockInFile } from '../json-block.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNTIME = join(homedir(), '.mcp');
@@ -201,18 +212,38 @@ function resolverContext() {
   return existsSync(p) ? p : null;
 }
 
-// Explicit path, then the declared repo's managed clone in ~/.context, then the resolver
-// (which can create that clone), then the working directory. Never guess a context repo —
-// if none of these produce one, say precisely why and stop.
+// A file is a workspace file by its place, `.claude/workspace.json`, never by its contents —
+// the same rule the resolver uses to decide what a directory is.
+const isWorkspaceFile = (p) => resolve(p).endsWith(sep + WORKSPACE_FILE);
+
+// Explicit path, then the nearest workspace.json, then the declared repo's managed clone in
+// ~/.context, then the resolver (which can create that clone), then the working directory. Never
+// guess a context repo — if none of these produce one, say precisely why and stop.
+// -> { path, workspace?: true } or { path: null, hint }
 function findContext(explicit) {
   if (explicit) {
     let p = resolve(expandHome(explicit));
     if (!existsSync(p)) return { path: null, hint: `--context ${explicit} does not exist` };
-    // Accept either the file itself or the directory holding it.
-    if (!p.endsWith('.json')) p = join(p, 'context.json');
+    // Accept the file itself, or a directory holding a context.json or a .claude/workspace.json.
+    if (!p.endsWith('.json')) {
+      const ctx = join(p, 'context.json');
+      p = existsSync(ctx) ? ctx : join(p, WORKSPACE_FILE);
+    }
     return existsSync(p)
-      ? { path: p }
-      : { path: null, hint: `--context ${explicit} holds no context.json` };
+      ? { path: p, workspace: isWorkspaceFile(p) }
+      : { path: null, hint: `--context ${explicit} holds no context.json or ${WORKSPACE_FILE}` };
+  }
+
+  // The workspace first, found by walking up — a member repo nested inside a workspace declares
+  // no repo of its own, and the legacy routes below look only in the project dir itself.
+  const ws = findWorkspace(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  if (ws?.root) return { path: ws.file, workspace: true };
+  if (ws?.error) {
+    return {
+      path: null,
+      hint: `${ws.file} is malformed (${ws.error}) — fix it first; editing the context repo's `
+        + 'connections instead would change a policy this directory no longer uses',
+    };
   }
 
   const repo = declaredRepo();
@@ -242,9 +273,13 @@ function findContext(explicit) {
 }
 
 // A short project identifier for naming connections, from the file's own fields or the
-// directory holding it. Context repos are often "<project>-context", so drop that suffix.
-function projectSlug(contextFile, cfg) {
-  const raw = cfg.project ?? cfg.name ?? cfg.slug ?? basename(dirname(contextFile));
+// directory holding it. Context repos are often "<project>-context", so drop that suffix. A
+// workspace has exactly one name field, `name`, and its directory is the one ABOVE .claude/ —
+// basename(dirname(file)) would name every workspace ".claude".
+function projectSlug(contextFile, cfg, workspace) {
+  const raw = workspace
+    ? (cfg.name ?? basename(dirname(dirname(contextFile))))
+    : (cfg.project ?? cfg.name ?? cfg.slug ?? basename(dirname(contextFile)));
   return String(raw)
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
@@ -328,21 +363,24 @@ async function main() {
 
   console.log('\nProject connections\n');
 
-  const { path: contextFile, hint } = findContext(at('--context'));
+  const { path: contextFile, hint, workspace } = findContext(at('--context'));
   if (!contextFile) {
-    bad(hint ?? 'No context.json found.');
+    bad(hint ?? 'No workspace.json or context.json found.');
     console.log('\n  Context repos are cloned to ~/.context/<owner>/<repo>, named by the');
     console.log("  PROJECT_CONTEXT_REPO env var or the project's .claude/settings.json.");
     console.log('  Pass --context <path> to override, or see the context-setup skill.\n');
     return 1;
   }
-  ok(`context: ${contextFile}`);
+  ok(`${workspace ? 'workspace' : 'context'}: ${contextFile}`);
 
   let cfg;
   try { cfg = readJson(contextFile); }
   catch (e) { bad(`could not parse ${contextFile}: ${e.message}`); return 1; }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    bad(`${contextFile}: top level is not a JSON object`); return 1;
+  }
 
-  const slug = projectSlug(contextFile, cfg);
+  const slug = projectSlug(contextFile, cfg, workspace);
   // DEEP copy, and the original captured as text before anything touches it. A spread is
   // shallow, so once a provider's value is a map, `connections[p][owner] = name` mutates the
   // parsed cfg as well — and the change test below then compares the object with itself, finds
@@ -397,9 +435,11 @@ async function main() {
       }
       // The owner of the context repo itself is the right default for the connection that was
       // already there: it is the owner every core skill actually needs (save-thread, the
-      // bootstrap read), and the project slug is a project name, not a GitHub owner.
-      const homeOwner = (typeof cfg.contextRepo === 'string' && cfg.contextRepo.includes('/'))
-        ? cfg.contextRepo.split('/')[0]
+      // bootstrap read), and the project slug is a project name, not a GitHub owner. In a
+      // workspace that is the workspace's own `repo`.
+      const homeRepo = workspace ? cfg.repo : cfg.contextRepo;
+      const homeOwner = (typeof homeRepo === 'string' && homeRepo.includes('/'))
+        ? homeRepo.split('/')[0]
         : slug;
       const suggested = extraOwner ? `${p}-${slug}-${extraOwner}` : `${p}-${slug}`;
       const chosen = rl
@@ -423,6 +463,17 @@ async function main() {
     if (JSON.stringify(connections) !== connectionsBefore) {
       if (checkOnly) {
         warn('connections block would change — re-run without --check to write it');
+      } else if (workspace) {
+        // Backup first, as on the context.json path; upsertBlockInFile refuses (throws, having
+        // written nothing) rather than corrupt a file it cannot edit safely.
+        copyFileSync(contextFile, `${contextFile}.bak-connections`);
+        try {
+          upsertBlockInFile(contextFile, 'connections', connections);
+        } catch (e) {
+          bad(`could not write connections to ${contextFile}: ${e.message}`); return 1;
+        }
+        ok(`wrote connections to ${contextFile} (backup: .bak-connections)`);
+        console.log('  Commit it — the workspace repo is what the rest of the team reads.');
       } else {
         const raw = readFileSync(contextFile, 'utf8');
         const span = connectionsSpan(raw);
