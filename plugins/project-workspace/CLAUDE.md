@@ -36,6 +36,20 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
   (`dir: "<doc>/<analysis>"`, `documents: ["<doc>"]`) so the workspace can be restored from
   `members` alone, but **where it lives is still `layout.toml`'s to say** — owned by
   writing-template's `setup-nested.sh`; `describe` reads it from there.
+- **`adopt` infers a member's `kind` from content, never from a name** (ADR 0002): a
+  `layout.toml`, `Sections/` or root `.tex` file is a document, analysis-template's
+  `doc_analysis` package beside a `pyproject.toml` an analysis repo, anything else code. It
+  proposes and writes nothing until `--yes`, because the inference can be wrong; `--kind`
+  corrects it. It refuses a root that already lists `members`. The schema-1 shape it can find
+  (#33) goes through `migrate_schema_1` itself (`migrate_adopted`), never a second nesting
+  path, so #34's stop for a load-bearing root `pyproject.toml` holds there too.
+- **`restore` clones only what is missing and never touches a present member**; a nested
+  analysis repo is restored through its document's `setup-nested.sh` (add-analysis's
+  restore), never cloned directly.
+- **The root `.gitignore` block is an allowlist** (`write_document_block`): `/*/`, then
+  `!/<dir>/` for `ROOT_OWN_DIRS` and any folder the root already tracks files in, then every
+  top-level member. A new folder a workspace owns by convention goes into `ROOT_OWN_DIRS`, or
+  git ignores it without a word.
 - **No dual-writing.** While `workspace.toml` is the only manifest (no `workspace.json`, or one
   without `members`), every step but `check` and `migrate` refuses in one line naming
   `migrate` (`MIGRATE_FIRST`). Nothing writes both files.

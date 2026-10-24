@@ -1,6 +1,6 @@
 ---
 name: setup-project-workspace
-description: Make a folder a project workspace — .claude/workspace.json and CLAUDE.md, optionally its own git repo — then hand off to add-document; or migrate a workspace still described by workspace.toml (schema 2, or the single-document schema 1) into workspace.json. Use when the user asks to set up a project workspace, start a thesis or paper workspace, track the workspace in git, convert or migrate workspace.toml, or migrate a workspace made from project-workspace-template.
+description: Make a folder a project workspace — .claude/workspace.json and CLAUDE.md, optionally its own git repo with an allowlist .gitignore — then hand off to add-document; adopt an existing folder of clones that has no manifest; add a code repo as a member; restore every member on a fresh clone; or migrate a workspace still described by workspace.toml (schema 2, or the single-document schema 1) into workspace.json. Use when the user asks to set up a project workspace, start a thesis or paper workspace, turn a folder of repos into a workspace, add a code repo to the workspace, restore or re-clone the workspace on another machine, track the workspace in git, convert or migrate workspace.toml, or migrate a workspace made from project-workspace-template.
 ---
 
 # Set up a project workspace
@@ -39,13 +39,17 @@ Look at the root:
 
 - **`.claude/workspace.json` with `members`** → already set up. Say what it lists
   (`SETUP document --all`), offer `track` if `.git` is missing, and otherwise route: a new
-  document → add-document, analysis for one → add-analysis. A `workspace.toml` still beside it
+  document → add-document, analysis for one → add-analysis, a code repo →
+  [Adding a code repo](#adding-a-code-repo). Members listed but missing on disk (a fresh
+  clone of the root) → [Restoring the members](#restoring-the-members). A `workspace.toml` still beside it
   is a leftover: `SETUP migrate` says so, and it is deleted by hand once compared.
 - **`workspace.toml` with `schema = 2`** (and no `workspace.json`, or one without `members`) →
   [Converting workspace.toml](#converting-workspacetoml). Every other step refuses until then.
 - **`workspace.toml` with `[workspace]` and no `schema`** → made from
   `project-workspace-template`, one document with its repos side by side:
   [Migrating](#migrating) instead.
+- **Neither, but subdirectories that are git checkouts** → a folder of clones built by hand:
+  [Adopting a folder of clones](#adopting-a-folder-of-clones).
 - **Neither** → a new workspace: §1 onwards.
 - **A malformed `workspace.json`** → every step stops naming the file and the parse error.
   Fix it by hand with the user: other plugins own keys in it, so nothing rewrites it whole.
@@ -75,10 +79,12 @@ install is there but its latexmk cannot start — install Perl only for local bu
 
 1. **Workspace name** — default this folder's name.
 2. **Track the workspace in git?** Default **no**. A yes makes the folder a repo tracking
-   only `.claude/workspace.json`, `CLAUDE.md` and `.gitignore`, ignoring every member — what it
-   buys is restoring the set of documents on a second machine. If yes: **a GitHub repo for
-   it?** owner (default the `gh` login), name (default the workspace name), visibility
-   (default private). Confirm before creating it: it is outward-facing.
+   root files and the workspace's own folders only, ignoring every member — what it buys is
+   restoring the set of members on a second machine (`restore`). If yes: **a GitHub repo for
+   it?** owner (default the `gh` login), name (default the workspace name; for an **org
+   root** — a folder named for the GitHub org its members belong to, as `~/c-energie` —
+   `[org]/workspace`, which `track` and `adopt` print), visibility (default private). Confirm
+   before creating it: it is outward-facing.
 
 ## 3. Make it
 
@@ -93,11 +99,15 @@ may have made one) keeps every key it has and gains only `schema`, `name` and `m
 `CLAUDE.md` already there is kept; only its documents table, between the
 `<!-- documents ... -->` markers, is ever rewritten.
 
-**`.gitignore`: `init` edits it too when the root is already a git repo**, and `track`,
-`add-document` and `migrate` do whenever it is one: each writes the managed members block
-(`/<dir>/` for every member not nested in another). A line the user already has for a member
-outside the block is not repeated — the step prints `note .gitignore already ignores ...`
-instead. `track` runs `git init` first; with `--repo` it creates the GitHub repo as `origin`
+**`.gitignore`: `init` edits it too when the root is already a git repo**, and `adopt`,
+`track`, `add-document`, `add-member` and `migrate` do whenever it is one, each saying so
+(`.gitignore: rewriting the managed block ...`). The managed block is an **allowlist**: `/*/`
+ignores every top-level directory, `!/.claude/`, `!/docs/`, `!/.context/`, `!/teaching/` (and
+any folder the root already tracks files in) let the workspace's own back in, and every member
+not nested in another is then named as well (`/<dir>/`). Root files are never ignored. So a
+repo cloned in by hand, before `add-member` records it, can never be committed into the root.
+A line the user already has outside the block is not repeated — the step prints
+`note .gitignore already ...` instead. Everything outside the block is the user's and kept. `track` runs `git init` first; with `--repo` it creates the GitHub repo as `origin`
 (and pushes if there are commits), and records it as `repo` in `workspace.json` (an existing
 GitHub `origin` is recorded the same way).
 
@@ -109,6 +119,62 @@ folder.
 
 If tracked, propose the first commit at the root — `.claude/workspace.json`, `CLAUDE.md`,
 `.gitignore` — and ask before committing and before pushing.
+
+## Adopting a folder of clones
+
+A folder of checkouts with no manifest (built by hand, #33) is adopted as it stands: nothing
+is cloned, moved or committed.
+
+1. `SETUP adopt` proposes one member per immediate subdirectory that is a git checkout
+   (hidden ones skipped), and **writes nothing**. Each member's `repo` is its `origin`
+   (OWNER/NAME for GitHub; any other URL as it is); its `kind` comes from its content, never
+   its name: a `layout.toml`, `Sections/` or a root-level `.tex` file is a `document`;
+   analysis-template's `doc_analysis` package beside a `pyproject.toml` is an `analysis`
+   repo (at the root, `documents: []`: it feeds no document); anything else is `code`. A
+   document whose `layout.toml` names a nested analysis repo is followed by it as an
+   `analysis` member feeding it. Walk the user through every line and every `note`.
+2. A wrong kind is corrected with `--kind DIR=KIND` (repeatable); re-run until it is right.
+3. On an explicit yes: `SETUP adopt --yes [--name <name>] [--kind ...]`. It writes
+   `.claude/workspace.json` (merged into one setup-connectors made), `CLAUDE.md` if there is
+   none, and in a tracked root the `.gitignore` block. Then §2's track question and §4.
+
+**The side-by-side shape** (#33): one document checkout and an analysis checkout beside it,
+which a root `pyproject.toml` makes a uv workspace member — a workspace from before
+2026-10-12 that never had a `workspace.toml`. `adopt` records it as it is and says so; the
+root `pyproject.toml`, `uv.lock` and `.venv` are untouched. Then offer the nesting
+migration: `SETUP --dry-run migrate` shows the same plan as [Migrating](#migrating) (from
+step 1 there; the root venv's extras are not recorded anywhere, so the analysis venv gets
+`dev`, `notebooks` and the backend — add others with `SETUP sync --extra`), and its stop for
+a load-bearing root `pyproject.toml` (#34) holds: that root is never deleted.
+
+## Adding a code repo
+
+A repo that is neither a document nor an analysis repo (a tool, a library, a model):
+
+```bash
+SETUP add-member --repo <owner>/<name> [--dir <dir>]
+```
+
+It clones the repo (`gh` for OWNER/NAME, `git` for any other URL or path) into `<dir>`
+(default the repo's name) and records it as a `code` member. A repo already a member, or a
+directory already a member's, is refused; a checkout already in `<dir>` is recorded only if
+its `origin` is that repo. Documents go through `/project-workspace:add-document` and analysis
+repos through `/project-workspace:add-analysis` instead: they do more than clone.
+
+## Restoring the members
+
+On a fresh clone of a tracked workspace root, `members` lists repos that are not on disk:
+
+```bash
+SETUP --dry-run restore     # the plan
+SETUP restore
+```
+
+It clones every member missing on disk — parents first — and leaves every one present
+untouched. An analysis repo nested in a document is restored by that document's own
+`setup-nested.sh` (as add-analysis restores it, venv included), never cloned here. A member
+with no `repo`, or a non-checkout folder in its place, is listed as not restored (exit 1).
+Then prove each analysis repo as add-analysis §4 does.
 
 ## Converting workspace.toml
 

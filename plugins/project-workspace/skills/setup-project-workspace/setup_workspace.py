@@ -27,7 +27,11 @@ also runnable by hand, and each refuses rather than overwrites when its target e
     document      which document a skill acts on, as JSON
     sync          uv sync a document's analysis venv with its recorded extras
     migrate       convert workspace.toml: schema 2 (several documents) or schema 1 (one
-                  document, side-by-side repos) into .claude/workspace.json
+                  document, side-by-side repos) into .claude/workspace.json; or nest the
+                  analysis repo of an adopted folder with schema 1's shape
+    adopt         make a folder of clones with no manifest a workspace, a member per checkout
+    add-member    clone a code repo and record it as a member
+    restore       clone every member missing on disk, as on a fresh clone of the root
 
 Run with uv so no system Python is needed:
 
@@ -41,6 +45,7 @@ migrated, workspace.toml), else the current directory.
 Stdlib only.
 """
 import argparse
+import fnmatch
 import json
 import os
 import platform
@@ -154,6 +159,12 @@ BLOCK_START = "# >>> documents (managed by /project-workspace) >>>"
 LEGACY_BLOCK_START = "# >>> members (managed by setup-doc-workspace) >>>"
 BLOCK_END = "# <<< documents <<<"
 LEGACY_BLOCK_END = "# <<< members <<<"
+# The block is an allowlist: every top-level directory is ignored but these, the workspace's
+# own (ADR 0002's layout: the manifest, docs/threads, meetings and adr, the Notion queue, /teach).
+# A denylist naming members ignored only the members recorded so far, so a repo cloned in by
+# hand, before `add-member`, showed up as an untracked directory one `git add -A` away from
+# nesting its history in this one. Root files are never ignored: they are what the root tracks.
+ROOT_OWN_DIRS = (".claude", "docs", ".context", "teaching")
 # The rest of a tracked workspace's .gitignore, written once by `track`.
 GITIGNORE_REST = """\
 # Setup scaffolding: import sources, executed notebooks, observer logs. Never commit it.
@@ -348,7 +359,12 @@ def clone(repo, directory):
             say(f"{directory}/ is already a checkout; leaving it alone.")
             return target
         sys.exit(f"{directory}/ exists and is not empty. Move it aside, then re-run.")
-    run(["gh", "repo", "clone", repo, directory], cwd=ROOT)
+    # A member recorded from a non-GitHub origin keeps its URL verbatim (github_repo), and
+    # `gh repo clone` reads anything with a slash in it as OWNER/NAME: git clones those.
+    if REPO_NAME.fullmatch(repo):
+        run(["gh", "repo", "clone", repo, directory], cwd=ROOT)
+    else:
+        run(["git", "clone", repo, directory], cwd=ROOT)
     return target
 
 
@@ -694,12 +710,30 @@ def ignore_line_variants(directory):
     return {f"/{directory}/", f"{directory}/", f"/{directory}", directory}
 
 
+def root_tracked_dirs():
+    """Top-level directories the root repo already tracks files in. Kept un-ignored by the
+    allowlist: a user's own folder committed before the allowlist existed would otherwise
+    silently stop picking up new files, since git ignores them without a word."""
+    # Only the root's own repo: with a `.git` git cannot read, it walks up and would list an
+    # enclosing repo's files instead.
+    top = quiet(["git", "rev-parse", "--show-toplevel"], cwd=ROOT)
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != ROOT:
+        return []
+    result = quiet(["git", "ls-files", "-z"], cwd=ROOT)
+    if result.returncode != 0:
+        return []
+    return sorted({path.split("/")[0] for path in result.stdout.split("\0") if "/" in path})
+
+
 def write_document_block(state):
-    """The .gitignore block naming every top-level member, replaced in place if already
-    there. Only in a tracked workspace -- `init`, `track`, `add-document` and `migrate` all
+    """The managed .gitignore block, replaced in place if already there: an allowlist that
+    ignores every top-level directory but the workspace's own (ROOT_OWN_DIRS, and any the
+    root already tracks files in), then names every top-level member as well, last, so a
+    member that shares a name with one of those is still ignored. Only in a tracked
+    workspace -- `init`, `adopt`, `track`, `add-document`, `add-member` and `migrate` all
     call it, which their SKILL.md sections say -- and everything outside the markers is the
-    user's and is kept. A member the user already ignores outside the block is left out of
-    it, with a warning, rather than written a second time (#37)."""
+    user's and is kept. A line the user already has outside the block is left out of it,
+    with a warning, rather than written a second time (#37)."""
     if not tracked():
         return
     gitignore = ROOT / ".gitignore"
@@ -709,8 +743,16 @@ def write_document_block(state):
         if start in outside and end in outside:
             outside = replace_between(outside, start, end, "")
     own = {line.strip() for line in outside.splitlines()}
+    members = top_level_member_dirs(state)
+    kept = [d for d in dict.fromkeys([*ROOT_OWN_DIRS, *root_tracked_dirs()]) if d not in members]
     lines = []
-    for directory in top_level_member_dirs(state):
+    for line in ["/*/", *(f"!/{d}/" for d in kept)]:
+        if line in own:
+            say(f"  note  .gitignore already has `{line}` outside the managed block; "
+                "not adding a second one")
+        else:
+            lines.append(line)
+    for directory in members:
         already = sorted(ignore_line_variants(directory) & own)
         if already:
             say(f"  note  .gitignore already ignores {directory}/ outside the managed block "
@@ -718,8 +760,9 @@ def write_document_block(state):
         else:
             lines.append(f"/{directory}/")
     block = "\n".join([BLOCK_START,
-                       "# Each member is its own repo with its own remote. Tracking one here",
-                       "# would nest one history inside another.",
+                       "# Every top-level directory is ignored but the workspace's own: root files",
+                       "# only. Each member is its own repo with its own remote, and tracking one",
+                       "# here would nest one history inside another; members are named too.",
                        *lines, BLOCK_END])
     for start, end in ((BLOCK_START, BLOCK_END), (LEGACY_BLOCK_START, LEGACY_BLOCK_END)):
         if start in text and end in text:
@@ -728,6 +771,9 @@ def write_document_block(state):
     else:
         new = block + "\n\n" + (text or GITIGNORE_REST)
     if new != text:
+        # Said in words, not only as a `write` line: it is the user's file too (#37).
+        say("  .gitignore: rewriting the managed block (every top-level directory ignored but "
+            + ", ".join(f"{d}/" for d in kept) + "; members named); lines outside it are kept")
         write(gitignore, new)
 
 
@@ -1012,7 +1058,9 @@ def cmd_track(args):
             say(f"origin is {'already ' if args.repo else ''}{origin}; leaving it.")
             record_repo(state, github_repo(origin))
         else:
-            say("No origin. Re-run with --repo OWNER/NAME to create one on GitHub.")
+            org = org_workspace_repo(state)
+            say("No origin. Re-run with --repo OWNER/NAME to create one on GitHub"
+                + (f"; this is an org root, so the name to offer is {org}." if org else "."))
         return 0
     if repo_exists(args.repo):
         sys.exit(f"{args.repo} already exists. Point origin at it by hand: "
@@ -1023,6 +1071,17 @@ def cmd_track(args):
     run(cmd + (["--push"] if has_commits else []), cwd=ROOT)
     record_repo(state, args.repo)
     return 0
+
+
+def org_workspace_repo(state):
+    """`[org]/workspace` when this root is an org's clone root -- a folder named for the
+    GitHub owner of one of its members, as ~/c-energie is -- else None. ADR 0002 names an
+    org workspace that way; the plain default, the folder's own name, would give
+    c-energie/c-energie, a repo nobody would look for the org's context in."""
+    owners = {m["repo"].split("/")[0] for m in state.get("members", [])
+              if REPO_NAME.fullmatch(m.get("repo") or "")}
+    match = next((o for o in sorted(owners) if o.lower() == ROOT.name.lower()), None)
+    return f"{match}/workspace" if match else None
 
 
 def record_repo(state, repo):
@@ -1233,6 +1292,255 @@ def cmd_sync(args):
 
 
 # ---------------------------------------------------------------------------
+# adopt, add-member, restore: members that are not made by add-document / add-analysis
+# ---------------------------------------------------------------------------
+
+# analysis-template's figure/table package, in either layout it has shipped with. Its
+# presence beside a pyproject.toml is what makes a checkout an analysis repo.
+ANALYSIS_PACKAGES = ("src/doc_analysis", "doc_analysis")
+
+
+def checkouts(directory):
+    """The immediate subdirectories of `directory` that are git checkouts -- a `.git` folder,
+    or the `.git` file of a linked worktree -- in name order. Hidden ones are skipped:
+    .claude, .setup, .venv and the like belong to the workspace or a tool, never a member."""
+    if not directory.is_dir():
+        return []
+    return sorted(d for d in directory.iterdir()
+                  if d.is_dir() and not d.name.startswith(".") and (d / ".git").exists())
+
+
+def infer_kind(checkout):
+    """`document`, `analysis` or `code`, from what the checkout holds -- never its name: a
+    folder called `<doc>-analysis` may hold anything (ADR 0002: content decides). A
+    layout.toml, a Sections/ folder or a root-level .tex file is a document repo
+    (writing-template's shape, or an Overleaf project's); analysis-template's doc_analysis
+    package beside a pyproject.toml is an analysis repo; anything else is code."""
+    if ((checkout / "layout.toml").is_file() or (checkout / "Sections").is_dir()
+            or any(p.is_file() for p in checkout.glob("*.tex"))):
+        return "document"
+    if (checkout / "pyproject.toml").is_file() and any(
+            (checkout / p).is_dir() for p in ANALYSIS_PACKAGES):
+        return "analysis"
+    return "code"
+
+
+def adopted_members(kinds):
+    """The members a folder of clones implies, and notes on what they leave out. Each
+    top-level checkout is a member, its `repo` from its origin; a document's nested analysis
+    repo follows it when its layout.toml names one, exactly as `migrate` records it. A
+    root-level analysis repo feeds no document (`documents: []`, no-document mode, #41)."""
+    members, notes = [], []
+    for checkout in checkouts(ROOT):
+        remote = origin_url(checkout)
+        member = {"dir": checkout.name, "repo": github_repo(remote),
+                  "kind": kinds.get(checkout.name) or infer_kind(checkout)}
+        if not remote:
+            notes.append(f"{checkout.name}/ has no origin: recorded with an empty repo, so "
+                         "`restore` cannot bring it back on another machine")
+        if member["kind"] == "document":
+            member["name"] = checkout.name
+        elif member["kind"] == "analysis":
+            member["documents"] = []
+        members.append(member)
+        if member["kind"] != "document":
+            continue
+        nested = nested_analysis_member(member)
+        if nested:
+            members.append(nested)
+        for inner in checkouts(checkout):
+            if not nested or inner != ROOT / nested["dir"]:
+                notes.append(f"{checkout.name}/{inner.name}/ is a checkout its layout.toml does "
+                             "not name: not recorded. If it is the document's analysis repo, "
+                             f"nest it in place with `add-analysis --document {checkout.name} "
+                             f"--dir {inner.name}`")
+    return members, notes
+
+
+def side_by_side(state):
+    """(document member, analysis member) when the workspace has the schema-1 shape without
+    its workspace.toml (#33): one top-level document, and a top-level analysis repo beside it
+    that a root pyproject.toml makes a uv workspace member. Else None. Only then is the
+    analysis repo offered the nesting migration: a root-level analysis repo with no root
+    pyproject naming it is no-document mode, and moving it would be wrong."""
+    path = ROOT / "pyproject.toml"
+    if not path.is_file():
+        return None
+    try:
+        root = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return None
+    patterns = [str(m).removeprefix("./").strip("/") for m in
+                root.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])]
+    docs = [m for m in documents(state) if "/" not in m["dir"]]
+    analyses = [m for m in state["members"] if m.get("kind") == "analysis"
+                and any(fnmatch.fnmatchcase(m.get("dir", ""), p) for p in patterns)]
+    return (docs[0], analyses[0]) if len(docs) == 1 and len(analyses) == 1 else None
+
+
+def parse_kinds(values):
+    """--kind DIR=KIND overrides, as a dict. An unknown kind stops the step rather than
+    writing a member with a kind no reader understands."""
+    kinds = {}
+    for value in values or []:
+        directory, _, kind = value.partition("=")
+        if kind not in MEMBER_KINDS or not directory:
+            sys.exit(f"--kind {value!r}: give DIR=KIND, KIND one of {', '.join(MEMBER_KINDS)}")
+        kinds[directory.strip("/")] = kind
+    return kinds
+
+
+def cmd_adopt(args):
+    """Make a folder of clones with no manifest a workspace: one member per checkout found,
+    printed for review, and written only with --yes. It is `init` plus inferred members, so
+    a re-run on an adopted root refuses rather than re-inferring over what the user fixed."""
+    state = load_state()
+    if needs_migrate(state):
+        sys.exit(MIGRATE_FIRST)
+    if "members" in state:
+        sys.exit(f"{WORKSPACE_FILE.as_posix()} already lists {len(state['members'])} member(s): "
+                 "`adopt` is for a folder with no manifest. Add to it with `add-member`, "
+                 "`add-document` or `add-analysis`.")
+    if state and state.get("schema", SCHEMA) != SCHEMA:
+        sys.exit(f"{STATE_FILE} has schema {state.get('schema')!r}; this plugin writes "
+                 f"{SCHEMA}. Update the plugin, or fix the file by hand.")
+    kinds = parse_kinds(args.kind)
+    found = {c.name for c in checkouts(ROOT)}
+    unknown = sorted(set(kinds) - found)
+    if unknown:
+        sys.exit(f"--kind names {', '.join(unknown)}, which is not a checkout here. "
+                 f"Checkouts: {', '.join(sorted(found)) or 'none'}")
+    members, notes = adopted_members(kinds)
+    if not members:
+        sys.exit(f"No git checkouts in {ROOT}: nothing to adopt. A new workspace starts with "
+                 "`init`.")
+    # A setup-connectors workspace.json is merged into, as `init` does.
+    state = {**state, "schema": state.get("schema", SCHEMA),
+             "name": state.get("name") or args.name or ROOT.name, "members": members}
+    # Only the root's own origin: untracked, git would answer for an enclosing repo.
+    origin = github_repo(origin_url(ROOT)) if tracked() else ""
+    if REPO_NAME.fullmatch(origin) and not state.get("repo"):
+        state["repo"] = origin
+
+    say(f"Adopting {ROOT} ({len(found)} checkout(s)):")
+    for m in members:
+        feeds = ""
+        if m["kind"] == "analysis":
+            feeds = (f"  feeds {', '.join(d + '/' for d in m['documents'])}" if m["documents"]
+                     else "  feeds no document")
+        say(f"  - {m['dir']}/  {m['kind']}  {m['repo'] or '(no origin)'}{feeds}")
+    for note in notes:
+        say(f"  note  {note}")
+    show_state_text(state)
+    pair = side_by_side(state)
+    org = None if state.get("repo") else org_workspace_repo(state)
+    if not args.yes:
+        say("\nNothing written. Check every member above -- a wrong kind is corrected with "
+            "--kind DIR=KIND -- then re-run with --yes.")
+    else:
+        write_state(state)
+        refresh_claude_md(state)
+        write_document_block(state)
+        say(f"\nAdopted: {len(members)} member(s) in {WORKSPACE_FILE.as_posix()}. "
+            "Nothing was cloned, moved or committed.")
+    if pair:
+        doc, analysis = pair
+        say(f"\n{analysis['dir']}/ sits beside {doc['dir']}/ and the root pyproject.toml makes "
+            "it a uv member: the side-by-side shape of a workspace from before 2026-10-12. "
+            f"The nesting migration moves it inside {doc['dir']}/ with its own venv -- see the "
+            "plan with `--dry-run migrate`. Nothing at the root has been touched.")
+    if org:
+        say(f"\nAn org root: offer {org} as its GitHub repo (`track --repo {org}`).")
+    return 0
+
+
+def cmd_add_member(args):
+    """Clone a code repo into the workspace and record it as a `code` member. Documents and
+    analysis repos have their own steps, which do more than clone (add-document,
+    add-analysis); this one only clones."""
+    state = read_state()
+    repo = github_repo(args.repo)
+    directory = args.dir
+    for member in state["members"]:
+        if member.get("repo") and github_repo(member["repo"]).lower() == repo.lower():
+            sys.exit(f"{repo} is already a member, in {member.get('dir')}/; refusing to add it "
+                     "twice.")
+        if member.get("dir") == directory:
+            sys.exit(f"{directory}/ is already the {member.get('kind')} member "
+                     f"{member.get('repo')}; refusing to replace it. Pick another --dir.")
+    target = ROOT / directory
+    # An existing checkout is recorded as it is -- but only if it is the repo asked for, or
+    # the member would name one repo and the folder hold another.
+    if (target / ".git").exists():
+        have = github_repo(origin_url(target))
+        if have.lower() != repo.lower():
+            sys.exit(f"{directory}/ is already a checkout of {have or '(no origin)'}, not "
+                     f"{repo}. Move it aside, or pick another --dir.")
+    clone(repo, directory)
+    state["members"].append({"dir": directory, "repo": repo, "kind": "code"})
+    write_state(state)
+    write_document_block(state)
+    say(f"\nCode repo {repo} ready at {directory}/. Nothing has been committed.")
+    return 0
+
+
+def cmd_restore(args):
+    """Clone every member missing on disk, as on a fresh clone of the workspace root; a
+    member already there is left untouched. Parents first, so a document is there before
+    the analysis repo nested in it, which goes through that document's own setup-nested.sh
+    (add-analysis's restore): nesting is never reimplemented here."""
+    state = read_state()
+    members = sorted(state["members"], key=lambda m: m.get("dir", "").count("/"))
+    problems, restored, nested = [], 0, []
+    for member in members:
+        directory = member.get("dir", "").strip("/")
+        if not directory:
+            problems.append(f"a member has no dir: {member!r}")
+            continue
+        target = ROOT / directory
+        if (target / ".git").exists():
+            say(f"  present  {directory}/")
+            continue
+        if target.exists() and any(target.iterdir()):
+            problems.append(f"{directory}/ exists and is not a checkout; move it aside")
+            continue
+        host = next((d for d in documents(state)
+                     if directory.startswith(d["dir"].strip("/") + "/")), None)
+        if member.get("kind") == "analysis" and host:
+            nested.append((member, host))
+            continue
+        if not member.get("repo"):
+            problems.append(f"{directory}/ records no repo: clone it by hand")
+            continue
+        clone(member["repo"], directory)
+        restored += 1
+    for member, host in nested:
+        # After the clones above: layout.toml, which says where the analysis lives and
+        # where from, arrives with the document repo.
+        if DRY_RUN and not (ROOT / host["dir"]).is_dir():
+            say(f"  then restore {member['dir']}/ through {host['dir']}/setup-nested.sh "
+                f"(add-analysis --document {doc_name(host)})")
+            restored += 1
+            continue
+        analysis = analysis_dir_of(ROOT / host["dir"]) if (ROOT / host["dir"]).is_dir() else None
+        if f"{host['dir'].strip('/')}/{analysis}" != member["dir"].strip("/"):
+            problems.append(f"{member['dir']}/: {host['dir']}/layout.toml does not name it, so "
+                            "setup-nested.sh cannot restore it; nest it with add-analysis")
+            continue
+        backend = "matplotlib" if "matplotlib" in host.get("extras", []) else "plotly"
+        cmd_add_analysis(argparse.Namespace(
+            document=doc_name(host), source=None, dir=None, owner=None, repo_name=None,
+            public=False, backend=backend, python=None, distribution=None, author=None))
+        restored += 1
+    say(f"\n{'Would restore' if DRY_RUN else 'Restored'} {restored} member(s)." if restored
+        else "\nNothing was missing.")
+    if problems:
+        say("Not restored:\n" + "\n".join(f"  - {p}" for p in problems))
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # migrate: workspace.toml -> .claude/workspace.json
 #
 #   schema 2  several documents, each hosting its analysis   converted; nothing on disk moves
@@ -1279,7 +1587,12 @@ def cmd_migrate(args):
     existing = load_state()
     if not legacy:
         if not existing:
-            sys.exit(f"No {LEGACY_FILE}: nothing to migrate. Use `init`.")
+            sys.exit(f"No {LEGACY_FILE}: nothing to migrate. Use `init`, or `adopt` for a "
+                     "folder of clones.")
+        if "members" in existing:
+            pair = side_by_side(read_state())
+            if pair:
+                return migrate_adopted(read_state(), *pair)
         say(f"{WORKSPACE_FILE.as_posix()} is the manifest already; nothing to migrate.")
         leftovers = [n for n in (*LEGACY_ROOT_FILES, ".venv") if (ROOT / n).exists()]
         if leftovers:
@@ -1413,9 +1726,36 @@ def repair_worktrees(linked, old, new):
             + " ".join(p.as_posix() for p in paths))
 
 
-def migrate_plan(legacy):
+def migrate_adopted(state, doc, analysis):
+    """The schema-1 nesting migration for an adopted folder with that shape but no
+    workspace.toml (#33): the same steps, from the members `adopt` wrote instead of a
+    [workspace] table. Its stops are the same too -- a load-bearing root pyproject.toml
+    stops it, untouched (#34)."""
+    extras = doc.get("extras", [])
+    legacy = {"name": state.get("name"), "layout": "full", "writing_dir": doc["dir"],
+              "writing_repo": doc.get("repo", ""), "analysis_dir": analysis["dir"],
+              "extras": extras,
+              "backend": "matplotlib" if "matplotlib" in extras else "plotly"}
+    return migrate_schema_1(legacy, state, adopted=True)
+
+
+def repoint_analysis(analysis, writing):
+    """An adopted analysis member, once moved: its dir is now inside the document, and it
+    feeds that document. Edited in place, so any other key on it survives."""
+    state = read_state()
+    member = next((m for m in state["members"] if m.get("dir") == analysis), None)
+    if member is None:
+        return
+    member["dir"] = f"{writing}/{analysis}"
+    fed = member.get("documents") if isinstance(member.get("documents"), list) else []
+    member["documents"] = list(dict.fromkeys([*fed, writing]))
+    write_state(state)
+
+
+def migrate_plan(legacy, adopted=False):
     """Everything a schema-1 `migrate` will do, as a list of lines, and the stops that
-    prevent it."""
+    prevent it. `adopted`: the shape without a workspace.toml, its members already in
+    workspace.json."""
     layout = legacy.get("layout") or ("full" if "analysis_dir" in legacy else "writing-only")
     writing = legacy.get("writing_dir")
     stops, plan = [], []
@@ -1448,7 +1788,13 @@ def migrate_plan(legacy):
                         "there): only a current one can record a checkout in place")
         plan.append(f"run {writing}/setup-nested.sh --dir {analysis}: gitignore it, write "
                     f"layout.toml, build its own .venv")
-        plan.append(f"uv sync there with the extras {legacy.get('extras', [])}")
+        if adopted:
+            backend = legacy.get("backend", "plotly")
+            plan.append(f"uv sync there with the extras {['dev', 'notebooks', backend]} "
+                        "(nothing records which the root venv had: add any other with "
+                        "`sync --extra`)")
+        else:
+            plan.append(f"uv sync there with the extras {legacy.get('extras', [])}")
     dependents = root_python_dependents(writing, analysis)
     if dependents:
         stops.append("the root pyproject.toml is load-bearing beyond the analysis repo -- "
@@ -1464,17 +1810,21 @@ def migrate_plan(legacy):
     if (ROOT / ".env").exists():
         plan.append("keep the root .env; doc-publish settings in it move per document "
                     "(/project-workspace:setup-doc-publish)")
-    plan.append(f"write {WORKSPACE_FILE.as_posix()} listing the document"
-                + (" and its analysis repo" if analysis else "")
-                + f"; back up and remove {LEGACY_FILE}")
+    if adopted:
+        plan.append(f"re-point the analysis member in {WORKSPACE_FILE.as_posix()} to "
+                    f"{writing}/{analysis}/, feeding {writing}/")
+    else:
+        plan.append(f"write {WORKSPACE_FILE.as_posix()} listing the document"
+                    + (" and its analysis repo" if analysis else "")
+                    + f"; back up and remove {LEGACY_FILE}")
     plan.append("back up CLAUDE.md and write the plugin's workspace text in its place")
     if tracked():
         plan.append("rewrite the .gitignore member block as a documents block")
     return layout, plan, stops
 
 
-def migrate_schema_1(legacy, existing):
-    layout, plan, stops = migrate_plan(legacy)
+def migrate_schema_1(legacy, existing, adopted=False):
+    layout, plan, stops = migrate_plan(legacy, adopted)
     say(f"Migrating the {layout} workspace {legacy.get('name')!r}:")
     for line in plan:
         say(f"  - {line}")
@@ -1523,12 +1873,17 @@ def migrate_schema_1(legacy, existing):
                 sys.exit(f"Could not move {analysis}/ ({exc}). Close whatever has it open, "
                          "then re-run `migrate`: nothing else has changed yet.")
             repair_worktrees(linked, source, document / analysis)
+        if adopted:
+            # At once: a member naming a directory that has just moved would leave a re-run
+            # nothing to recognise the shape by, and `restore` cloning a second copy.
+            repoint_analysis(analysis, writing)
         # Before any uv runs in the analysis repo: uv looks upward for a workspace root, and
         # would find the old one here and sync into it.
         remove_legacy_root(backup)
         # add-analysis reads workspace.json, so it is written -- and workspace.toml retired --
         # first; add-analysis then records the analysis member itself.
-        convert_legacy_manifest(doc, legacy, existing, backup)
+        if not adopted:
+            convert_legacy_manifest(doc, legacy, existing, backup)
         cmd_add_analysis(argparse.Namespace(
             document=None, source=None, dir=analysis, owner=None, repo_name=None, public=False,
             backend=legacy.get("backend", "plotly"), python=python, distribution=None,
@@ -1544,7 +1899,7 @@ def migrate_schema_1(legacy, existing):
     say(f"\nMigrated. Backups are in .setup/migrate-backup/: merge anything of yours from the "
         f"old CLAUDE.md into the new one, then delete them."
         + (f"\nCommit at the root: {WORKSPACE_FILE.as_posix()}, CLAUDE.md, .gitignore, and the "
-           f"removals ({LEGACY_FILE} among them)." if tracked() else ""))
+           f"removals{'' if adopted else f' ({LEGACY_FILE} among them)'}." if tracked() else ""))
     return 0
 
 
@@ -1643,10 +1998,28 @@ def main(argv=None):
 
     sub.add_parser("migrate")
 
+    p = sub.add_parser("adopt")
+    p.add_argument("--name", help="the workspace's name (default: this folder's)")
+    p.add_argument("--kind", action="append", metavar="DIR=KIND",
+                   help=f"correct an inferred kind ({', '.join(MEMBER_KINDS)}); repeatable")
+    p.add_argument("--yes", action="store_true",
+                   help="write the members shown; without it, adopt only proposes them")
+
+    p = sub.add_parser("add-member")
+    p.add_argument("--repo", required=True, help="OWNER/NAME, or any URL or path git clone takes")
+    p.add_argument("--dir", type=checked_name, help="default: the repo's name")
+
+    sub.add_parser("restore")
+
     args = ap.parse_args(argv)
     DRY_RUN = args.dry_run
     if args.root:
         set_root(args.root)
+    if args.step == "add-member" and not args.dir:
+        try:
+            args.dir = checked_name(args.repo.rstrip("/").split("/")[-1].removesuffix(".git"))
+        except argparse.ArgumentTypeError as exc:
+            ap.error(f"--dir: {exc}")
     if args.step == "add-document":
         if args.mode != "adapt" and not (args.title and args.author):
             ap.error("--title and --author are required unless --mode adapt")
@@ -1660,7 +2033,9 @@ def main(argv=None):
 
     return {"check": cmd_check, "init": cmd_init, "track": cmd_track,
             "add-document": cmd_add_document, "add-analysis": cmd_add_analysis,
-            "document": cmd_document, "sync": cmd_sync, "migrate": cmd_migrate}[args.step](args)
+            "document": cmd_document, "sync": cmd_sync, "migrate": cmd_migrate,
+            "adopt": cmd_adopt, "add-member": cmd_add_member,
+            "restore": cmd_restore}[args.step](args)
 
 
 if __name__ == "__main__":

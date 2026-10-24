@@ -870,7 +870,8 @@ class TomlStillTheManifest(Workspace):
     refuses in one line naming `migrate`: there is no dual-writing."""
 
     STEPS = (("init",), ("track",), ("document", "--all"), ("sync",),
-             ("add-document", "--mode", "adapt", "--repo", "o/x"), ("add-analysis",))
+             ("add-document", "--mode", "adapt", "--repo", "o/x"), ("add-analysis",),
+             ("adopt",), ("add-member", "--repo", "o/x"), ("restore",))
 
     def test_every_step_refuses_and_names_migrate(self):
         for toml in ('schema = 2\nname = "w"\n[[document]]\nname = "t"\ndir = "t"\nrepo = "o/t"\n',
@@ -1077,6 +1078,405 @@ class FindsTheRoot(unittest.TestCase):
             sw.main(["--root", str(self.tmp), "check"])
         self.assertEqual(seen, {"root": self.tmp, "state": self.tmp / ".claude" / "workspace.json",
                                 "setup": self.tmp / ".setup"})
+
+
+def git(*args, cwd):
+    """git with an identity and a branch name of its own, so no global config is needed."""
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                           "-c", "init.defaultBranch=main", *args],
+                          cwd=cwd, capture_output=True, text=True, check=True)
+
+
+# What each kind of checkout holds, as far as `adopt` looks: content, never the name.
+DOCUMENT_FILES = {"main.tex": "\\documentclass{article}\n",
+                  "setup-nested.sh": "#!/bin/sh\nMODE=in-place\n"}
+NESTED_LAYOUT = 'layout = "writing-hosts-analysis"\nnested_dir = "thesis-analysis"\n'
+ANALYSIS_FILES = {"pyproject.toml": '[project]\nname = "a"\n',
+                  "src/doc_analysis/__init__.py": ""}
+CODE_FILES = {"README.md": "a tool\n"}
+
+
+class FolderOfClones(Workspace):
+    """Real repositories whose origins are local bare repos: nothing reaches the network,
+    and what is read back -- origins, clones, ignore rules -- is git's own answer."""
+
+    def setUp(self):
+        super().setUp()
+        self.origins = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.origins, ignore_errors=True)
+
+    def origin(self, name, files):
+        """A bare repo holding `files` in one commit; its path, as a member records it."""
+        work = self.origins / f"{name}-work"
+        for path, text in files.items():
+            (work / path).parent.mkdir(parents=True, exist_ok=True)
+            (work / path).write_text(text, encoding="utf-8")
+        git("init", "-q", cwd=work)
+        git("add", "-A", cwd=work)
+        git("commit", "-q", "-m", "x", cwd=work)
+        bare = self.origins / f"{name}.git"
+        git("clone", "-q", "--bare", str(work), str(bare), cwd=self.origins)
+        return str(bare)
+
+    def clone_from(self, origin, directory):
+        git("clone", "-q", origin, str(self.tmp / directory), cwd=self.tmp)
+
+    def folder(self):
+        """thesis (a document hosting thesis-analysis), paper (a document), tool (code) and
+        study (an analysis repo of its own): four checkouts, five members."""
+        self.repos = {
+            "thesis": self.origin("thesis", {**DOCUMENT_FILES, "layout.toml": NESTED_LAYOUT,
+                                             ".gitignore": "/thesis-analysis/\n"}),
+            "thesis-analysis": self.origin("thesis-analysis", ANALYSIS_FILES),
+            "paper": self.origin("paper", {"Sections/Intro/intro.tex": "x\n"}),
+            "tool": self.origin("tool", CODE_FILES),
+            "study": self.origin("study", ANALYSIS_FILES),
+        }
+        for name in ("thesis", "paper", "tool", "study"):
+            self.clone_from(self.repos[name], name)
+        self.clone_from(self.repos["thesis-analysis"], "thesis/thesis-analysis")
+
+    def expected_members(self):
+        r = self.repos
+        return [
+            {"dir": "paper", "repo": r["paper"], "kind": "document", "name": "paper"},
+            {"dir": "study", "repo": r["study"], "kind": "analysis", "documents": []},
+            {"dir": "thesis", "repo": r["thesis"], "kind": "document", "name": "thesis"},
+            {"dir": "thesis/thesis-analysis", "repo": r["thesis-analysis"], "kind": "analysis",
+             "documents": ["thesis"]},
+            {"dir": "tool", "repo": r["tool"], "kind": "code"},
+        ]
+
+
+class Adopt(FolderOfClones):
+    def test_proposes_every_checkout_and_writes_nothing_without_yes(self):
+        self.folder()
+        self.assertEqual(self.call("adopt"), 0)
+        for line in ("- thesis/  document", "- thesis/thesis-analysis/  analysis",
+                     "feeds thesis/", "- paper/  document", "- tool/  code",
+                     "- study/  analysis", "feeds no document", "Nothing written"):
+            self.assertIn(line, self.out)
+        self.assertFalse((self.tmp / ".claude").exists())
+        self.assertFalse((self.tmp / "CLAUDE.md").exists())
+
+    def test_yes_writes_the_members_it_proposed(self):
+        self.folder()
+        self.call("adopt", "--name", "w", "--yes")
+        state = self.state()
+        self.assertEqual(state["members"], self.expected_members())
+        self.assertEqual((state["schema"], state["name"]), (1, "w"))
+        self.assertIn("| thesis | `thesis/` |", self.read("CLAUDE.md"))
+
+    def test_a_wrong_kind_is_corrected_with_kind(self):
+        self.folder()
+        self.call("adopt", "--kind", "tool=analysis", "--yes")
+        tool = next(m for m in self.state()["members"] if m["dir"] == "tool")
+        self.assertEqual(tool, {"dir": "tool", "repo": self.repos["tool"], "kind": "analysis",
+                                "documents": []})
+
+    def test_a_kind_naming_no_checkout_or_no_kind_stops(self):
+        self.folder()
+        for flag in ("nothing=code", "tool=library"):
+            with self.subTest(flag=flag), self.assertRaises(SystemExit):
+                self.call("adopt", "--kind", flag, "--yes")
+        self.assertFalse((self.tmp / ".claude").exists())
+
+    def test_an_adopted_root_is_not_adopted_again(self):
+        self.folder()
+        self.call("adopt", "--yes")
+        with self.assertRaises(SystemExit) as caught:
+            self.call("adopt", "--yes")
+        self.assertIn("add-member", str(caught.exception))
+
+    def test_a_workspace_json_with_connections_only_is_merged_into(self):
+        self.folder()
+        self.write_json('{\n  "connections": { "github": ["o"] }\n}\n')
+        self.call("adopt", "--yes")
+        self.assertIn('  "connections": { "github": ["o"] },\n', self.read(".claude/workspace.json"))
+        self.assertEqual(len(self.state()["members"]), 5)
+
+    def test_a_checkout_without_origin_is_noted(self):
+        (self.tmp / "scratch").mkdir()
+        git("init", "-q", cwd=self.tmp / "scratch")
+        self.call("adopt", "--yes")
+        self.assertIn("scratch/ has no origin", self.out)
+        self.assertEqual(self.state()["members"], [{"dir": "scratch", "repo": "", "kind": "code"}])
+
+    def test_a_nested_checkout_layout_toml_does_not_name_is_noted_not_recorded(self):
+        self.repos = {"paper": self.origin("paper", DOCUMENT_FILES),
+                      "extra": self.origin("extra", ANALYSIS_FILES)}
+        self.clone_from(self.repos["paper"], "paper")
+        self.clone_from(self.repos["extra"], "paper/extra")
+        self.call("adopt", "--yes")
+        self.assertIn("paper/extra/ is a checkout its layout.toml does not name", self.out)
+        self.assertEqual([m["dir"] for m in self.state()["members"]], ["paper"])
+
+    def test_hidden_directories_and_plain_folders_are_not_members(self):
+        self.folder()
+        (self.tmp / ".setup" / "x" / ".git").mkdir(parents=True)
+        (self.tmp / "notes").mkdir()
+        self.call("adopt", "--yes")
+        self.assertEqual(len(self.state()["members"]), 5)
+
+    def test_nothing_to_adopt_stops(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.call("adopt")
+        self.assertIn("init", str(caught.exception))
+
+
+class AdoptSideBySide(FolderOfClones):
+    """#33: a hand-built schema-1 folder -- sibling document and analysis checkouts, a root
+    pyproject.toml making the analysis repo a uv member, no manifest -- is adopted as it is,
+    then offered the nesting migration, which keeps #34's stop."""
+
+    ROOT_PYPROJECT = ('[project]\nname = "root"\n[tool.uv.workspace]\n'
+                      'members = ["thesis-analysis"]\n'
+                      '[tool.uv.sources]\na = { workspace = true }\n')
+
+    def setUp(self):
+        super().setUp()
+        self.repos = {"thesis-writing": self.origin("thesis-writing", DOCUMENT_FILES),
+                      "thesis-analysis": self.origin("thesis-analysis", ANALYSIS_FILES)}
+        for name, origin in self.repos.items():
+            self.clone_from(origin, name)
+        (self.tmp / ".venv").mkdir()
+
+    def adopt(self, pyproject=ROOT_PYPROJECT):
+        (self.tmp / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+        self.call("adopt", "--yes")
+
+    def migrate(self, *flags):
+        def nested(cmd, cwd=None, **kw):
+            self.root_pyproject_seen = (self.tmp / "pyproject.toml").exists()
+            if "setup-nested.sh" in cmd:
+                (self.tmp / "thesis-writing" / "layout.toml").write_text(
+                    NESTED_LAYOUT, encoding="utf-8")
+        with mock.patch.object(sw, "run", side_effect=nested) as run, \
+                mock.patch.object(sw, "find_sh", return_value="/bin/sh"), \
+                mock.patch.object(sw, "gh_raw", side_effect=AssertionError("no fetch")):
+            self.call(*flags, "migrate")
+        return run
+
+    def test_adopted_as_it_is_and_offered_the_nesting_migration(self):
+        self.adopt()
+        self.assertEqual(self.state()["members"], [
+            {"dir": "thesis-analysis", "repo": self.repos["thesis-analysis"], "kind": "analysis",
+             "documents": []},
+            {"dir": "thesis-writing", "repo": self.repos["thesis-writing"], "kind": "document",
+             "name": "thesis-writing"}])
+        self.assertIn("--dry-run migrate", self.out)
+        self.assertEqual(self.read("pyproject.toml"), self.ROOT_PYPROJECT)
+        self.assertTrue((self.tmp / ".venv").is_dir())
+
+    def test_the_migration_plan_names_the_move_and_the_member(self):
+        self.adopt()
+        run = self.migrate("--dry-run")
+        run.assert_not_called()
+        self.assertIn("move thesis-analysis/ -> thesis-writing/thesis-analysis/", self.out)
+        self.assertIn("re-point the analysis member", self.out)
+        self.assertTrue((self.tmp / "thesis-analysis" / ".git").exists())
+
+    def test_migrating_nests_it_and_re_points_the_member(self):
+        self.adopt()
+        self.migrate()
+        self.assertTrue((self.tmp / "thesis-writing" / "thesis-analysis" / ".git").exists())
+        self.assertFalse(self.root_pyproject_seen)
+        analysis = next(m for m in self.state()["members"] if m["kind"] == "analysis")
+        self.assertEqual(analysis, {"dir": "thesis-writing/thesis-analysis",
+                                    "repo": self.repos["thesis-analysis"], "kind": "analysis",
+                                    "documents": ["thesis-writing"]})
+        self.assertEqual(len(self.state()["members"]), 2)
+        self.assertEqual(self.read(".setup/migrate-backup/pyproject.toml"), self.ROOT_PYPROJECT)
+        self.call("migrate")
+        self.assertIn("nothing to migrate", self.out)
+
+    def test_a_load_bearing_root_pyproject_survives(self):
+        # #34: other uv members live in the root's workspace; deleting it broke them.
+        load_bearing = self.ROOT_PYPROJECT.replace('["thesis-analysis"]',
+                                                   '["thesis-analysis", "other"]')
+        self.adopt(load_bearing)
+        with self.assertRaises(SystemExit) as caught:
+            self.migrate()
+        self.assertIn("load-bearing", str(caught.exception))
+        self.assertEqual(self.read("pyproject.toml"), load_bearing)
+        self.assertTrue((self.tmp / "thesis-analysis" / ".git").exists())
+
+    def test_a_root_level_analysis_with_no_root_pyproject_is_no_document_mode(self):
+        self.call("adopt", "--yes")
+        self.assertNotIn("nesting migration", self.out)
+        self.migrate()
+        self.assertIn("nothing to migrate", self.out)
+        self.assertTrue((self.tmp / "thesis-analysis" / ".git").exists())
+
+
+class AddMember(FolderOfClones):
+    def setUp(self):
+        super().setUp()
+        self.call("init", "--name", "w")
+
+    def test_clones_and_records_a_code_repo(self):
+        tool = self.origin("tool", CODE_FILES)
+        self.call("add-member", "--repo", tool)
+        self.assertEqual(self.read("tool/README.md"), "a tool\n")
+        self.assertEqual(self.state()["members"], [{"dir": "tool", "repo": tool, "kind": "code"}])
+
+    def test_owner_name_is_cloned_by_gh(self):
+        with mock.patch.object(sw, "run") as run:
+            self.call("add-member", "--repo", "o/tool", "--dir", "t")
+        self.assertEqual(run.call_args.args[0], ["gh", "repo", "clone", "o/tool", "t"])
+        self.assertEqual(self.state()["members"], [{"dir": "t", "repo": "o/tool", "kind": "code"}])
+
+    def test_re_adding_the_same_repo_is_refused(self):
+        with mock.patch.object(sw, "run"):
+            self.call("add-member", "--repo", "o/tool")
+            for repo, flags in (("o/tool", ()), ("https://github.com/O/tool.git", ("--dir", "x"))):
+                with self.subTest(repo=repo), self.assertRaises(SystemExit) as caught:
+                    self.call("add-member", "--repo", repo, *flags)
+                self.assertIn("already a member", str(caught.exception))
+        self.assertEqual(len(self.state()["members"]), 1)
+
+    def test_a_dir_taken_by_another_member_is_refused(self):
+        with mock.patch.object(sw, "run"):
+            self.call("add-member", "--repo", "o/tool")
+            with self.assertRaises(SystemExit):
+                self.call("add-member", "--repo", "p/tool")
+
+    def test_a_checkout_of_another_repo_in_the_dir_is_refused(self):
+        self.clone_from(self.origin("other", CODE_FILES), "tool")
+        with self.assertRaises(SystemExit) as caught:
+            self.call("add-member", "--repo", self.origin("tool", CODE_FILES))
+        self.assertIn("already a checkout of", str(caught.exception))
+        self.assertEqual(self.state()["members"], [])
+
+
+class Restore(FolderOfClones):
+    """A fresh clone of the root has workspace.json and no members on disk."""
+
+    def setUp(self):
+        super().setUp()
+        self.folder()
+        self.call("adopt", "--yes")
+
+    def restore(self, *flags):
+        def run(cmd, cwd=None, **kw):
+            if "setup-nested.sh" in cmd:
+                # The document's own script restores what its layout.toml names.
+                git("clone", "-q", self.repos["thesis-analysis"], "thesis-analysis", cwd=cwd)
+                return
+            return subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True,
+                                  text=True, check=True)
+        with mock.patch.object(sw, "run", side_effect=run) as ran, \
+                mock.patch.object(sw, "find_sh", return_value="/bin/sh"):
+            code = self.call(*flags, "restore")
+        return code, ran
+
+    def test_clones_every_missing_member_and_leaves_present_ones(self):
+        for name in ("thesis", "paper", "study"):
+            shutil.rmtree(self.tmp / name)
+        (self.tmp / "tool" / "mine.txt").write_text("uncommitted\n", encoding="utf-8")
+        code, ran = self.restore()
+        self.assertEqual(code, 0)
+        for name in ("thesis", "thesis/thesis-analysis", "paper", "study"):
+            self.assertTrue((self.tmp / name / ".git").exists(), name)
+        self.assertEqual(self.read("tool/mine.txt"), "uncommitted\n")
+        self.assertIn("present  tool/", self.out)
+        self.assertNotIn(["git", "clone", self.repos["tool"], "tool"],
+                         [c.args[0] for c in ran.call_args_list])
+
+    def test_the_nested_analysis_goes_through_setup_nested(self):
+        shutil.rmtree(self.tmp / "thesis")
+        _, ran = self.restore()
+        nested = [c for c in ran.call_args_list if "setup-nested.sh" in c.args[0]]
+        self.assertEqual(len(nested), 1)
+        self.assertEqual(nested[0].kwargs["cwd"], self.tmp / "thesis")
+
+    def test_dry_run_clones_nothing(self):
+        shutil.rmtree(self.tmp / "thesis")
+        with mock.patch.object(sw.subprocess, "run", wraps=sw.subprocess.run):
+            self.call("--dry-run", "restore")
+        self.assertIn(f"git clone {self.repos['thesis']} thesis", self.out)
+        self.assertIn("then restore thesis/thesis-analysis/", self.out)
+        self.assertFalse((self.tmp / "thesis").exists())
+
+    def test_nothing_missing_changes_nothing(self):
+        before = self.read(".claude/workspace.json")
+        code, ran = self.restore()
+        self.assertEqual(code, 0)
+        self.assertIn("Nothing was missing", self.out)
+        ran.assert_not_called()
+        self.assertEqual(self.read(".claude/workspace.json"), before)
+
+    def test_a_member_with_no_repo_is_reported(self):
+        state = self.state()
+        state["members"].append({"dir": "lost", "repo": "", "kind": "code"})
+        self.write_json(state)
+        code, _ = self.restore()
+        self.assertEqual(code, 1)
+        self.assertIn("lost/ records no repo", self.out)
+
+
+class RootGitignore(FolderOfClones):
+    """The root .gitignore is an allowlist: root files and the workspace's own folders are
+    tracked, every other top-level directory -- every member above all -- is not."""
+
+    def setUp(self):
+        super().setUp()
+        git("init", "-q", cwd=self.tmp)
+        self.call("init", "--name", "w")
+        with mock.patch.object(sw, "run"):
+            self.call("add-member", "--repo", "o/tool")
+
+    def ignored(self, path):
+        return subprocess.run(["git", "check-ignore", "-q", path], cwd=self.tmp).returncode == 0
+
+    def test_members_and_strays_are_ignored_and_the_workspaces_own_are_not(self):
+        for path in ("tool/x", "cloned-by-hand/x"):
+            self.assertTrue(self.ignored(path), path)
+        for path in (".claude/workspace.json", "CLAUDE.md", ".gitignore", "docs/memory.md",
+                     ".context/pending/x.md", "teaching/a/b.md"):
+            self.assertFalse(self.ignored(path), path)
+        self.assertIn(".gitignore: rewriting the managed block", self.out)
+
+    def test_twice_adds_no_duplicate_lines(self):
+        before = self.read(".gitignore")
+        self.call("init")
+        self.assertEqual(self.read(".gitignore"), before)
+        lines = [l for l in before.splitlines() if l and not l.startswith("#")]
+        self.assertEqual(len(lines), len(set(lines)))
+
+    def test_a_folder_the_root_already_tracks_stays_tracked(self):
+        (self.tmp / "notes").mkdir()
+        (self.tmp / "notes" / "a.md").write_text("x\n", encoding="utf-8")
+        # Committed before the allowlist existed: forced past it, as that history was.
+        git("add", "-f", "notes/a.md", cwd=self.tmp)
+        self.call("init")
+        self.assertIn("!/notes/\n", self.read(".gitignore"))
+        self.assertFalse(self.ignored("notes/b.md"))
+
+    def test_a_line_the_user_already_has_is_not_repeated(self):
+        (self.tmp / ".gitignore").write_text(self.read(".gitignore") + "!/docs/\n", encoding="utf-8")
+        self.call("init")
+        self.assertEqual(self.read(".gitignore").count("!/docs/"), 1)
+        self.assertIn("already has `!/docs/`", self.out)
+
+
+class OrgRoot(Workspace):
+    def test_an_org_clone_root_is_offered_org_slash_workspace(self):
+        root = self.tmp / "c-energie"
+        root.mkdir()
+        sw.set_root(root)
+        sw.write_state({"schema": 1, "name": "c-energie",
+                        "members": [{"dir": "tool", "repo": "c-energie/tool", "kind": "code"}]})
+        out = io.StringIO()
+        with mock.patch.object(sw, "run", side_effect=lambda *a, **k: (root / ".git").mkdir()), \
+                contextlib.redirect_stdout(out):
+            sw.main(["--root", str(root), "track"])
+        self.assertIn("the name to offer is c-energie/workspace", out.getvalue())
+
+    def test_any_other_root_is_not(self):
+        sw.write_state({"schema": 1, "name": "w",
+                        "members": [{"dir": "t", "repo": "c-energie/t", "kind": "code"}]})
+        self.assertIsNone(sw.org_workspace_repo(sw.read_state()))
 
 
 if __name__ == "__main__":

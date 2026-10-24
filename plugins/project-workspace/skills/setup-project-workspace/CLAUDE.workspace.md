@@ -24,8 +24,9 @@ so `git status` in the document repo never shows analysis changes. Each has its 
 `CLAUDE.md`/`AGENTS.md`: read it before editing there.
 
 This folder may itself be a git repo (`/project-workspace:setup-project-workspace` offers it).
-If it is, it tracks only this file, `.claude/workspace.json` and `.gitignore`, and ignores every
-member.
+If it is, it tracks root files (this one, `.gitignore`) and its own folders (`.claude/`,
+`docs/`, `.context/`, `teaching/`) only: its `.gitignore` is an allowlist that ignores every
+other top-level directory, every member among them.
 
 There is no Python here. Each analysis repo has its own `.venv`, built by `uv sync` inside
 it; a notebook's kernel is that venv's interpreter.
