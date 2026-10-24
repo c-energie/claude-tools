@@ -331,10 +331,12 @@ using it is named.
   Linux container, and npm does not rebuild them. `uv` *does* rebuild for the platform, so Python
   members are unaffected. Do **not** "fix" it by running `npm ci` in the mount — that is one
   instance of the rule below, and it would also overwrite the user's host `node_modules`, because
-  the mount is their live checkout. Either give the member an environment the image owns, or
-  leave `testCommand` undefined and say so. (Harness #5.)
+  the mount is their live checkout. Either give the member a tree the container owns — declare
+  `hostBuilt: [{ path: "node_modules", rebuild: "npm ci" }]` on it, and the engine lays a
+  directory of its own over the checkout's and rebuilds it there — or leave `testCommand`
+  undefined and say so. (Harness #5.)
 - **A `SKIP`, not a `FAIL`, on a `hostBuilt` member whose `rebuild` installs from a private
-  registry.** That is the environment the image owns from the entry above, and its rebuild runs
+  registry.** That is the `hostBuilt` tree from the entry above, and its rebuild runs
   in the container — where the smoke test injects **no credentials**, by design, so that its
   failures are image faults. A rebuild that dies auth-shaped is therefore reported as
   `SKIP  <path>: <rebuild> - <reason>` with the registry's own output after it, and that
@@ -374,9 +376,12 @@ failed issue (harness #15, #16).
 - **uv** was the first case found: `uv sync` / `uv venv` in a member creates `.venv/lib64 -> lib`.
   The engine now keeps uv's environment off the mount (`UV_PROJECT_ENVIRONMENT`, harness #18 —
   see `## Clone roots`), but only for uv.
-- **npm** does the same with `node_modules/.bin/*`, and nothing redirects it (harness #5/#16).
+- **npm** does the same with `node_modules/.bin/*`, and nothing redirects it unless the member
+  declares `hostBuilt` — whose rebuild is the one install that runs in the mount, because it
+  writes into a shadow backed under `~/.sandcastle/shadow/`, outside every git checkout
+  (harness #5/#16).
 
-That redirect covers one tool; the rule covers all of them. Any other symlink written into the
+Those redirects cover what they name; the rule covers everything else. Any other symlink written into the
 mount fails the same way.
 
 What you will see instead of a failure, on a workspace with no Python: `interpreter at <python>`

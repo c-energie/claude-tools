@@ -243,4 +243,5 @@ carries this line; a project's own prompt does not inherit it.
 
 And never tell the agent to install anything from `{{MOUNT}}` — `npm install` there writes
 `node_modules/.bin/*` symlinks onto the host, which is the same ENOSYS teardown failure, and
-nothing redirects npm (harness #5/#16).
+nothing redirects npm except a member's `hostBuilt` shadow, which the engine rebuilds itself
+(harness #5/#16).
