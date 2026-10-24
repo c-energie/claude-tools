@@ -199,10 +199,13 @@ const COPIES = [
   // leave the keys other plugins own byte-identical.
   { file: 'scripts/json-block.mjs',    origin: 'context-kit-core', copies: ['context-notion'] },
   // The step-0 setup observer. Its master is an inert asset in `skills` (scaffold.mjs copies it
-  // into repos); project-workspace ships it as a live skill, so the copy sits at another path
-  // (`to`). Both files are copied whole — neither has a banner — so any difference is drift.
-  { file: 'assets/setup-observer/SKILL.md',   to: 'skills/setup-observer/SKILL.md',   origin: 'skills', copies: ['project-workspace', 'diagrams'] },
-  { file: 'assets/setup-observer/observe.py', to: 'skills/setup-observer/observe.py', origin: 'skills', copies: ['project-workspace', 'diagrams'] },
+  // into repos); a plugin ships it as a live skill, so the copy sits at another path (`to`).
+  // Both files are copied whole — neither has a banner — so any difference is drift.
+  // DISCOVERED rather than listed (#63): any plugin can gain a setup skill, and its observer
+  // copy went unchecked until someone remembered to edit a list here — `diagrams` was added by
+  // hand in #43, after the fact. `discover` names the directory whose presence binds a plugin.
+  { file: 'assets/setup-observer/SKILL.md',   to: 'skills/setup-observer/SKILL.md',   origin: 'skills', discover: 'skills/setup-observer' },
+  { file: 'assets/setup-observer/observe.py', to: 'skills/setup-observer/observe.py', origin: 'skills', discover: 'skills/setup-observer' },
 ];
 
 // Drop the shebang and the contiguous comment block at the top, then compare what is left.
@@ -225,14 +228,29 @@ const marketRoot = [join(root, '..', '..'), root]
   .find((d) => existsSync(join(d, '.claude-plugin', 'marketplace.json'))) ?? null;
 
 if (marketRoot) {
-  for (const { file, to = file, origin, copies } of COPIES) {
+  const plugins = readdirSync(join(marketRoot, 'plugins'), { withFileTypes: true })
+    .filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  for (const { file, to = file, origin, copies, discover } of COPIES) {
     const originPath = join(marketRoot, 'plugins', origin, file);
     if (!existsSync(originPath)) continue;
     const originBody = bodyOf(readFileSync(originPath, 'utf8'));
-    for (const copy of copies) {
+    // A discovered group binds every plugin but the origin that has the directory; a plugin
+    // without it is not flagged, since shipping the observer at all is the plugin's choice.
+    const bound = discover
+      ? plugins.filter((p) => p !== origin && existsSync(join(marketRoot, 'plugins', p, discover)))
+      : copies;
+    for (const copy of bound) {
       const copyPath = join(marketRoot, 'plugins', copy, to);
-      // A legitimately absent copy is not drift — only plugins that ship the file are bound.
-      if (!existsSync(copyPath)) continue;
+      if (!existsSync(copyPath)) {
+        // A listed copy may legitimately be absent — only plugins that ship the file are bound.
+        // A discovered one may not: the directory is there, so this is a half-copied observer,
+        // and SKILL.md without observe.py is a step 0 that installs cleanly and cannot run.
+        if (discover) {
+          err(`plugins/${copy}/${to}`, `is MISSING, but \`plugins/${copy}/${discover}/\` exists. `
+            + `Copy \`plugins/${origin}/${file}\` here whole, or remove the directory.`);
+        }
+        continue;
+      }
       if (bodyOf(readFileSync(copyPath, 'utf8')) !== originBody) {
         err(`plugins/${copy}/${to}`, `has DRIFTED from its original in \`${origin}\`. These are `
           + `deliberate copies and must stay identical below the header banner. Fix `

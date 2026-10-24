@@ -22,14 +22,16 @@ only edits this marketplace's plugins is `update-plugin`'s job, in context-kit-c
 - **`assets/setup-observer/` is the master of the step-0 observer**, and it stays here because
   any setup skill can use it, not only the doc-workspace ones. Its `SKILL.md` and `observe.py`
   are copied *verbatim* to two kinds of place: `scaffold.mjs` copies them into a target repo's
-  `.claude/skills/` beside an `observer.toml` it writes from the spec; and `project-workspace`
-  ships them as a live skill beside its own `observer.toml`. The `observer.toml` is the one
-  per-deployment file (owner table, env vars, state files, extra tools). Keep both master files
+  `.claude/skills/` beside an `observer.toml` it writes from the spec; and every plugin that ships
+  `skills/setup-observer/` carries them as a live skill beside its own `observer.toml`. The
+  `observer.toml` is the one per-deployment file (owner table, env vars, state files, extra tools). Keep both master files
   free of anything project-specific, or every copy inherits it. **Location-independent**: the
   command is `"${CLAUDE_SKILL_DIR}/observe.py" --root "${CLAUDE_PROJECT_DIR}"`, and without
   `--root` the script falls back to three levels up when it sits in `.claude/skills/`, else the
-  current directory. **A change here is copied to `plugins/project-workspace/skills/setup-observer/`
-  in the same commit** — `check-plugin.mjs` errors on drift, and both plugins get a bump.
+  current directory. **A change here is copied to every plugin's `skills/setup-observer/` in the
+  same commit** — `check-plugin.mjs` finds those copies itself (a plugin with that directory is
+  bound; there is no list to edit), errors on drift or on a half-copied directory, and every
+  plugin touched gets a bump.
 - `assets/` sits outside `skills/` on purpose: only `skills/[name]/SKILL.md` registers as a
   plugin skill, so the observer's `SKILL.md` is inert here and live only once copied.
 - **`scaffold.mjs` and `SKILL.md` must agree** on the spec keys and on what the skeleton
