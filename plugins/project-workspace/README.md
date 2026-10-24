@@ -21,7 +21,7 @@ so a collaborator who clones just one document repo gets it too.
 
 | Skill | What it does |
 | --- | --- |
-| `setup-project-workspace` | Make a folder a project workspace (`.claude/workspace.json`, `CLAUDE.md`, optionally its own git repo); convert a `workspace.toml` into `workspace.json` — schema 2, or the schema-1 workspace made from the retired `project-workspace-template` |
+| `setup-project-workspace` | Make a folder a project workspace (`.claude/workspace.json`, `CLAUDE.md`, optionally its own git repo with an allowlist `.gitignore`); adopt a folder of clones with no manifest; add a code repo as a member; restore every member on a fresh clone; convert a `workspace.toml` into `workspace.json` — schema 2, or the schema-1 workspace made from the retired `project-workspace-template` |
 | `add-document` | Add a document: new from writing-template, an adopted Overleaf project, or an import (LaTeX, Word, Markdown); prove it builds |
 | `add-analysis` | Nest an analysis repo in one document through its `setup-nested.sh` — create, adopt or restore — and prove a figure lands |
 | `adapt-existing-document` | Bring an existing document into the `Sections/` / `\graphicspath` / label conventions, one section at a time |
@@ -47,7 +47,8 @@ plugins/project-workspace/
     setup-project-workspace/
       SKILL.md
       setup_workspace.py           the step script every skill shares: check, init, track,
-                                   add-document, add-analysis, document, sync, migrate
+                                   add-document, add-analysis, document, sync, migrate,
+                                   adopt, add-member, restore
       test_setup_workspace.py
       fixtures/                    workspace.toml files the conversion is tested against
       CLAUDE.workspace.md          the workspace CLAUDE.md init writes
