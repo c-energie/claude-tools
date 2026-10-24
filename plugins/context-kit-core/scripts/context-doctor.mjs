@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Health check for a context repo — the drift and misconfiguration that no session ever
-// reports, because every one of these failures is SILENT.
+// Health check for a workspace or a context repo — the drift and misconfiguration that no
+// session ever reports, because every one of these failures is SILENT.
 //
-//   node context-doctor.mjs <root>                      # report on that context checkout
+//   node context-doctor.mjs                             # the nearest workspace above the cwd
+//   node context-doctor.mjs <root>                      # report on that workspace or context checkout
 //   node context-doctor.mjs <root> --include            # ...and report (never fix) on its includes
 //   node context-doctor.mjs <root> --json               # machine-readable findings
 //   node context-doctor.mjs <root> --fix                # apply the derivable JSON fixes, in place
@@ -17,15 +18,36 @@
 // Includes are READ-ONLY here, as everywhere: --include reports on them and --fix skips them,
 // because writing into an included repo is the one thing the cross-project layer forbids.
 //
+// TWO KINDS OF ROOT (ADR 0002), told apart by workspace.mjs's rootKind() — a directory holding
+// context.json and no .claude/workspace.json is a legacy context repo and is checked exactly as
+// it always was; anything else resolves to the nearest workspace.json above it. In a workspace:
+//   - workspace.json itself: it parses, `schema` is 1, `repo` is owner/name, every `members[]`
+//     entry is on disk (or reported as not cloned), `connections` has a shape the gate can read;
+//   - the docs/ layout: docs/memory.md exists and the root CLAUDE.md imports it, and
+//     docs/threads/ gets the same front-matter and INDEX.md checks threads/ always had;
+//   - .context/pending/ is not stale;
+//   - VISIBILITY: a PUBLIC repo holding docs/meetings/ or .context/pending/ is a warning, since
+//     anyone who clones a workspace gets its context (ADR 0002). This is the one check that
+//     touches the network (`gh repo view`, capped at 15s), it runs only when one of those two
+//     directories exists, and a lookup that fails is a note saying it was NOT verified — never
+//     a silent pass.
+// The keys a workspace retired — include, template, assistants/roles/supervisors, teaching,
+// handoff/, the generated marker, PROJECT_CONTEXT_REPO — are not checked there at all. --fix
+// never writes workspace.json: every key in it has a writing owner (workspace.mjs's header),
+// and the doctor is not one of them, so a workspace's only derivable fixes are the
+// .claude/settings.json ones it shares with a context repo.
+//
 // Exit 0 = it ran (with or without findings). Exit 2 = it could NOT run. The caller must be
 // able to tell "nothing wrong" from "never looked" — a silent clean bill of health on a check
 // that never executed is the failure mode this whole plugin exists to prevent.
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join, resolve, basename } from 'node:path';
 // Imported rather than restated: the audience vocabulary is shared with a thread's front-matter,
 // and a copy here would disagree with the roster the first time one of them gained a value.
 import { AUDIENCES } from './teaching-workspace.mjs';
+import { rootKind, SCHEMA, WORKSPACE_FILE } from './workspace.mjs';
 
 const OPTIONS = ['json', 'fix', 'include', 'today'];
 // In step with hooks/load-context.sh, scripts/context-repo.sh and scripts/link-context.mjs.
@@ -37,6 +59,10 @@ const PENDING_STALE_DAYS = 30;
 // so it goes stale by nobody doing anything rather than by a run failing.
 const HANDOFF_STALE_DAYS = 14;
 const MEMORY_STALE_DAYS = 90;
+// A member's kind, as ADR 0002 lists them. project-workspace owns what each kind carries; this
+// only spots a value outside the list, which none of its steps would recognise.
+const MEMBER_KINDS = ['code', 'document', 'analysis'];
+const GH_TIMEOUT_MS = 15000;
 
 const die = (m) => { console.error(`context-doctor.mjs: ${m}`); process.exit(2); };
 
@@ -54,9 +80,15 @@ for (let i = 0; i < argv.length; i++) {
 }
 for (const f of flags) if (!OPTIONS.includes(f)) die(`unknown option --${f} (use ${OPTIONS.map((o) => `--${o}`).join(', ')})`);
 
-if (!positional[0]) die('needs the context checkout as its first argument (bash scripts/context-repo.sh --no-pull)');
-const ROOT = resolve(positional[0]);
-if (!existsSync(ROOT)) die(`no such directory: ${ROOT}`);
+const start = resolve(positional[0] ?? process.cwd());
+if (!existsSync(start)) die(`no such directory: ${start}`);
+// No argument means "the workspace I am in". With one, a directory that is neither kind is still
+// checked as a context repo — which reports its missing context.json as the finding it always
+// was, rather than exiting as if nothing had been asked.
+const kind = rootKind(start);
+if (!kind && !positional[0]) die(`no ${WORKSPACE_FILE} at or above ${start} — pass the workspace or context checkout (node scripts/workspace.mjs --no-pull)`);
+const WS = kind?.kind === 'workspace';
+const ROOT = kind?.root ?? start;
 
 const today = todayArg ?? new Date().toISOString().slice(0, 10);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) die(`--today needs YYYY-MM-DD, got ${todayArg}`);
@@ -100,11 +132,114 @@ const namesOf = (v) => {
   return [];
 };
 
+// The connections policy, wherever it lives — context.json in a context repo, workspace.json in a
+// workspace. One function, because the gate reads both with the same names() and a shape that
+// passes here in one file and fails in the other would be two rules for one policy.
+const checkConnections = (conns) => {
+  if (conns !== undefined
+      && (typeof conns !== 'object' || conns === null || Array.isArray(conns))) {
+    add('err', 'connections', '"connections" is not an object');
+  } else if (conns) {
+    // Each provider names one connection, or a map of resource owner -> connection. A value the
+    // gate cannot read is not cosmetic: connection-gate.mjs denies every call for that provider,
+    // so a session loses the connector entirely and the refusal blames the wrong thing.
+    for (const [provider, v] of Object.entries(conns)) {
+      // NAMING IS LOAD-BEARING. connection-gate.mjs classifies a connector by this block first,
+      // then by sniffing the name for a provider word. So a name carrying no provider word is
+      // gated *here* — and nowhere else: in every other project on the machine nothing can tell
+      // what it is, and it is allowed unchecked. A GitHub connector called "claude-tools" was
+      // live and ungated across every project on this machine, 2026-08-30. The gate cannot fix
+      // that (it can never know what another project's connectors are for); only a rename can,
+      // so this is the one place the problem is visible while it is still cheap.
+      for (const n of namesOf(v)) {
+        if (!n.toLowerCase().includes(provider.toLowerCase())) {
+          add('warn', 'connections',
+            `connection "${n}" does not contain "${provider}", so outside this project the gate `
+            + 'cannot classify it and allows it unchecked. Rename it to carry the provider, and '
+            + 'move the Claude configs, the stored credential and this block together.');
+        }
+      }
+      if (typeof v === 'string') {
+        if (!v) add('err', 'connections', `"${provider}" is an empty string — omit it, or name the connection`);
+        continue;
+      }
+      if (Array.isArray(v)) {
+        add('warn', 'connections',
+          `"${provider}" is a list. It works, but it does not say which connection serves which `
+          + 'owner, so a caller cannot choose and finds out by 404. Prefer a map: '
+          + `{ "owner": "${v.find((n) => typeof n === 'string') ?? 'connection-name'}" }`);
+        continue;
+      }
+      if (!v || typeof v !== 'object') {
+        add('err', 'connections', `"${provider}" is neither a connection name nor a map of owner to name`);
+        continue;
+      }
+      const pairs = Object.entries(v);
+      if (!pairs.length) {
+        add('err', 'connections',
+          `"${provider}" is an empty map, which declares nothing while looking deliberate. `
+          + 'Remove the key, or set connections to {} if this project declares none on purpose.');
+      }
+      for (const [owner, name] of pairs) {
+        if (typeof name !== 'string' || !name) {
+          add('err', 'connections', `"${provider}.${owner}" is not a connection name`);
+        }
+      }
+      // One workspace is almost always right for these; two is a judgement call, not an error.
+      if (pairs.length > 1 && provider !== 'github') {
+        add('warn', 'connections',
+          `"${provider}" declares ${pairs.length} connections. Multiple owners is a GitHub fact `
+          + '(a fine-grained PAT has one resource owner); for other providers two usually means '
+          + 'two workspaces have been merged into one project by mistake.');
+      }
+    }
+  }
+};
+
+// Stale Notion date guidance, under whichever config holds state.notion.
+const checkNotionDates = (conf) => {
+  // context-notion's notion-discover used to stamp every date property's schema line with
+  // "with is_datetime 0" — correct for the hosted notion-create-pages tool, and a 400 on every
+  // date write through API-post-page, which rejects the key outright. Skills follow schema text
+  // exactly, so the stale line outlives the fix in every project it was copied into.
+  //
+  // This is the one place core reads under state.notion, and it reads as little as it can: a
+  // retired token in a string, the way DEAD_MARKETS carries a retired catalog name. It does not
+  // interpret the schema — what a date should look like is context-notion's (notion-config) to
+  // say, and spelling it out here would be a second copy of that rule. No fix: the right line
+  // depends on the property's own notes, which only the user can rewrite.
+  const schemas = conf.state?.notion?.schemas;
+  if (schemas && typeof schemas === 'object') {
+    const walk = (v, path) => {
+      if (typeof v === 'string') {
+        if (v.includes('is_datetime')) {
+          add('warn', 'notion-dates',
+            `state.notion.schemas.${path} mentions is_datetime — stale guidance. That key is valid `
+            + 'for one Notion tool only and API-post-page rejects it with a 400, so a skill that '
+            + 'follows this line breaks every date write through that tool. Edit the line to name '
+            + 'no tool (e.g. "date — YYYY-MM-DD (shape per notion-config)"); context-notion\'s '
+            + 'notion-config owns the per-tool date rule.');
+        }
+      } else if (v && typeof v === 'object') {
+        // Quoted when not a bare word: property names with trailing spaces are real, and an
+        // unquoted path would hide exactly the character that makes the name what it is.
+        for (const [k, child] of Object.entries(v)) {
+          const seg = /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
+          walk(child, path ? `${path}.${seg}` : seg);
+        }
+      }
+    };
+    walk(schemas, '');
+  }
+};
+
 // ---------------------------------------------------------------- context.json
 
 const ctxFile = join(ROOT, 'context.json');
 let ctx = null;
-if (!existsSync(ctxFile)) {
+if (WS) {
+  // A workspace has no context.json to read — checked below, from workspace.json.
+} else if (!existsSync(ctxFile)) {
   add('err', 'context.json', 'no context.json at the root — this directory is not a context repo');
 } else {
   try {
@@ -178,64 +313,7 @@ if (ctx) {
     }
   }
 
-  if (ctx.connections !== undefined
-      && (typeof ctx.connections !== 'object' || ctx.connections === null || Array.isArray(ctx.connections))) {
-    add('err', 'connections', '"connections" is not an object');
-  } else if (ctx.connections) {
-    // Each provider names one connection, or a map of resource owner -> connection. A value the
-    // gate cannot read is not cosmetic: connection-gate.mjs denies every call for that provider,
-    // so a session loses the connector entirely and the refusal blames the wrong thing.
-    for (const [provider, v] of Object.entries(ctx.connections)) {
-      // NAMING IS LOAD-BEARING. connection-gate.mjs classifies a connector by this block first,
-      // then by sniffing the name for a provider word. So a name carrying no provider word is
-      // gated *here* — and nowhere else: in every other project on the machine nothing can tell
-      // what it is, and it is allowed unchecked. A GitHub connector called "claude-tools" was
-      // live and ungated across every project on this machine, 2026-08-30. The gate cannot fix
-      // that (it can never know what another project's connectors are for); only a rename can,
-      // so this is the one place the problem is visible while it is still cheap.
-      for (const n of namesOf(v)) {
-        if (!n.toLowerCase().includes(provider.toLowerCase())) {
-          add('warn', 'connections',
-            `connection "${n}" does not contain "${provider}", so outside this project the gate `
-            + 'cannot classify it and allows it unchecked. Rename it to carry the provider, and '
-            + 'move the Claude configs, the stored credential and this block together.');
-        }
-      }
-      if (typeof v === 'string') {
-        if (!v) add('err', 'connections', `"${provider}" is an empty string — omit it, or name the connection`);
-        continue;
-      }
-      if (Array.isArray(v)) {
-        add('warn', 'connections',
-          `"${provider}" is a list. It works, but it does not say which connection serves which `
-          + 'owner, so a caller cannot choose and finds out by 404. Prefer a map: '
-          + `{ "owner": "${v.find((n) => typeof n === 'string') ?? 'connection-name'}" }`);
-        continue;
-      }
-      if (!v || typeof v !== 'object') {
-        add('err', 'connections', `"${provider}" is neither a connection name nor a map of owner to name`);
-        continue;
-      }
-      const pairs = Object.entries(v);
-      if (!pairs.length) {
-        add('err', 'connections',
-          `"${provider}" is an empty map, which declares nothing while looking deliberate. `
-          + 'Remove the key, or set connections to {} if this project declares none on purpose.');
-      }
-      for (const [owner, name] of pairs) {
-        if (typeof name !== 'string' || !name) {
-          add('err', 'connections', `"${provider}.${owner}" is not a connection name`);
-        }
-      }
-      // One workspace is almost always right for these; two is a judgement call, not an error.
-      if (pairs.length > 1 && provider !== 'github') {
-        add('warn', 'connections',
-          `"${provider}" declares ${pairs.length} connections. Multiple owners is a GitHub fact `
-          + '(a fine-grained PAT has one resource owner); for other providers two usually means '
-          + 'two workspaces have been merged into one project by mistake.');
-      }
-    }
-  }
+  checkConnections(ctx.connections);
 
   // -------------------------------------------------------------- teaching workspaces
 
@@ -290,40 +368,96 @@ if (ctx) {
     }
   }
 
-  // -------------------------------------------------------------- stale Notion date guidance
+  checkNotionDates(ctx);
+}
 
-  // context-notion's notion-discover used to stamp every date property's schema line with
-  // "with is_datetime 0" — correct for the hosted notion-create-pages tool, and a 400 on every
-  // date write through API-post-page, which rejects the key outright. Skills follow schema text
-  // exactly, so the stale line outlives the fix in every project it was copied into.
-  //
-  // This is the one place core reads under state.notion, and it reads as little as it can: a
-  // retired token in a string, the way DEAD_MARKETS carries a retired catalog name. It does not
-  // interpret the schema — what a date should look like is context-notion's (notion-config) to
-  // say, and spelling it out here would be a second copy of that rule. No fix: the right line
-  // depends on the property's own notes, which only the user can rewrite.
-  const schemas = ctx.state?.notion?.schemas;
-  if (schemas && typeof schemas === 'object') {
-    const walk = (v, path) => {
-      if (typeof v === 'string') {
-        if (v.includes('is_datetime')) {
-          add('warn', 'notion-dates',
-            `state.notion.schemas.${path} mentions is_datetime — stale guidance. That key is valid `
-            + 'for one Notion tool only and API-post-page rejects it with a 400, so a skill that '
-            + 'follows this line breaks every date write through that tool. Edit the line to name '
-            + 'no tool (e.g. "date — YYYY-MM-DD (shape per notion-config)"); context-notion\'s '
-            + 'notion-config owns the per-tool date rule.');
-        }
-      } else if (v && typeof v === 'object') {
-        // Quoted when not a bare word: property names with trailing spaces are real, and an
-        // unquoted path would hide exactly the character that makes the name what it is.
-        for (const [k, child] of Object.entries(v)) {
-          const seg = /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
-          walk(child, path ? `${path}.${seg}` : seg);
-        }
+// ---------------------------------------------------------------- workspace.json
+
+let ws = null;
+const wsReport = { file: null, members: [], visibility: null };
+if (WS) {
+  wsReport.file = kind.file;
+  if (kind.error) {
+    // Every route that reads this file — the resolver, the gate, save-thread — treats a malformed
+    // one as no workspace at all and goes to the context-repo fallback, so the workspace is
+    // silently not in force. Nothing below can be checked against a file that did not parse.
+    add('err', 'workspace.json',
+      `${kind.file} is malformed (${kind.error}) — every session here falls back to the context-repo `
+      + 'route as if there were no workspace, and nothing else in it could be checked');
+  } else {
+    ws = kind.config;
+  }
+}
+
+if (ws) {
+  // Reported, not refused: workspace.mjs still resolves the root under another schema, so the
+  // doctor goes on to check the rest rather than give up on a file every route still uses.
+  if (ws.schema !== SCHEMA) {
+    add('warn', 'workspace.json', `"schema" is ${JSON.stringify(ws.schema ?? null)}; these checks know schema ${SCHEMA}`);
+  }
+  if (ws.repo !== undefined && !REPO_RE.test(String(ws.repo))) {
+    add('err', 'workspace.json', `"repo": ${JSON.stringify(ws.repo)} is not an owner/repo name`);
+  }
+
+  // Members are gitignored nested clones, so a fresh clone of a workspace has none of them on
+  // disk — the normal state, not a defect, hence a note naming the clone rather than a warning.
+  // What IS a defect is an entry no project-workspace step could act on. None of it is fixed:
+  // `members` is project-workspace's key, and a doctor that rewrote it would be a second writer.
+  if (ws.members !== undefined && !Array.isArray(ws.members)) {
+    add('err', 'members', '"members" is not an array — no member of this workspace is declared');
+  } else {
+    const seen = new Set();
+    (ws.members ?? []).forEach((m, i) => {
+      if (!m || typeof m !== 'object' || Array.isArray(m)) {
+        add('err', 'members', `members[${i}] is not an object`);
+        return;
       }
-    };
-    walk(schemas, '');
+      if (typeof m.dir !== 'string' || !m.dir.trim()) {
+        add('err', 'members', `members[${i}] has no "dir" — nothing says where it lives`);
+        return;
+      }
+      const cloned = existsSync(join(ROOT, m.dir));
+      wsReport.members.push({ dir: m.dir, repo: m.repo ?? null, kind: m.kind ?? null, cloned });
+      if (seen.has(m.dir)) add('warn', 'members', `members[${i}] repeats dir "${m.dir}"`);
+      seen.add(m.dir);
+      if (m.repo !== undefined && !REPO_RE.test(String(m.repo))) {
+        add('err', 'members', `members[${i}] ("${m.dir}") has "repo": ${JSON.stringify(m.repo)}, which is not an owner/repo name`);
+      }
+      if (!MEMBER_KINDS.includes(m.kind)) {
+        add('warn', 'members', `members[${i}] ("${m.dir}") has "kind": ${JSON.stringify(m.kind ?? null)}, not one of ${MEMBER_KINDS.join(' / ')}`);
+      }
+      if (!cloned) {
+        add('note', 'members',
+          `member "${m.dir}" is not cloned${REPO_RE.test(String(m.repo ?? '')) ? ` — gh repo clone ${m.repo} ${m.dir}` : ''}`);
+      }
+    });
+  }
+
+  checkConnections(ws.connections);
+  checkNotionDates(ws);
+
+  // ANYONE WHO CLONES A WORKSPACE GETS ITS CONTEXT (ADR 0002). Meetings and the Notion queue are
+  // the parts that must never be public, and a workspace whose members are public open source
+  // is exactly the one where somebody makes the wrapper public too. Asked only when one of the
+  // two exists, so a workspace with nothing sensitive in it costs no network call.
+  const sensitive = ['docs/meetings', '.context/pending'].filter((d) => existsSync(join(ROOT, d)));
+  if (sensitive.length) {
+    if (!REPO_RE.test(String(ws.repo ?? ''))) {
+      add('note', 'visibility', `${sensitive.join(' and ')} exist but workspace.json names no "repo" — whether it is public was NOT checked`);
+    } else {
+      const r = spawnSync('gh', ['repo', 'view', ws.repo, '--json', 'visibility', '--jq', '.visibility'],
+        { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
+      const v = r.status === 0 ? (r.stdout ?? '').trim().toUpperCase() : '';
+      wsReport.visibility = v || null;
+      if (!v) {
+        const why = r.error ? r.error.message : ((r.stderr ?? '').trim().split('\n')[0] || `gh exited ${r.status}`);
+        add('note', 'visibility', `could not read ${ws.repo}'s visibility (${why}) — whether it is public was NOT checked`);
+      } else if (v === 'PUBLIC') {
+        add('warn', 'visibility',
+          `${ws.repo} is PUBLIC and holds ${sensitive.join(' and ')} — anyone who clones it gets them. `
+          + 'Make the workspace repo private (its members can stay public), or move them out.');
+      }
+    }
   }
 }
 
@@ -450,9 +584,12 @@ if (isOff(autoloadEnv) || isOff(autoloadFile)) {
 }
 
 // The canonical generated marker, per the core invariant: one committable file per context
-// repo, and the file a Cowork session gets attached.
+// repo, and the file a Cowork session gets attached. Retired in a workspace, where the
+// workspace.json the resolver walks to is the whole answer.
 const markerFile = join(ROOT, '.claude', 'context-project.json');
-if (!existsSync(markerFile)) {
+if (WS) {
+  // nothing to check
+} else if (!existsSync(markerFile)) {
   add('warn', 'marker', 'no .claude/context-project.json — a Cowork session has nothing to attach. Any laptop session that resolves this repo generates it; commit it once it appears.');
 } else {
   try {
@@ -467,87 +604,115 @@ if (!existsSync(markerFile)) {
 
 // ---------------------------------------------------------------- content layout
 
-if (!existsSync(join(ROOT, 'memory.md'))) {
-  add('err', 'memory', 'no memory.md — the session-start hook has nothing to inject');
+// Where each piece lives, by kind of root (ADR 0002's layout for a workspace). Every check below
+// is written once against these, so a workspace and a context repo are held to the same rules.
+const MEMORY_REL = WS ? 'docs/memory.md' : 'memory.md';
+const THREADS_REL = WS ? 'docs/threads' : 'threads';
+const PENDING_REL = WS ? '.context/pending' : 'pending';
+
+if (!existsSync(join(ROOT, MEMORY_REL))) {
+  add(WS ? 'warn' : 'err', 'memory', WS
+    ? `no ${MEMORY_REL} — the workspace has no durable memory for its CLAUDE.md to import`
+    : 'no memory.md — the session-start hook has nothing to inject');
 } else {
-  const mem = readFileSync(join(ROOT, 'memory.md'), 'utf8');
+  const mem = readFileSync(join(ROOT, MEMORY_REL), 'utf8');
   const reviewed = mem.match(/_Last reviewed:\s*(\d{4}-\d{2}-\d{2})/);
   if (reviewed) {
     const age = daysSince(reviewed[1]);
     if (age > MEMORY_STALE_DAYS) {
-      add('warn', 'memory', `memory.md was last reviewed ${age} days ago (${reviewed[1]}) — the durable layer is drifting. curate-context is the ritual for this.`);
+      add('warn', 'memory', `${MEMORY_REL} was last reviewed ${age} days ago (${reviewed[1]}) — the durable layer is drifting. curate-context is the ritual for this.`);
     }
+  }
+}
+
+// In a workspace NOTHING injects memory: the session-start hook loads nothing there, and
+// docs/memory.md reaches a session only through `@docs/memory.md` in the root CLAUDE.md. Drop the
+// import and the file is still there, still curated, and never read — no error anywhere.
+if (WS && existsSync(join(ROOT, MEMORY_REL))) {
+  const claudeMd = join(ROOT, 'CLAUDE.md');
+  if (!existsSync(claudeMd)) {
+    add('warn', 'memory', `no CLAUDE.md at the workspace root — nothing imports ${MEMORY_REL}, so no session loads it`);
+  } else if (!/@(\.\/)?docs\/memory\.md\b/.test(readFileSync(claudeMd, 'utf8'))) {
+    add('warn', 'memory', `CLAUDE.md does not import @${MEMORY_REL} — the workspace's memory is never loaded`);
   }
 }
 
 let threads = null;
 try {
-  threads = readdirSync(join(ROOT, 'threads'))
+  threads = readdirSync(join(ROOT, THREADS_REL))
     .filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'INDEX.md')
     .sort();
-} catch { /* no threads/ */ }
+} catch { /* no threads directory */ }
 
 if (threads === null) {
-  add('note', 'threads', 'no threads/ directory');
+  // A workspace that has never saved a thread has no docs/threads/ yet, and save-thread makes it.
+  if (!WS) add('note', 'threads', 'no threads/ directory');
 } else {
   for (const f of threads) {
     if (!/^\d{4}-\d{2}-\d{2}-/.test(f)) {
-      add('warn', 'threads', `threads/${f} is not named YYYY-MM-DD-topic.md — the hook lists threads by filename sort, so it lands in the wrong place`);
+      add('warn', 'threads', `${THREADS_REL}/${f} is not named YYYY-MM-DD-topic.md — ${WS ? 'thread-index.mjs' : 'the hook'} lists threads by filename sort, so it lands in the wrong place`);
     }
     // The silent-drop rule, checked where it actually bites. An angle bracket in a
     // front-matter value makes the ingester read a tag and discard the field: no error, no
     // symptom, the title simply vanishes.
-    const text = readFileSync(join(ROOT, 'threads', f), 'utf8');
+    const text = readFileSync(join(ROOT, THREADS_REL, f), 'utf8');
     const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (fm) {
       for (const line of fm[1].split(/\r?\n/)) {
         const kv = line.match(/^([A-Za-z0-9_-]+):\s*(.+)$/);
         if (kv && /[<>]/.test(kv[2])) {
-          add('err', 'threads', `threads/${f} front-matter "${kv[1]}" contains an angle bracket — the ingester silently drops the field. Use [placeholder].`);
+          add('err', 'threads', `${THREADS_REL}/${f} front-matter "${kv[1]}" contains an angle bracket — the ingester silently drops the field. Use [placeholder].`);
         }
       }
     } else if (text.trim()) {
-      add('note', 'threads', `threads/${f} has no front-matter block`);
+      add('note', 'threads', `${THREADS_REL}/${f} has no front-matter block`);
     }
   }
 
-  // An index that is merely out of date reads exactly like a complete one.
-  const indexFile = join(ROOT, 'threads', 'INDEX.md');
+  // An index that is merely out of date reads exactly like a complete one. In a workspace the
+  // index is the ONLY route to the threads — CLAUDE.md points at it and no hook lists them — and
+  // save-thread regenerates it on every save, so any thread without one is a finding.
+  const indexRel = `${THREADS_REL}/INDEX.md`;
+  const indexFile = join(ROOT, indexRel);
   if (!existsSync(indexFile)) {
-    if (threads.length > 6) {
+    if (WS && threads.length) {
+      add('warn', 'index', `${threads.length} thread(s) and no ${indexRel} — the workspace's CLAUDE.md points at the index, so these are invisible to a session. Build it with thread-index.mjs --dir ${THREADS_REL}.`);
+    } else if (!WS && threads.length > 6) {
       add('warn', 'index', `${threads.length} threads and no threads/INDEX.md — the hook injects only the newest 6, so the rest are invisible at session start. Build it with thread-index.mjs.`);
     }
   } else {
     const index = readFileSync(indexFile, 'utf8');
     const missing = threads.filter((f) => !index.includes(f));
     if (missing.length) {
-      add('warn', 'index', `threads/INDEX.md does not mention ${missing.length} thread(s): ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''} — rebuild with thread-index.mjs`);
+      add('warn', 'index', `${indexRel} does not mention ${missing.length} thread(s): ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''} — rebuild with thread-index.mjs${WS ? ` --dir ${THREADS_REL}` : ''}`);
     }
     if (/\bTODO:/.test(index)) {
-      add('warn', 'index', 'threads/INDEX.md still carries a TODO: placeholder from an unfinished curation');
+      add('warn', 'index', `${indexRel} still carries a TODO: placeholder from an unfinished curation`);
     }
   }
 }
 
 // The pending queue is a fallback store — an entry sitting in it is work that never landed.
 try {
-  for (const f of readdirSync(join(ROOT, 'pending')).filter((f) => f.endsWith('.md') && f !== 'README.md')) {
+  for (const f of readdirSync(join(ROOT, PENDING_REL)).filter((f) => f.endsWith('.md') && f !== 'README.md')) {
     const dated = f.match(/^(\d{4}-\d{2}-\d{2})/);
     const age = dated
       ? daysSince(dated[1])
-      : Math.round((Date.parse(`${today}T00:00:00Z`) - statSync(join(ROOT, 'pending', f)).mtimeMs) / 86400000);
+      : Math.round((Date.parse(`${today}T00:00:00Z`) - statSync(join(ROOT, PENDING_REL, f)).mtimeMs) / 86400000);
     if (age > PENDING_STALE_DAYS) {
-      add('warn', 'pending', `pending/${f} has been queued ${age} days — process-pending never drained it`);
+      add('warn', 'pending', `${PENDING_REL}/${f} has been queued ${age} days — process-pending never drained it`);
     }
   }
-} catch { /* no pending/ is fine */ }
+} catch { /* no pending queue is fine */ }
 
 // The handoff queue is a SILENT BACKLOG: an item sits there until somebody opens the target
 // project's own session, and nothing announces that it has been waiting. Reporting its age here
 // is what turns it into a backlog somebody has seen — the same job this check does for every
 // other drift that never announces itself. Report only: whether an item is still worth draining
 // is a judgement about its content, which nothing here can make.
-try {
+//
+// Retired in a workspace (ADR 0002), so not looked for there.
+if (!WS) try {
   for (const f of readdirSync(join(ROOT, 'handoff')).filter((f) => f.endsWith('.md') && !['README.md', 'INDEX.md'].includes(f))) {
     const text = readFileSync(join(ROOT, 'handoff', f), 'utf8');
     const fm = text.match(/^﻿?---\r?\n([\s\S]*?)\r?\n---/);
@@ -640,9 +805,14 @@ if (flags.has('fix')) {
 const fixable = findings.filter((f) => f.fix).length;
 
 if (flags.has('json')) {
-  console.log(JSON.stringify({ root: ROOT, today, findings, includes: includeReports, applied, refused, fixable }, null, 2));
+  // `mode` first, so a consumer can tell which set of checks ran before reading any finding;
+  // `workspace` is null for a context repo rather than absent, for the same reason.
+  console.log(JSON.stringify({
+    root: ROOT, mode: WS ? 'workspace' : 'context-repo', today, findings,
+    workspace: WS ? wsReport : null, includes: includeReports, applied, refused, fixable,
+  }, null, 2));
 } else {
-  console.log(`context-doctor — ${ROOT}  (${today})`);
+  console.log(`context-doctor — ${ROOT}  (${WS ? 'workspace' : 'context repo'}, ${today})`);
   if (!findings.length && !includeReports.length) console.log('  ok    nothing to report');
   const order = { err: 0, warn: 1, note: 2 };
   for (const f of [...findings].sort((a, b) => order[a.level] - order[b.level])) {

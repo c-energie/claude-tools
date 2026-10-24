@@ -39,8 +39,9 @@ node scripts/json-block.mjs set "$CTX/context.json" teaching '{...}'   # PLAN on
 node scripts/init-context.mjs owner/repo            # PLAN a new context repo (+ the second brain, once); --yes does it
 node scripts/link-context.mjs owner/repo --load   # run from a PROJECT dir: link it to its context repo
 node scripts/link-context.mjs owner/repo --threads context   # ...and route its threads off this repo
-node scripts/context-doctor.mjs "$ROOT" --include   # health-check a context repo (--json, --fix, --today)
+node scripts/context-doctor.mjs "$ROOT" --include   # health-check a workspace or context repo (--json, --fix, --today)
 node scripts/context-status.mjs "$ROOT"           # what is OUTSTANDING in every queue (--json, --role, --no-memory)
+node --test scripts/context-doctor.test.mjs   # doctor + status in a workspace, and legacy unchanged; fake gh, offline
 node scripts/assistants.mjs roster "$ROOT"        # the assistant/supervisor/role roster
 node scripts/assistants.mjs unswept "$ROOT" --role software-dev   # lessons not yet distilled
 node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting promotion (workspace root -> docs/memory.md)
@@ -256,4 +257,15 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   context the session loaded. A workspace is never the cross-project layer for
   `memory-triage.mjs` (`include` is retired). Both skills ask before pushing; outside a
   workspace both behave as before.
+- **`context-doctor` and `context-status` take either kind of root, told apart by
+  `workspace.mjs`'s `rootKind()`** (#52): a directory holding `context.json` and no
+  `workspace.json` is a legacy context repo, checked exactly as before and tested FIRST so an
+  outer workspace never judges it; anything else is the nearest workspace. In a workspace the
+  retired checks and queues (include, template, assistants/roles/supervisors, teaching,
+  handoff, the marker) do not run, and the same rules apply at ADR 0002's paths —
+  `docs/memory.md` (and its `@` import in `CLAUDE.md`), `docs/threads/`, `.context/pending/`.
+  `--fix` **never writes `workspace.json`**: the doctor owns no key in it. The doctor's one
+  network call is `gh repo view` for visibility, made only when `docs/meetings/` or
+  `.context/pending/` exists, warning when the workspace repo is PUBLIC; a failed lookup is a
+  note saying it was not checked, never a pass. `--json` carries `mode` and `workspace`.
 - **`*.sh` stay LF** (enforced by `.gitattributes`).
