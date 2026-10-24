@@ -48,6 +48,27 @@ export function findWorkspace(start = process.cwd()) {
   }
 }
 
+/** What a directory handed to a DIAGNOSTIC is — context-doctor and context-status, which are
+ *  given a root rather than resolving one, and must check legacy context repos exactly as before
+ *  while the fallback lasts (ADR 0002's transition).
+ *  -> { kind: 'context-repo', root } when `start` itself holds context.json and no workspace.json.
+ *     Tested FIRST, before any walk: a context repo is a root of its own, and walking up from one
+ *     would judge it by whichever workspace happened to sit above its clone.
+ *  -> { kind: 'workspace', root, file, config } — findWorkspace() from `start`, nearest wins;
+ *  -> { kind: 'workspace', root, file, error } when that nearest file is malformed. `root` is the
+ *     directory holding its .claude/, so a doctor can report the file rather than lose it;
+ *  -> null when it is neither. Reads only; validates nothing beyond findWorkspace()'s own test. */
+export function rootKind(start) {
+  const dir = resolve(start);
+  if (existsSync(join(dir, 'context.json')) && !existsSync(join(dir, WORKSPACE_FILE))) {
+    return { kind: 'context-repo', root: dir };
+  }
+  const found = findWorkspace(dir);
+  if (!found) return null;
+  if (found.error) return { kind: 'workspace', root: dirname(dirname(found.file)), file: found.file, error: found.error };
+  return { kind: 'workspace', ...found };
+}
+
 /** The legacy route, unchanged: context-repo.sh run from `cwd`. CLAUDE_PROJECT_DIR is pinned to
  *  `cwd` because the script prefers it over $PWD — inheriting a different one would make the
  *  two routes look from two different places. */
