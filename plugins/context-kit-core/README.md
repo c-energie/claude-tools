@@ -215,7 +215,7 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 | `context-doctor` | Health-check an already-linked repo for the drift that never announces itself; fixes derivable config keys only |
 | `context-status` | What is outstanding: lessons awaiting a sweep, sweeps awaiting distillation, undrained handoff, curation lag, native memory — and the skill that clears each |
 | `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
-| `save-thread` | 🔒 Write up the current work as a `threads/` entry and push (never self-triggers) |
+| `save-thread` | 🔒 Write up the current work as a thread — a workspace's `docs/threads/`, else `threads/` — and push (never self-triggers) |
 | `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |
 | `setup-connectors` | Provision the MCP connections a project's `context.json` declares |
 | `assistant` | Adopt a role assistant — its persona, memory, doctrine and thread history; scaffolds one on first use |
@@ -259,6 +259,15 @@ curation lossless from a session's point of view.
 Lazy-loading `memory.md` itself is deliberately **not** done. Threads can be lazy because
 missing one loses depth; authoritative facts cannot, because a topic index fails exactly when a
 question is phrased in a way it did not anticipate, and fails silently.
+
+### Inside a workspace: one layer, at the root
+
+In a workspace (the nearest `.claude/workspace.json`, ADR 0002) there is no layer choice to make.
+`save-thread` writes to the workspace root's `docs/threads/` from wherever the session is,
+member repos included, records the member as `repo: owner/name`, and regenerates the committed
+`docs/threads/INDEX.md`. `memory-triage` promotes into `docs/memory.md`. Both ask before
+pushing. Everything below describes the context-repo route, which still applies outside a
+workspace until the last context repo is migrated.
 
 ### Two thread layers
 

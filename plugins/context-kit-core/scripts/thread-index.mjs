@@ -6,6 +6,7 @@
 //   node thread-index.mjs <root> --gists gists.json           # fill from {"<file>": {"status","gist"}}
 //   node thread-index.mjs <root> --gists g.json --write       # write threads/INDEX.md
 //   node thread-index.mjs <repo> --dir .claude/threads         # a repo's own thread layer
+//   node thread-index.mjs <workspace> --dir docs/threads       # a workspace's (ADR 0002)
 //
 // Prints the index to stdout unless --write. Filenames are expected as YYYY-MM-DD-<topic>.md;
 // anything else is still listed, just without a date.
