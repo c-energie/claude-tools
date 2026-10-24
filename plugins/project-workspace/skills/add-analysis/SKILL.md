@@ -131,10 +131,25 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
   On matplotlib, copy the README's matplotlib usage block into a scratch notebook instead.
   No `Sections/Example/` → adapt-existing-document step 5 does this against a real section.
 
-  **Expected `git status`:** analysis repo — the `--snapshot` baseline, `.python-version`
-  and `init.py`'s changes (a modified notebook means it ran in place: `git restore` it);
-  document repo — `layout.toml`, `.gitignore`, `Sections/Example/Figures/example_scatter.png`
-  and `Sections/Example/tables.tex` (#10). Anything else is a deviation to log.
+  **Expected `git status`** — a new and an adopted (`--from`) repo differ, and each list
+  below is the whole of it (#39):
+  - **Analysis repo, new:** the `--snapshot` baseline, `.python-version`, `init.py`'s
+    changes, and an untracked `uv.lock`.
+  - **Analysis repo, adopted:** an untracked `uv.lock` (until it is committed; it may be the
+    first one this repo has, if the lock used to sit at a schema-1 workspace root);
+    `.python-version` only if the step wrote one (`--python` passed, or none was pinned); the
+    baseline only if it differs from the committed one. No `init.py` changes: an initialised
+    repo has no `init.py`, it deletes itself after running.
+  - **Document repo, either:** `layout.toml`, `.gitignore`,
+    `Sections/Example/Figures/example_scatter.png` and `Sections/Example/tables.tex` (#10),
+    plus `setup-nested.sh` and `.gitattributes` when §3's step printed `added` or
+    `updated an outdated setup-nested.sh in …`. An example figure already committed
+    regenerates byte-identical: no change to the PNG or `tables.tex` is then expected, not a
+    failed proof.
+
+  `uv.lock` appears in every analysis repo because analysis-template neither tracks nor
+  gitignores it and `uv sync` writes it; it is committed (§5). A modified notebook means it
+  ran in place: `git restore` it. Anything else is a deviation to log.
 - **Running notebooks:** walk the user through the analysis repo's README, "Running
   notebooks", for their editor — JupyterLab (`uv run jupyter lab`), VS Code, PyCharm or
   marimo. The kernel is **this analysis repo's venv**.
@@ -145,7 +160,8 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
   this document, handing it the notebooks or folders named. It runs after the document has
   `Sections/`, because notebooks are placed by section.
 - Commits, asking before each commit and push: in the **analysis repo**, its initial commit
-  (`init.py`'s changes, `.python-version`, the baseline); in the **document repo**,
+  (`init.py`'s changes, `.python-version`, the baseline, `uv.lock`) — for an adopted repo,
+  whichever of `uv.lock`, `.python-version` and the baseline changed; in the **document repo**,
   `layout.toml`, `.gitignore` (and `setup-nested.sh`/`.gitattributes` if the step added or updated
   them) and the example figure; at a tracked workspace root, `.claude/workspace.json` and
   `CLAUDE.md`.
