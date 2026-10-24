@@ -50,7 +50,7 @@ everywhere below. Its `analysis_dir`:
 - **set, but `analysis_path` missing on disk** → a fresh clone: **restore** it with
   `SETUP add-analysis --document <name> [--backend matplotlib]` (no other flags; the backend
   only if it was matplotlib), then §3–§4.
-- **set and present** → already done; offer §4's proof or `SETUP sync`.
+- **set and present** → already done; offer §4's proof or `SETUP sync --document <name>`.
 
 `SETUP check --analysis` must pass (it adds `sh` — Git Bash's on Windows — and the analysis
 template).

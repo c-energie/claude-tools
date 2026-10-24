@@ -241,7 +241,7 @@ renames a repo or a document directory: Overleaf's sync and IDE configs point at
 
 A migrate that stops before `workspace.json` is written is resumed by re-running it. One
 that stops after (in `setup-nested.sh` or the sync) is finished with
-`SETUP add-analysis --dir <analysis> --backend <backend>` and `SETUP sync`; `SETUP migrate`
+`SETUP add-analysis --dir <analysis> --backend <backend>` and `SETUP sync --document <name>`; `SETUP migrate`
 then lists the root leftovers to back up and delete.
 
 Not this skill: a document → `/project-workspace:add-document`; an analysis repo →
