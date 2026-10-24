@@ -233,6 +233,15 @@ when the refresh fails — a silently stale context is the one failure mode that
 misleads. A project that will never have a context repo opts out with `none`, and a whole machine
 opts out of the automatic load with `CONTEXT_KIT_AUTOLOAD`; see above.
 
+**Inside a workspace** (a `.claude/workspace.json` at or above the working directory, ADR 0002)
+the hook loads nothing: Claude Code's own `CLAUDE.md` loading already brings the workspace's
+memory in. It runs a `git fetch` on the workspace root instead, capped at
+`CONTEXT_KIT_FETCH_TIMEOUT` seconds (default 10). If the workspace is behind its upstream, it
+prints one line saying how far and naming the `git pull` to run. If the branch has diverged, the
+line gives both counts. Up to date, it prints nothing. It never pulls. If the fetch fails or times
+out, the line says that the check could not run. The kill switch silences it too. Everywhere
+else, the loader described here runs as before until the last context repo is migrated.
+
 ### What is loaded eagerly, and what is announced
 
 `memory.md` is **injected** every session, at both the project and repo layer: it is the
@@ -394,9 +403,13 @@ that existed the day it was written, and goes stale silently in the dangerous di
 | no `connections` key at all | pass — nobody has decided |
 | policy unreadable (no repo, no clone, broken JSON) | pass, with the reason on stderr |
 
+The policy is the nearest `.claude/workspace.json`'s `connections`, found by walking up from the
+project dir — so a member repo nested in a workspace is gated by the workspace. Only when no
+workspace is found does it fall back to the context repo's `context.json` and the marker.
+
 Two properties are load-bearing. It **fails open and says why**, because a gate that blocks every
 MCP call the moment a checkout is missing is worse than no gate and breaks the hook contract. And
-it reads `context.json` *or* the `.claude/context-project.json` marker, whose `connections` the
+without a workspace it reads `context.json` *or* the `.claude/context-project.json` marker, whose `connections` the
 session-start hook already mirrors — which is what makes it the only mechanism that reaches
 **Cowork**, where there is no checkout and so no `.claude/settings.json` to carry permissions.
 

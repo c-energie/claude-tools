@@ -6,6 +6,7 @@
 #   scripts/workspace-root.sh              # nearest .claude/workspace.json, else context-repo.sh
 #   scripts/workspace-root.sh --no-pull    # passed to the fallback only
 #   scripts/workspace-root.sh --writable   # passed to the fallback only
+#   scripts/workspace-root.sh --no-fallback  # the workspace route only: never run context-repo.sh
 #
 # workspace.mjs carries the whole account of the file, its owners and why the rules are what
 # they are; the rules themselves, in short: walk from the working dir to the filesystem root,
@@ -25,9 +26,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 PASS=()
+FALLBACK=1
 for arg in "$@"; do
   case "$arg" in
     --no-pull|--writable) PASS+=("$arg") ;;
+    --no-fallback) FALLBACK=0 ;;   # see workspace.mjs: "is this a workspace?" without a clone
     *) echo "workspace-root.sh: unknown option $arg" >&2; exit 2 ;;
   esac
 done
@@ -81,6 +84,11 @@ while [ -n "$dir" ]; do
   [ "$up" = "$dir" ] && break
   dir="$up"
 done
+
+if [ "$FALLBACK" = 0 ]; then
+  echo "workspace-root.sh: route=none — $why, and --no-fallback skips the context repo" >&2
+  exit 1
+fi
 
 # The legacy route, unchanged. CLAUDE_PROJECT_DIR is pinned to the dir this walk started from
 # so both routes look from the same place.

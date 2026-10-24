@@ -41,7 +41,7 @@ Ask before every commit, push, Notion sync and `publish`.
 
 **With an analysis repo:**
 `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync --document <name> --extra publish`
-— records `publish` among the document's extras in `workspace.toml` and syncs with all of
+— records `publish` among the document's extras in `.claude/workspace.json` and syncs with all of
 them (a bare `uv sync` would uninstall the others). Add
 `DOC_REPO=<absolute path of writing_dir>` to `<analysis_dir>/.env` if it is not there
 (gitignored in the analysis repo). Then `cd <analysis_dir> && uv run doc-publish --help`.

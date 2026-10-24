@@ -28,8 +28,8 @@ Run with uv so no system Python is needed:
     uv run --no-project --python 3.12 path/to/copy_analysis.py --root <workspace> plan --source ../old-analysis
 
 The script ships in the project-workspace@c-energie plugin, so the skill passes --root (its
-${CLAUDE_PROJECT_DIR}). Without it, the root is the nearest directory at or above the
-current one holding workspace.toml, else the current directory.
+${CLAUDE_PROJECT_DIR}). Without it, the root is setup_workspace.py's: the nearest directory
+at or above the current one holding .claude/workspace.json, else the current directory.
 
 Stdlib only.
 """
@@ -44,17 +44,21 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 
-def default_root():
-    """The nearest directory at or above the current one holding workspace.toml, else the
-    current directory."""
-    here = Path.cwd().resolve()
-    return next((d for d in (here, *here.parents) if (d / "workspace.toml").is_file()), here)
+# Which document, and where its analysis repo is, is setup_workspace.py's to answer: one
+# rule for every skill. Imported from beside it, as the plugin ships both. So is where the
+# workspace is: its walk-up is the port of context-kit-core's resolver, and a second one
+# here would be a third walk to keep in step.
+SETUP_SCRIPT = Path(__file__).resolve().parents[1] / "setup-project-workspace" / "setup_workspace.py"
+sys.path.insert(0, str(SETUP_SCRIPT.parent))
+import setup_workspace  # noqa: E402
+
+default_root = setup_workspace.default_root
 
 
 def set_root(root):
     global ROOT, STATE_FILE, WORK_DIR, PLAN, CLONE_DIR
     ROOT = Path(root).resolve()
-    STATE_FILE = ROOT / "workspace.toml"
+    STATE_FILE = ROOT / setup_workspace.WORKSPACE_FILE
     WORK_DIR = ROOT / ".setup" / "analysis-import"
     PLAN = WORK_DIR / "plan.json"
     CLONE_DIR = ROOT / ".setup" / "analysis-source"
@@ -83,13 +87,7 @@ PIN = re.compile(r"\d+\.\d+(?:\.\d+)?")
 # Pads a version to three parts as the top of a range: 3.12 -> 3.12.<any patch>.
 PATCH_MAX = 10**9
 # What a re-pin is followed by; the adapt skill spells it out the same way.
-SETUP_SCRIPT = Path(__file__).resolve().parents[1] / "setup-project-workspace" / "setup_workspace.py"
 RESYNC = f'uv run --no-project --python 3.12 "{SETUP_SCRIPT.as_posix()}" sync --document [name]'
-
-# Which document, and where its analysis repo is, is setup_workspace.py's to answer: one
-# rule for every skill. Imported from beside it, as the plugin ships both.
-sys.path.insert(0, str(SETUP_SCRIPT.parent))
-import setup_workspace  # noqa: E402
 
 
 def say(msg=""):
@@ -525,7 +523,7 @@ def cmd_verify(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", help="the workspace root (default: the nearest directory holding "
-                    "workspace.toml, else the current one)")
+                    ".claude/workspace.json, else the current one)")
     sub = ap.add_subparsers(dest="step", required=True)
     p = sub.add_parser("plan")
     p.add_argument("--source", required=True, help="local path, or OWNER/NAME to clone")

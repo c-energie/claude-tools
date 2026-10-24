@@ -6,8 +6,8 @@ workspace.
 ## What this directory is
 
 The `<<WORKSPACE>>` project workspace: a folder of **documents**, each authored in its own
-repos. `workspace.toml` lists them; the table below is rewritten from it whenever a document
-is added. Made by the `project-workspace@c-energie` plugin.
+repos. `.claude/workspace.json` lists them as `members`; the table below is rewritten from it
+whenever a document is added. Made by the `project-workspace@c-energie` plugin.
 
 <!-- documents (managed by /project-workspace:add-document) -->
 <!-- /documents -->
@@ -24,8 +24,8 @@ so `git status` in the document repo never shows analysis changes. Each has its 
 `CLAUDE.md`/`AGENTS.md`: read it before editing there.
 
 This folder may itself be a git repo (`/project-workspace:setup-project-workspace` offers it).
-If it is, it tracks only this file, `workspace.toml` and `.gitignore`, and ignores every
-document.
+If it is, it tracks only this file, `.claude/workspace.json` and `.gitignore`, and ignores every
+member.
 
 There is no Python here. Each analysis repo has its own `.venv`, built by `uv sync` inside
 it; a notebook's kernel is that venv's interpreter.
@@ -49,7 +49,7 @@ uv run check-figure-parity              # after regenerating figures; non-zero o
 uv run check-figure-parity --snapshot   # record a new baseline
 ```
 
-The plugin's `sync` step passes the extras `workspace.toml` records for that document, so
+The plugin's `sync` step passes the extras `.claude/workspace.json` records for that document, so
 nothing gets uninstalled by mistake.
 
 The LaTeX is compiled on Overleaf. `make` in a document repo is optional and local only.
@@ -92,5 +92,7 @@ session is inside, else the only one, else the one you name.
 | `/project-workspace:setup-doc-publish` | Optional, per document: corpus, Notion wiki, Quarto site. |
 | `/project-workspace:setup-observer` | Invoked by the setup skills: logs deviations from the guide and, with consent, files them on GitHub. |
 
-To drop a document from this workspace, delete its `[[document]]` entry in
-`workspace.toml` (and its directory, once everything in it is pushed).
+To drop a document from this workspace, delete its entry in `members` in
+`.claude/workspace.json` — and its nested analysis repo's, if it has one — (and its directory,
+once everything in it is pushed). Leave the file's other keys alone: they belong to other
+plugins.
