@@ -8,9 +8,10 @@ tools = ["latexmk", "make", "quarto"]
 env_vars = ["DOC_REPO", "DOC_ENV", "FIGURES_HTML_DIR"]
 secret_vars = ["NOTION_TOKEN"]
 # Files and directories at the workspace root whose presence the baseline records.
-# pyproject.toml, .python-version and .venv belong to schema-1 workspaces only: at a schema-2
-# root they are leftovers of a migrate that stopped part-way.
-state_files = ["workspace.toml", "CLAUDE.md", ".git", "pyproject.toml", ".python-version", ".venv", ".env"]
+# workspace.toml is the manifest before `migrate`, .claude/workspace.json after it.
+# pyproject.toml, .python-version and .venv belong to schema-1 workspaces only: at a migrated
+# root they are leftovers of a migrate that stopped part-way, or something else's (#34).
+state_files = [".claude/workspace.json", "workspace.toml", "CLAUDE.md", ".git", "pyproject.toml", ".python-version", ".venv", ".env"]
 
 # Which repo a deviation is reported on. `upstream` and `this machine only` are implicit.
 

@@ -20,6 +20,7 @@ node --test hooks/load-context.test.mjs  # the autoload gate; stdlib only, no ne
 node --test hooks/workspace-freshness.test.mjs  # the hook inside a workspace; local bare repos, no network
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
 node --test scripts/workspace.test.mjs   # the workspace resolver and its bash twin; stdlib only, no network
+node --test hooks/connection-gate.test.mjs   # the connection gate + setup-connectors' workspace write; no network
 node scripts/workspace.mjs --no-pull     # the nearest .claude/workspace.json's root, else the context repo (--json)
 bash scripts/workspace-root.sh --no-pull # the same, in bash, for hooks
 bash scripts/workspace-root.sh --no-fallback  # the workspace route only — never runs context-repo.sh
@@ -208,13 +209,21 @@ bash scripts/start-context-session.sh --dry-run  # the same menu for macOS/Linux
   array is accepted but says nothing about which is which, so `context-doctor` nudges it to a
   map. `names()` in the gate and in `setup-connectors.mjs` must stay in step, and the gate's
   copy must be **total** — it sits in front of a fail-open catch, so a throw there would allow
-  every MCP call on the machine rather than deny one. The policy is *derived* from
-  `context.json` (falling back to the marker's mirrored copy, which is what reaches a Cowork
-  sandbox) — never a hand-written deny list, which enumerates the others and is stale the day
-  a connection is added. It **fails open and says so on stderr** when the policy cannot be
+  every MCP call on the machine rather than deny one. The policy is *derived* from the
+  nearest `.claude/workspace.json` (`findWorkspace()` only — never `resolveWorkspace()`, whose
+  fallback can pull or clone), and only when there is none from `context.json` (falling back to
+  the marker's mirrored copy, which is what reaches a Cowork sandbox) — never a hand-written deny
+  list, which enumerates the others and is stale the day a connection is added. It **fails open and says so on stderr** when the policy cannot be
   read: a gate that blocked every MCP call on a missing checkout would be worse than none.
   `connections: {}` denies every provider connector; an absent `connections` key denies
-  nothing — the same absent-versus-empty distinction drawn everywhere else.
+  nothing — the same absent-versus-empty distinction drawn everywhere else. A workspace that is
+  found is the whole answer: its absent `connections` does not fall through to a context.json or
+  marker. A malformed nearest `workspace.json` goes to the legacy route, as the resolver does,
+  and the gate fails open naming it if that finds nothing; `setup-connectors` instead **refuses**
+  it, since a writer that fell back would edit a policy the directory no longer uses. In a
+  workspace `setup-connectors` writes only the top-level `connections` key, through
+  `json-block.mjs`'s `upsertBlockInFile()`, and names connections from `name` with `repo`'s owner
+  as the default owner key.
 - **A workspace is the nearest `.claude/workspace.json`, and nothing else decides it** (ADR
   0002). `scripts/workspace.mjs` walks from the working dir to the filesystem root and returns
   the first directory holding one: nearest wins, levels never merge, and the walk does **not**

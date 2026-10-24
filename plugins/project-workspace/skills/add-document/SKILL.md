@@ -7,12 +7,13 @@ description: Add a document to a project workspace — a new document repo from 
 
 **First, invoke `/project-workspace:setup-observer`** (once per session).
 
-A **document** is one document repo inside the project workspace, listed in
-`workspace.toml`, with optionally an analysis repo nested inside it later
+A **document** is one document repo inside the project workspace, recorded as a
+`kind: "document"` member in `.claude/workspace.json`, with optionally an analysis repo nested inside it later
 (`/project-workspace:add-analysis`). A workspace holds any number of them.
 
-Prerequisite: `workspace.toml` at the root with `schema = 2`. Missing, or without `schema` →
-invoke `/project-workspace:setup-project-workspace` first.
+Prerequisite: `.claude/workspace.json` at the root. Missing, or only a `workspace.toml` there
+(every step refuses until it is migrated) → invoke `/project-workspace:setup-project-workspace`
+first.
 
 Mechanical work is `setup_workspace.py`, shared with setup-project-workspace:
 
@@ -84,8 +85,10 @@ but **the first run downloads about 230 MB**: say so before running it. Caption 
 such as `Figure 3:` are stripped automatically; everything else the conversion gets wrong is
 on adapt-existing-document's checklist.
 
-The step lists the document in `workspace.toml`, adds a row to `CLAUDE.md`'s documents table
-and, in a tracked workspace, to the `.gitignore` documents block.
+The step records the document as a member in `.claude/workspace.json`, adds a row to
+`CLAUDE.md`'s documents table and, **in a tracked workspace, edits the root `.gitignore`**: its
+managed members block gains `/<dir>/`. A line the user already has for that directory outside
+the block is left alone and reported (`note .gitignore already ignores ...`), not repeated.
 
 ## 3. Bring the existing document in (`adapt`, `import`)
 
@@ -111,7 +114,7 @@ Take the first rung that applies, and tell setup-observer which one it was:
   the template uses biblatex/biber, and lualatex or pdflatex both work.
 - **Commit** in the document repo (`adapt`: the overlay files; `fresh`/`import`: the
   initialised template), asking before the commit and the push. In a tracked workspace,
-  propose `workspace.toml`, `CLAUDE.md`, `.gitignore` at the root.
+  propose `.claude/workspace.json`, `CLAUDE.md`, `.gitignore` at the root.
 - Delete `.setup/<dir>/import-source/` once an `import` is finished.
 - **Generated figures?** If question 7 was yes, invoke **`/project-workspace:add-analysis`**
   for this document now; otherwise say it can be added any time, without recreating anything.

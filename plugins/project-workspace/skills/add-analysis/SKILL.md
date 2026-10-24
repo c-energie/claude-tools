@@ -15,7 +15,8 @@ so no `DOC_REPO` is set anywhere. The work is done by the document repo's own
 copy too old to know `--python` and in-place `--dir`); this skill does
 the interview, the proof and the hand-offs.
 
-Prerequisite: `workspace.toml` with `schema = 2` listing the document. Otherwise →
+Prerequisite: `.claude/workspace.json` listing the document. Otherwise (or with only a
+`workspace.toml`, which every step refuses until it is migrated) →
 `/project-workspace:setup-project-workspace`, then `/project-workspace:add-document`.
 
 ```bash
@@ -78,8 +79,10 @@ SETUP add-analysis --document <name> --from <url> --backend plotly        # adop
 `setup-nested.sh` clones or creates the repo, gitignores it, writes `layout.toml`, writes
 `.python-version`, runs the analysis repo's `init.py` with the answers, and runs `uv sync`
 inside it. The step then records the document's `extras` (`dev`, `notebooks`, the backend)
-in `workspace.toml` — `SETUP sync` passes them all, so a later sync never uninstalls one —
-and reports **document checks**:
+in `.claude/workspace.json` — `SETUP sync` passes them all, so a later sync never uninstalls
+one — records the analysis repo itself as a `kind: "analysis"` member (`dir`
+`<document dir>/<analysis dir>`, its `repo`, `documents: [<document dir>]`), and reports
+**document checks**:
 
 - `no Sections/ yet` → `/project-workspace:adapt-existing-document` moves the first section
   in before any figure can land; §4's proof waits for it.
@@ -133,7 +136,8 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
 - Commits, asking before each commit and push: in the **analysis repo**, its initial commit
   (`init.py`'s changes, `.python-version`, the baseline); in the **document repo**,
   `layout.toml`, `.gitignore` (and `setup-nested.sh`/`.gitattributes` if the step added or updated
-  them) and the example figure; at a tracked workspace root, `workspace.toml` and `CLAUDE.md`.
+  them) and the example figure; at a tracked workspace root, `.claude/workspace.json` and
+  `CLAUDE.md`.
 - Delete `.setup/<document dir>/executed/`.
 - Offer **`/project-workspace:setup-doc-publish`** (corpus, Notion wiki, Quarto site).
 

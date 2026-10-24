@@ -1,0 +1,15 @@
+# STAND-IN for c-energie/smeter-validation-workspace's workspace.toml: the real file was not
+# readable from the sandbox that wrote these tests. Replace this file with a verbatim copy
+# (keep the name) and re-run the suite; the test asserts every document and extra survives.
+# Written by /project-workspace and read by its skills. Edit it by hand to
+# rename a document's directory or repo, or to drop a document from the list
+# (deleting its directory is up to you).
+
+schema = 2
+name = "smeter-validation-workspace"
+
+[[document]]
+name = "smeter-validation"
+dir = "smeter-validation-writing"
+repo = "c-energie/smeter-validation-writing"
+extras = ["dev", "notebooks", "plotly", "publish"]
