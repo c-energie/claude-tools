@@ -172,9 +172,12 @@ SETUP restore
 
 It clones every member missing on disk — parents first — and leaves every one present
 untouched. An analysis repo nested in a document is restored by that document's own
-`setup-nested.sh` (as add-analysis restores it, venv included), never cloned here. A member
-with no `repo`, or a non-checkout folder in its place, is listed as not restored (exit 1).
-Then prove each analysis repo as add-analysis §4 does.
+`setup-nested.sh` (as add-analysis restores it, venv included), never cloned here. A
+workspace analysis (one in no document) is cloned and its venv synced with the extras its
+member records; with none recorded, its venv is left for `SETUP sync --analysis <dir>
+--extra ...`. A member with no `repo`, or a non-checkout folder in its place, is listed as
+not restored (exit 1). Then prove each analysis repo as add-analysis §4 (§6 for a workspace
+analysis) does.
 
 ## Converting workspace.toml
 
@@ -238,7 +241,7 @@ renames a repo or a document directory: Overleaf's sync and IDE configs point at
 
 A migrate that stops before `workspace.json` is written is resumed by re-running it. One
 that stops after (in `setup-nested.sh` or the sync) is finished with
-`SETUP add-analysis --dir <analysis> --backend <backend>` and `SETUP sync`; `SETUP migrate`
+`SETUP add-analysis --dir <analysis> --backend <backend>` and `SETUP sync --document <name>`; `SETUP migrate`
 then lists the root leftovers to back up and delete.
 
 Not this skill: a document → `/project-workspace:add-document`; an analysis repo →

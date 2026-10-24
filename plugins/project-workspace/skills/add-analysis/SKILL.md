@@ -1,6 +1,6 @@
 ---
 name: add-analysis
-description: Nest an analysis repo (c-energie/analysis-template; notebooks and doc_analysis figure/table tooling) inside one document of a project workspace, with its own venv, and prove a generated figure lands in the document — or restore the analysis repo on a fresh clone. Use when the user asks to add analysis, generated figures or notebooks to a document, or when a document's layout.toml names an analysis directory that is missing.
+description: Nest an analysis repo (c-energie/analysis-template; notebooks and doc_analysis figure/table tooling) inside one document of a project workspace, with its own venv, and prove a generated figure lands in the document — or make a workspace analysis, a member of its own feeding none or several documents, and attach or detach documents later — or restore either on a fresh clone. Use when the user asks to add analysis, generated figures or notebooks to a document, to start analysis before any write-up or one shared by several documents, or when a document's layout.toml or the workspace names an analysis directory that is missing.
 ---
 
 # Add an analysis repo to a document
@@ -10,12 +10,21 @@ description: Nest an analysis repo (c-energie/analysis-template; notebooks and d
 The analysis repo is **nested inside its document repo**: a separate repo with its own
 remote, gitignored by the document repo and recorded in its `layout.toml`
 (`writing-hosts-analysis`). It has its own `.venv`. It finds the document from `layout.toml`,
-so no `DOC_REPO` is set anywhere. The work is done by the document repo's own
-`setup-nested.sh` (writing-template ships it; the step adds it if missing, or replaces a
-copy too old to know `--python` and in-place `--dir`); this skill does
+so no `DOC_REPO` is set — except in an adopted or restored repo made before
+analysis-template #12 (no `doc_analysis/layout.py`), which carries the `doc_analysis` it was
+made with: the step writes `DOC_REPO` into that repo's gitignored `.env` (§3). The work is
+done by the document repo's own `setup-nested.sh` (writing-template ships it; the step
+adds it if missing, or replaces a copy too old to know `--python` and in-place `--dir`); this skill does
 the interview, the proof and the hand-offs.
 
-Prerequisite: `.claude/workspace.json` listing the document. Otherwise (or with only a
+That is a **nested analysis**, and §1–§5 make one. A **workspace analysis** is the other
+kind: a member of the workspace in its own right, inside no document repo, feeding zero or
+more documents — exploratory work before any write-up, or a method whose figures go into
+several documents. §6 makes one. A document may have its nested analysis *and* be fed by
+any number of workspace analyses.
+
+Prerequisite: `.claude/workspace.json` listing the document (for a workspace analysis, the
+file alone). Otherwise (or with only a
 `workspace.toml`, which every step refuses until it is migrated) →
 `/project-workspace:setup-project-workspace`, then `/project-workspace:add-document`.
 
@@ -26,7 +35,12 @@ uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspac
 Abbreviated `SETUP <step>`; `--dry-run` goes before `<step>`. Never commit or push without
 asking; confirm the one repo to be created (owner, name, visibility) before it is.
 
-## 1. Which document, and which case
+## 1. Which kind, which document, and which case
+
+First ask: **nest it in one document, or make a workspace analysis** (feeds no document
+yet, or several)? An existing repo whose notebooks feed only one document is nested. A
+workspace analysis → §6, skipping the rest of this section and §2–§5. Also §6: the workspace
+lists an analysis member at the top level whose directory is missing (a fresh clone).
 
 `SETUP document` prints the document this session acts on as JSON — the one the session is
 inside, else the only one; with several, it lists them: ask, then pass `--document <name>`
@@ -36,7 +50,7 @@ everywhere below. Its `analysis_dir`:
 - **set, but `analysis_path` missing on disk** → a fresh clone: **restore** it with
   `SETUP add-analysis --document <name> [--backend matplotlib]` (no other flags; the backend
   only if it was matplotlib), then §3–§4.
-- **set and present** → already done; offer §4's proof or `SETUP sync`.
+- **set and present** → already done; offer §4's proof or `SETUP sync --document <name>`.
 
 `SETUP check --analysis` must pass (it adds `sh` — Git Bash's on Windows — and the analysis
 template).
@@ -46,7 +60,8 @@ template).
 1. **New or existing analysis repo?** New → created from `analysis-template` as
    `<owner>/<document repo>-analysis`, owner defaulting to the document repo's GitHub owner.
    An existing repo whose notebooks feed *only this document* → adopted with `--from <url>`
-   (cloned; the original untouched). A larger project only partly feeding it → still
+   (cloned; the original untouched; one older than analysis-template #12 gets a `.env`
+   `DOC_REPO`, §3). A larger project only partly feeding it → still
    **new**, with question 6.
 2. **Names** (new) — repo name (default `<document repo>-analysis`) and directory inside the
    document repo (default the same); visibility (default private).
@@ -89,6 +104,13 @@ one — records the analysis repo itself as a `kind: "analysis"` member (`dir`
 - `Sections/<Name>/Figures/ is not in \graphicspath` → add the entry (adapt-existing-document
   step 3) for each section that will get figures.
 
+**An adopted or restored repo older than analysis-template #12** has no
+`doc_analysis/layout.py`, so it cannot find the document from `layout.toml`: the step writes
+`DOC_REPO=<document path>` into its `.env` and says so (`--dry-run` only says it would).
+Other lines of an existing `.env` are kept; a `DOC_REPO` already there is left alone. `.env`
+is gitignored: never commit it. A template sync (porting the current template's
+`doc_analysis`) removes the need, and the line with it. A repo created now gets no `.env`.
+
 Extras later (`marimo`, `publish`, …): `SETUP sync --document <name> --extra <x>`.
 
 ## 4. Prove the pipeline
@@ -108,8 +130,9 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
 - **The document is found.** `uv run python -c "import sys; from doc_analysis import notebook_setup, document_repo; notebook_setup(); print(sys.executable); print(document_repo())"`
   — expect this repo's `.venv` interpreter, then the document repo's absolute path. Run the
   same with that interpreter from the **document repo root** too: an IDE opening the
-  document starts its kernel there. `document_repo()` raises `no Sections/ directory` for an
-  adopted Overleaf document not yet adapted; that is expected — adapt-existing-document runs
+  document starts its kernel there. `DOC_REPO is not set` means the repo predates
+  analysis-template #12 and its `.env` lacks the `DOC_REPO` §3 writes: check that file.
+  `document_repo()` raises `no Sections/ directory` for an adopted Overleaf document not yet adapted; that is expected — adapt-existing-document runs
   this proof once the first section is in.
 - **A figure lands** (document still has `Sections/Example/`, plotly):
   `uv run jupyter nbconvert --to notebook --execute notebooks/example/example_figure.ipynb --output-dir <workspace>/.setup/<document dir>/executed --ExecutePreprocessor.timeout=600`.
@@ -120,10 +143,25 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
   On matplotlib, copy the README's matplotlib usage block into a scratch notebook instead.
   No `Sections/Example/` → adapt-existing-document step 5 does this against a real section.
 
-  **Expected `git status`:** analysis repo — the `--snapshot` baseline, `.python-version`
-  and `init.py`'s changes (a modified notebook means it ran in place: `git restore` it);
-  document repo — `layout.toml`, `.gitignore`, `Sections/Example/Figures/example_scatter.png`
-  and `Sections/Example/tables.tex` (#10). Anything else is a deviation to log.
+  **Expected `git status`** — a new and an adopted (`--from`) repo differ, and each list
+  below is the whole of it (#39):
+  - **Analysis repo, new:** the `--snapshot` baseline, `.python-version`, `init.py`'s
+    changes, and an untracked `uv.lock`.
+  - **Analysis repo, adopted:** an untracked `uv.lock` (until it is committed; it may be the
+    first one this repo has, if the lock used to sit at a schema-1 workspace root);
+    `.python-version` only if the step wrote one (`--python` passed, or none was pinned); the
+    baseline only if it differs from the committed one. No `init.py` changes: an initialised
+    repo has no `init.py`, it deletes itself after running.
+  - **Document repo, either:** `layout.toml`, `.gitignore`,
+    `Sections/Example/Figures/example_scatter.png` and `Sections/Example/tables.tex` (#10),
+    plus `setup-nested.sh` (and `.gitattributes`, if the document repo had none) when §3's
+    step printed `added` or `updated an outdated setup-nested.sh in …`. An example figure already committed
+    regenerates byte-identical: no change to the PNG or `tables.tex` is then expected, not a
+    failed proof.
+
+  `uv.lock` appears in every analysis repo because analysis-template neither tracks nor
+  gitignores it and `uv sync` writes it; it is committed (§5). A modified notebook means it
+  ran in place: `git restore` it. Anything else is a deviation to log.
 - **Running notebooks:** walk the user through the analysis repo's README, "Running
   notebooks", for their editor — JupyterLab (`uv run jupyter lab`), VS Code, PyCharm or
   marimo. The kernel is **this analysis repo's venv**.
@@ -134,12 +172,61 @@ All from the analysis repo, `<document>/<analysis>/`, unless said otherwise.
   this document, handing it the notebooks or folders named. It runs after the document has
   `Sections/`, because notebooks are placed by section.
 - Commits, asking before each commit and push: in the **analysis repo**, its initial commit
-  (`init.py`'s changes, `.python-version`, the baseline); in the **document repo**,
+  (`init.py`'s changes, `.python-version`, the baseline, `uv.lock`) — for an adopted repo,
+  whichever of `uv.lock`, `.python-version` and the baseline changed; in the **document repo**,
   `layout.toml`, `.gitignore` (and `setup-nested.sh`/`.gitattributes` if the step added or updated
   them) and the example figure; at a tracked workspace root, `.claude/workspace.json` and
   `CLAUDE.md`.
 - Delete `.setup/<document dir>/executed/`.
 - Offer **`/project-workspace:setup-doc-publish`** (corpus, Notion wiki, Quarto site).
+
+## 6. A workspace analysis
+
+A member of its own: `{dir, repo, kind: "analysis", documents: [...], extras: [...]}` in
+`.claude/workspace.json`, `documents` the dirs of the documents it feeds (`[]` at first) and
+`extras` its venv's. No `layout.toml` and no `setup-nested.sh` are involved, and `SETUP check`
+(without `--analysis`) is enough.
+
+1. **Interview.** Repo name — **required**, there is no default; directory (default the
+   repo name, at the workspace top level beside the documents; `--dir analyses/<n>` or any
+   relative path otherwise); owner (default the workspace repo's owner, else the gh login);
+   visibility (default private); backend, distribution name, author and Python version as
+   §2's questions 3–5. Read back a summary, get an explicit yes, then show the plan:
+   `SETUP --dry-run add-analysis --workspace --repo-name <n> ...`, and **confirm the repo to
+   be created** (owner, name, visibility) from it.
+2. **Create it:**
+   ```bash
+   SETUP add-analysis --workspace --repo-name <n> --backend plotly --python 3.12 \
+         --distribution <dist> --author "<author>" [--dir <d>] [--owner <o>] [--public]
+   ```
+   It creates the repo from analysis-template, clones it to `<d>/`, writes
+   `.python-version` (`--python`, else 3.12 unless the checkout already pins one), runs its
+   `init.py` with no document (`--doc-repo=` empty, so it asks for none), runs `uv sync` with
+   `dev`, `notebooks` and the backend, and records the member with `documents: []` — last,
+   so a run that stopped part-way is finished by re-running the same command. In a tracked
+   workspace the root `.gitignore` names it, and `CLAUDE.md` gains an **Analyses** table.
+3. **Feed documents**, now or later — no files move, only `documents` changes:
+   ```bash
+   SETUP attach-analysis --analysis <d> --document <document dir>   # a second run is a no-op
+   SETUP detach-analysis --analysis <d> --document <document dir>
+   ```
+   Only a `kind: "document"` member can be attached; anything else is refused, naming the
+   documents there are. A nested analysis is not attached anywhere: it feeds its own document.
+4. **Restore** on a fresh clone of the root: `SETUP add-analysis --workspace --repo-name <n>`
+   (or `--dir <d>`) with no other flag clones it back from its recorded repo and syncs it
+   with its recorded extras; `SETUP restore` does the same for every missing member.
+5. **Proof, for now:** the plotly check and the tests from §4 run as there, from `<d>/`.
+   Figures do not: until c-energie/analysis-template#20 gives `doc_analysis` a no-document
+   mode (and reads `documents`), `document_repo()` raises in a workspace analysis, so
+   `save_fig` has nowhere to put a figure. Say so rather than calling it a failure; ignore
+   `init.py`'s note about `DOC_REPO`.
+6. **Commits**, asking before each: in the **analysis repo**, `init.py`'s changes,
+   `.python-version` and `uv.lock`; at a tracked root, `.claude/workspace.json`, `CLAUDE.md`
+   and `.gitignore`.
+
+`SETUP sync` with no flag syncs every analysis venv, nested and workspace, each with its own
+recorded extras; `SETUP sync --analysis <d> --extra <x>` adds one extra to a workspace
+analysis and records it on its member.
 
 Not this skill: a new document → `/project-workspace:add-document`; existing notebooks →
 `/project-workspace:adapt-existing-analysis`; an old workspace with the analysis repo beside

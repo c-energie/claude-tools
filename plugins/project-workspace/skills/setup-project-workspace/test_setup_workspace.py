@@ -366,6 +366,103 @@ class AddDocument(Workspace):
         self.assertIn("code member", str(caught.exception))
 
 
+class FakeGh:
+    """Stands in for `quiet`: answers the `gh` reads create_from_template makes about one
+    existing repo. `template` is what templateRepository holds; `files` are at its root."""
+
+    def __init__(self, template=None, files=(), view_fails=False):
+        self.template, self.files, self.view_fails = template, set(files), view_fails
+
+    def __call__(self, cmd, **kwargs):
+        def answer(code, out=""):
+            return subprocess.CompletedProcess(cmd, code, out, "")
+        if cmd[:3] == ["gh", "repo", "view"] and cmd[-1] == "name":
+            return answer(0, '{"name": "thesis"}')
+        if cmd[:3] == ["gh", "repo", "view"]:
+            if self.view_fails:
+                return answer(1)
+            return answer(0, json.dumps({"templateRepository": self.template}))
+        if cmd[:2] == ["gh", "api"] and "/contents/" in cmd[2]:
+            return answer(0 if cmd[2].split("/contents/")[1] in self.files else 1)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+
+class CreateFromTemplate(Workspace):
+    """Fresh mode takes an existing repo only if writing-template made it (#40)."""
+
+    def create(self, gh, exists=True):
+        out = io.StringIO()
+        with mock.patch.object(sw, "repo_exists", return_value=exists), \
+                mock.patch.object(sw, "quiet", side_effect=gh), \
+                mock.patch.object(sw, "run") as run, \
+                mock.patch.object(sw, "wait_for_content"), \
+                contextlib.redirect_stdout(out):
+            sw.create_from_template(sw.WRITING_TEMPLATE, "o/thesis", "private")
+        return out.getvalue(), run
+
+    def test_missing_repo_is_created_from_the_template(self):
+        _, run = self.create(FakeGh(), exists=False)
+        run.assert_called_once_with(["gh", "repo", "create", "o/thesis", "--template",
+                                     sw.WRITING_TEMPLATE, "--private"])
+
+    def test_repo_made_from_the_template_is_used_as_is(self):
+        printed, run = self.create(FakeGh(template={"nameWithOwner": sw.WRITING_TEMPLATE}))
+        self.assertIn("using it as-is", printed)
+        run.assert_not_called()
+
+    def test_template_given_as_name_and_owner_counts(self):
+        owner, name = sw.WRITING_TEMPLATE.split("/")
+        printed, run = self.create(FakeGh(template={"name": name, "owner": {"login": owner}}))
+        self.assertIn("using it as-is", printed)
+
+    def test_no_template_but_the_marker_files_is_used_as_is(self):
+        printed, run = self.create(FakeGh(files={"main.tex", "document_settings.sty"}))
+        self.assertIn("using it as-is", printed)
+        run.assert_not_called()
+
+    def test_failed_template_lookup_falls_back_to_the_markers(self):
+        printed, _ = self.create(FakeGh(view_fails=True,
+                                        files={"main.tex", "document_settings.sty"}))
+        self.assertIn("using it as-is", printed)
+
+    def test_unrelated_repo_stops(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.create(FakeGh(files={"pyproject.toml"}))
+        message = str(caught.exception)
+        self.assertIn("o/thesis already exists and was not made from", message)
+        self.assertIn("--mode adapt", message)
+
+    def test_one_marker_alone_is_not_enough(self):
+        with self.assertRaises(SystemExit):
+            self.create(FakeGh(files={"main.tex"}))
+
+    def test_made_from_another_template_stops_whatever_its_files(self):
+        with self.assertRaises(SystemExit):
+            self.create(FakeGh(template={"nameWithOwner": "c-energie/analysis-template"},
+                               files={"main.tex", "document_settings.sty"}))
+
+    def test_dry_run_stops_too(self):
+        # Reads are honest under --dry-run, so the plan shown for confirmation fails
+        # where the real run would, not after the user has said yes.
+        with mock.patch.object(sw, "DRY_RUN", True), self.assertRaises(SystemExit):
+            self.create(FakeGh())
+
+    def test_add_document_on_an_unrelated_repo_clones_and_writes_nothing(self):
+        self.call("init", "--name", "w")
+        before = self.read(".claude/workspace.json"), self.read("CLAUDE.md")
+        with mock.patch.object(sw, "repo_exists", return_value=True), \
+                mock.patch.object(sw, "quiet", side_effect=FakeGh()), \
+                mock.patch.object(sw, "clone") as clone, \
+                mock.patch.object(sw, "run_init") as run_init, \
+                self.assertRaises(SystemExit):
+            self.call("add-document", "--mode", "fresh", "--repo", "o/thesis",
+                      "--title", "T", "--author", "A")
+        clone.assert_not_called()
+        run_init.assert_not_called()
+        self.assertEqual(before, (self.read(".claude/workspace.json"), self.read("CLAUDE.md")))
+        self.assertFalse((self.tmp / "thesis").exists())
+
+
 class FindDocument(Workspace):
     def setUp(self):
         super().setUp()
@@ -404,8 +501,8 @@ class FindDocument(Workspace):
         self.assertEqual(sw.describe({"dir": "x", "repo": "o/x", "kind": "document"})["name"], "x")
 
 
-class AddAnalysis(Workspace):
-    """add-analysis hands the work to the document's own setup-nested.sh."""
+class NestsAnAnalysis(Workspace):
+    """A workspace with one document, whose setup-nested.sh is stubbed to write layout.toml."""
 
     def setUp(self):
         super().setUp()
@@ -424,6 +521,10 @@ class AddAnalysis(Workspace):
                 mock.patch.object(sw, "gh_raw", return_value="#!/bin/sh\n"):
             self.call("add-analysis", *flags)
         return run
+
+
+class AddAnalysis(NestsAnAnalysis):
+    """add-analysis hands the work to the document's own setup-nested.sh."""
 
     def test_runs_setup_nested_in_the_document_with_init_answers_after_dashes(self):
         run = self.add("--python", "3.12", "--distribution", "t-analysis", "--author", "A")
@@ -491,6 +592,54 @@ class AddAnalysis(Workspace):
             self.add("--python", "3.9")
 
 
+class AddAnalysisDocRepoEnv(NestsAnAnalysis):
+    """An adopted or restored analysis repo carries the doc_analysis it was made with. One
+    from before analysis-template #12 has no layout.py, cannot find its document from
+    layout.toml, and needs DOC_REPO in its .env (#38)."""
+
+    def add(self, *flags, lookup=False, env=None):
+        checkout = self.tmp / "thesis" / "thesis-analysis"
+        (checkout / ".git").mkdir(parents=True, exist_ok=True)
+        (checkout / "src" / "doc_analysis").mkdir(parents=True, exist_ok=True)
+        if lookup:
+            (checkout / "src" / "doc_analysis" / "layout.py").write_text("", encoding="utf-8")
+        if env is not None:
+            (checkout / ".env").write_bytes(env.encode("utf-8"))
+        return super().add("--from", "https://github.com/o/thesis-analysis.git", *flags)
+
+    def env(self):
+        return (self.tmp / "thesis" / "thesis-analysis" / ".env").read_bytes().decode("utf-8")
+
+    def test_a_repo_without_the_layout_lookup_gets_doc_repo(self):
+        self.add()
+        self.assertEqual(self.env(), f"DOC_REPO={(self.tmp / 'thesis').as_posix()}\n")
+        self.assertIn("predates analysis-template #12", self.out)
+        self.assertIn("template sync", self.out)
+
+    def test_a_repo_with_the_layout_lookup_gets_no_env(self):
+        self.add(lookup=True)
+        self.assertFalse((self.tmp / "thesis" / "thesis-analysis" / ".env").exists())
+        self.assertNotIn("DOC_REPO", self.out)
+
+    def test_other_lines_of_an_existing_env_are_kept(self):
+        self.add(env="NOTION_TOKEN=x\r\n# mine\r\nWIKI=y")
+        self.assertEqual(self.env(), "NOTION_TOKEN=x\r\n# mine\r\nWIKI=y\r\n"
+                         f"DOC_REPO={(self.tmp / 'thesis').as_posix()}\r\n")
+
+    def test_an_existing_doc_repo_is_not_overwritten(self):
+        self.add(env="A=1\nDOC_REPO=/somewhere/else\n")
+        self.assertEqual(self.env(), "A=1\nDOC_REPO=/somewhere/else\n")
+        self.assertIn("already sets DOC_REPO", self.out)
+
+    def test_dry_run_writes_no_env_but_says_it_would(self):
+        with mock.patch.object(sw, "find_sh", return_value="/bin/sh"), \
+                mock.patch.object(sw, "gh_raw", return_value="#!/bin/sh\n"):
+            self.call("--dry-run", "add-analysis", "--from",
+                      "https://github.com/o/thesis-analysis.git")
+        self.assertFalse((self.tmp / "thesis" / "thesis-analysis").exists())
+        self.assertIn("would write DOC_REPO=", self.out)
+
+
 class Sync(Workspace):
     def setUp(self):
         super().setUp()
@@ -500,6 +649,7 @@ class Sync(Workspace):
     def test_passes_recorded_extras_in_the_analysis_repo(self):
         (self.tmp / "thesis" / "layout.toml").write_text(
             'layout = "writing-hosts-analysis"\nnested_dir = "a"\n', encoding="utf-8")
+        (self.tmp / "thesis" / "a").mkdir()
         state = sw.read_state()
         sw.documents(state)[0]["extras"] = ["dev", "plotly"]
         sw.write_state(state)
@@ -513,6 +663,299 @@ class Sync(Workspace):
     def test_no_analysis_repo_stops(self):
         with self.assertRaises(SystemExit):
             self.call("sync")
+
+
+class WorkspaceAnalysis(Workspace):
+    """A workspace analysis (#41): an analysis repo that is a member in its own right, in no
+    document repo, feeding zero or more documents. GitHub, the clone and every command run
+    are mocked; the clone leaves an init.py, as analysis-template's checkout has one."""
+
+    def setUp(self):
+        super().setUp()
+        self.call("init", "--name", "w")
+        self.add_document()
+        state = self.state()
+        state["repo"] = "o/w"
+        self.write_json(state)
+
+    def fake_clone(self, repo, directory):
+        checkout = super().fake_clone(repo, directory)
+        (checkout / "init.py").write_text("# analysis-template\n", encoding="utf-8")
+        return checkout
+
+    def add(self, *flags):
+        with mock.patch.object(sw, "create_from_template") as created, \
+                mock.patch.object(sw, "clone", side_effect=self.fake_clone) as cloned, \
+                mock.patch.object(sw, "origin_url", return_value="https://github.com/o/x.git"), \
+                mock.patch.object(sw, "run") as ran:
+            # Before the call: a refusal raises out of it, and must not leave the last run's.
+            self.created, self.cloned, self.ran = created, cloned, ran
+            return self.call("add-analysis", "--workspace", *flags)
+
+    def commands(self):
+        return [(c.args[0], c.kwargs.get("cwd")) for c in self.ran.call_args_list]
+
+    def member(self, directory="x"):
+        return next(m for m in self.state()["members"] if m["dir"] == directory)
+
+    def nest_analysis_in_thesis(self):
+        """thesis hosts thesis/a, as setup-nested.sh and add-analysis leave it."""
+        (self.tmp / "thesis" / "layout.toml").write_text(
+            'layout = "writing-hosts-analysis"\nnested_dir = "a"\n', encoding="utf-8")
+        (self.tmp / "thesis" / "a").mkdir()
+        state = self.state()
+        state["members"][0]["extras"] = ["dev", "notebooks", "plotly"]
+        state["members"].append({"dir": "thesis/a", "repo": "o/a", "kind": "analysis",
+                                 "documents": ["thesis"]})
+        self.write_json(state)
+
+
+class AddWorkspaceAnalysis(WorkspaceAnalysis):
+    def test_dry_run_prints_the_plan_and_writes_nothing(self):
+        before = {n: self.read(n) for n in (".claude/workspace.json", "CLAUDE.md")}
+        with mock.patch.object(sw, "repo_exists", return_value=False), \
+                mock.patch.object(sw, "quiet", side_effect=AssertionError("no gh read needed")):
+            self.assertEqual(self.call("--dry-run", "add-analysis", "--workspace",
+                                       "--repo-name", "x"), 0)
+        self.assertIn("gh repo create o/x --template c-energie/analysis-template --private",
+                      self.out)
+        self.assertIn("gh repo clone o/x x", self.out)
+        self.assertIn("write x/.python-version", self.out)
+        self.assertIn("init.py --backend=plotly --doc-repo=", self.out)
+        self.assertIn("uv sync --extra dev --extra notebooks --extra plotly  (in x)", self.out)
+        self.assertIn("write .claude/workspace.json", self.out)
+        self.assertEqual({n: self.read(n) for n in before}, before)
+        self.assertFalse((self.tmp / "x").exists())
+
+    def test_without_repo_name_it_stops_and_says_why(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.add()
+        self.assertIn("needs --repo-name", str(stop.exception.code))
+        with self.assertRaises(SystemExit) as stop:
+            self.add("--dir", "x")
+        self.assertIn("needs --repo-name", str(stop.exception.code))
+        self.created.assert_not_called()
+
+    def test_creates_it_with_its_own_venv_and_records_the_member(self):
+        self.assertEqual(self.add("--repo-name", "x", "--distribution", "x-analysis",
+                                  "--author", "A"), 0)
+        self.created.assert_called_once_with(sw.ANALYSIS_TEMPLATE, "o/x", "private",
+                                             otherwise=mock.ANY)
+        self.cloned.assert_called_once_with("o/x", "x")
+        self.assertEqual(self.read("x/.python-version"), "3.12\n")
+        (init, init_cwd), (sync, sync_cwd) = self.commands()
+        self.assertEqual(init[1:], ["init.py", "--backend=plotly", "--doc-repo=",
+                                    "--distribution=x-analysis", "--author=A"])
+        self.assertEqual((init_cwd, sync_cwd), (self.tmp / "x", self.tmp / "x"))
+        self.assertEqual(sync, ["uv", "sync", "--extra", "dev", "--extra", "notebooks",
+                                "--extra", "plotly"])
+        self.assertEqual(self.member(), {"dir": "x", "repo": "o/x", "kind": "analysis",
+                                         "documents": [], "extras": ["dev", "notebooks", "plotly"]})
+
+    def test_flags_choose_owner_visibility_dir_backend_and_python(self):
+        self.add("--repo-name", "x", "--owner", "me", "--public", "--dir", "analyses/x",
+                 "--backend", "matplotlib", "--python", "3.11")
+        self.created.assert_called_once_with(sw.ANALYSIS_TEMPLATE, "me/x", "public",
+                                             otherwise=mock.ANY)
+        self.cloned.assert_called_once_with("me/x", "analyses/x")
+        self.assertEqual(self.read("analyses/x/.python-version"), "3.11\n")
+        self.assertEqual(self.member("analyses/x")["extras"], ["dev", "notebooks", "matplotlib"])
+
+    def test_owner_defaults_to_the_gh_login_without_a_workspace_repo(self):
+        state = self.state()
+        del state["repo"]
+        self.write_json(state)
+        login = subprocess.CompletedProcess([], 0, "someone\n", "")
+        with mock.patch.object(sw, "quiet", return_value=login):
+            self.add("--repo-name", "x")
+        self.assertEqual(self.member()["repo"], "someone/x")
+
+    def test_a_re_run_records_it_once(self):
+        self.add("--repo-name", "x")
+        shutil.rmtree(self.tmp / "x")
+        self.add("--repo-name", "x")
+        self.assertEqual([m["dir"] for m in self.state()["members"]], ["thesis", "x"])
+
+    def test_a_dir_inside_a_document_or_held_by_a_member_is_refused(self):
+        for flags, why in ((("--dir", "thesis/x"), "nested analysis"),
+                           (("--dir", "thesis"), "the document member thesis/"),
+                           (("--dir", "../x"), "relative path inside")):
+            with self.assertRaises(SystemExit) as stop:
+                self.add("--repo-name", "x", *flags)
+            self.assertIn(why, str(stop.exception.code))
+        self.created.assert_not_called()
+
+    def test_nested_mode_flags_are_refused(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.add("--repo-name", "x", "--document", "thesis")
+        self.assertIn("a workspace analysis is in none", str(stop.exception.code))
+
+    def test_the_claude_md_analyses_table_lists_it_and_the_documents_it_feeds(self):
+        self.assertNotIn("| Analysis | Repo | Documents fed |", self.read("CLAUDE.md"))
+        self.add("--repo-name", "x")
+        self.assertIn("| `x/` | `o/x` | none yet |", self.read("CLAUDE.md"))
+        self.call("attach-analysis", "--analysis", "x", "--document", "thesis")
+        self.assertIn("| `x/` | `o/x` | `thesis/` |", self.read("CLAUDE.md"))
+
+    def test_a_tracked_workspace_ignores_it(self):
+        (self.tmp / ".git").mkdir()
+        with mock.patch.object(sw, "root_tracked_dirs", return_value=[]):
+            self.add("--repo-name", "x")
+        self.assertIn("/x/\n", self.read(".gitignore"))
+
+
+class RestoreWorkspaceAnalysis(WorkspaceAnalysis):
+    def setUp(self):
+        super().setUp()
+        self.add("--repo-name", "x")
+        shutil.rmtree(self.tmp / "x")
+
+    def test_re_running_workspace_mode_clones_it_back_and_syncs_it(self):
+        before = self.read(".claude/workspace.json")
+        self.assertEqual(self.add("--repo-name", "x"), 0)
+        self.created.assert_not_called()
+        self.cloned.assert_called_once_with("o/x", "x")
+        self.assertEqual(self.commands(), [(["uv", "sync", "--extra", "dev", "--extra",
+                                             "notebooks", "--extra", "plotly"], self.tmp / "x")])
+        self.assertEqual(self.read(".claude/workspace.json"), before)
+
+    def test_its_dir_alone_identifies_it(self):
+        self.add("--dir", "x")
+        self.cloned.assert_called_once_with("o/x", "x")
+
+    def test_create_flags_are_refused_on_a_restore(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.add("--repo-name", "x", "--python", "3.12")
+        self.assertIn("--python do not apply", str(stop.exception.code))
+        self.cloned.assert_not_called()
+
+    def test_a_present_checkout_is_left_alone(self):
+        self.fake_clone("o/x", "x")
+        self.add("--repo-name", "x")
+        self.cloned.assert_not_called()
+        self.ran.assert_not_called()
+        self.assertIn("nothing to restore", self.out)
+
+    def test_the_restore_step_clones_and_syncs_it_too(self):
+        with mock.patch.object(sw, "clone", side_effect=self.fake_clone) as cloned, \
+                mock.patch.object(sw, "run") as ran:
+            self.assertEqual(self.call("restore"), 0)
+        cloned.assert_called_once_with("o/x", "x")
+        self.assertEqual(ran.call_args.args[0][:2], ["uv", "sync"])
+        self.assertEqual(ran.call_args.kwargs["cwd"], self.tmp / "x")
+
+
+class AttachAnalysis(WorkspaceAnalysis):
+    def setUp(self):
+        super().setUp()
+        self.add("--repo-name", "x")
+        self.add_document(repo="o/paper")
+
+    def attach(self, *flags, step="attach-analysis"):
+        return self.call(step, "--analysis", "x", *flags)
+
+    def test_attach_adds_the_document_once(self):
+        self.attach("--document", "thesis")
+        after = self.read(".claude/workspace.json")
+        self.assertEqual(self.member()["documents"], ["thesis"])
+        self.attach("--document", "thesis")
+        self.assertIn("already feeds thesis/; nothing changed", self.out)
+        self.assertEqual(self.read(".claude/workspace.json"), after)
+
+    def test_it_can_feed_several_and_detach_removes_one(self):
+        self.attach("--document", "thesis")
+        self.attach("--document", "paper")
+        self.assertEqual(self.member()["documents"], ["thesis", "paper"])
+        self.attach("--document", "thesis", step="detach-analysis")
+        self.assertEqual(self.member()["documents"], ["paper"])
+        self.attach("--document", "thesis", step="detach-analysis")
+        self.assertIn("does not feed thesis/; nothing changed", self.out)
+
+    def test_an_unknown_or_non_document_dir_is_refused(self):
+        state = self.state()
+        state["members"].append({"dir": "tool", "repo": "o/tool", "kind": "code"})
+        self.write_json(state)
+        before = self.read(".claude/workspace.json")
+        for document, why in (("nope", "names no member"),
+                              ("tool", "is the code member tool/, not a document"),
+                              ("x", "is the analysis member x/, not a document")):
+            with self.assertRaises(SystemExit) as stop:
+                self.attach("--document", document)
+            self.assertIn(why, str(stop.exception.code))
+        self.assertEqual(self.read(".claude/workspace.json"), before)
+
+    def test_an_unknown_analysis_or_a_nested_one_is_refused(self):
+        self.nest_analysis_in_thesis()
+        with self.assertRaises(SystemExit) as stop:
+            self.call("attach-analysis", "--analysis", "nope", "--document", "thesis")
+        self.assertIn("No workspace analysis 'nope'", str(stop.exception.code))
+        with self.assertRaises(SystemExit) as stop:
+            self.call("attach-analysis", "--analysis", "thesis/a", "--document", "paper")
+        self.assertIn("nested in thesis/", str(stop.exception.code))
+
+    def test_a_document_with_a_nested_analysis_can_also_be_fed(self):
+        self.nest_analysis_in_thesis()
+        self.attach("--document", "thesis")
+        self.assertEqual(self.member()["documents"], ["thesis"])
+        self.assertEqual(self.member("thesis/a")["documents"], ["thesis"])
+
+    def test_a_document_is_recorded_by_its_dir_when_named(self):
+        state = self.state()
+        state["members"][0]["name"] = "My Thesis"
+        self.write_json(state)
+        self.attach("--document", "My Thesis")
+        self.assertEqual(self.member()["documents"], ["thesis"])
+
+    def test_dry_run_writes_nothing(self):
+        before = self.read(".claude/workspace.json")
+        self.call("--dry-run", "attach-analysis", "--analysis", "x", "--document", "thesis")
+        self.assertIn("write .claude/workspace.json", self.out)
+        self.assertEqual(self.read(".claude/workspace.json"), before)
+
+    def test_unknown_member_fields_survive(self):
+        state = self.state()
+        self.member_of(state)["mine"] = 1
+        self.write_json(state)
+        self.attach("--document", "thesis")
+        self.assertEqual(self.member()["mine"], 1)
+
+    def member_of(self, state):
+        return next(m for m in state["members"] if m["dir"] == "x")
+
+
+class SyncEveryAnalysis(WorkspaceAnalysis):
+    def setUp(self):
+        super().setUp()
+        self.add("--repo-name", "x", "--backend", "matplotlib")
+        self.nest_analysis_in_thesis()
+
+    def sync(self, *flags):
+        with mock.patch.object(sw, "run") as ran:
+            code = self.call("sync", *flags)
+        return code, [(c.args[0], c.kwargs["cwd"]) for c in ran.call_args_list]
+
+    def test_bare_sync_syncs_nested_and_workspace_each_with_its_extras(self):
+        code, ran = self.sync()
+        self.assertEqual(code, 0)
+        self.assertEqual(ran, [
+            (["uv", "sync", "--extra", "dev", "--extra", "notebooks", "--extra", "plotly"],
+             self.tmp / "thesis" / "a"),
+            (["uv", "sync", "--extra", "dev", "--extra", "notebooks", "--extra", "matplotlib"],
+             self.tmp / "x")])
+
+    def test_analysis_names_one_and_extra_is_recorded_on_its_member(self):
+        code, ran = self.sync("--analysis", "x", "--extra", "marimo")
+        self.assertEqual(ran, [(["uv", "sync", "--extra", "dev", "--extra", "notebooks",
+                                 "--extra", "matplotlib", "--extra", "marimo"], self.tmp / "x")])
+        self.assertEqual(self.member()["extras"], ["dev", "notebooks", "matplotlib", "marimo"])
+        self.assertEqual(self.docs()[0]["extras"], ["dev", "notebooks", "plotly"])
+
+    def test_one_missing_on_disk_is_reported_and_the_rest_synced(self):
+        shutil.rmtree(self.tmp / "x")
+        code, ran = self.sync()
+        self.assertEqual(code, 1)
+        self.assertEqual([cwd for _, cwd in ran], [self.tmp / "thesis" / "a"])
+        self.assertIn("x/: x/ is not on disk", self.out)
 
 
 class MigrateSchema1(Workspace):
@@ -920,6 +1363,7 @@ class UnknownKeysSurvive(Workspace):
         def nested(cmd, cwd=None, **kw):
             (self.tmp / "thesis" / "layout.toml").write_text(
                 'layout = "writing-hosts-analysis"\nnested_dir = "a"\n', encoding="utf-8")
+            (self.tmp / "thesis" / "a").mkdir(exist_ok=True)
         with mock.patch.object(sw, "run", side_effect=nested), \
                 mock.patch.object(sw, "find_sh", return_value="/bin/sh"):
             self.call("add-analysis")
@@ -1389,6 +1833,14 @@ class Restore(FolderOfClones):
         nested = [c for c in ran.call_args_list if "setup-nested.sh" in c.args[0]]
         self.assertEqual(len(nested), 1)
         self.assertEqual(nested[0].kwargs["cwd"], self.tmp / "thesis")
+
+    def test_a_restored_repo_older_than_template_12_gets_doc_repo(self):
+        # ANALYSIS_FILES has no doc_analysis/layout.py: an analysis repo made before #12.
+        shutil.rmtree(self.tmp / "thesis")
+        self.restore()
+        env = self.tmp / "thesis" / "thesis-analysis" / ".env"
+        self.assertEqual(env.read_text(encoding="utf-8"),
+                         f"DOC_REPO={(self.tmp / 'thesis').as_posix()}\n")
 
     def test_dry_run_clones_nothing(self):
         shutil.rmtree(self.tmp / "thesis")
