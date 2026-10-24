@@ -1,20 +1,23 @@
 ---
 name: context-access
-description: How to reach the project's context repo over the GitHub API — the MCP route sandbox sessions (Cowork) use, git being unavailable there. Defines which route each surface takes, the operations it needs, and the rules that keep an API write from truncating a file. Background knowledge for save-thread, refresh-context, curate-context and the pending queue; not a task to run.
+description: How to reach the project's workspace repo over the GitHub API — the MCP route sandbox sessions (Cowork) use, git being unavailable there. Defines which route each surface takes, which repo and connector the uploaded workspace.json names, the paths Cowork may write, and the rules that keep an API write from truncating a file. Background knowledge for save-thread, refresh-context, curate-context and the pending queue; not a task to run.
 user-invocable: false
 ---
 
-# Reaching the context repo over the GitHub API
+# Reaching the workspace repo over the GitHub API
 
-**A project's context repo is reached two different ways, one per surface.** Which one applies
-is a property of where the session is running, not something to discover by failure:
+**A project's context is reached two different ways, one per surface.** Which one applies is a
+property of where the session is running, not something to discover by failure:
 
-- **Claude Code on a laptop** — resolve a checkout with
-  `${CLAUDE_PLUGIN_ROOT}/scripts/context-repo.sh` and use `git`. Full history, atomic commits,
-  and the `scripts/*.mjs` are all available. Prefer this whenever `bash` runs.
-- **Cowork / cloud sandboxes** — the **GitHub API over MCP**, described in this file. Git is not
-  the route there. Reads are complete and current; writes commit straight to the default
-  branch, which is where the sharp edges are (see the rules below).
+- **Claude Code on a laptop** — the context is the workspace checkout, found with
+  `${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs` (the nearest `.claude/workspace.json`; until
+  every project has migrated, it falls back to a context repo through `context-repo.sh`), and
+  `git` is the route. Full history, atomic commits, and the `scripts/*.mjs` are all available.
+  Prefer this whenever `bash` runs.
+- **Cowork / cloud sandboxes** — the **GitHub API over MCP**, described in this file, against
+  the workspace's own repo. Git is not the route there. Reads are complete and current; writes
+  commit straight to the default branch, which is where the sharp edges are (see the rules
+  below), and they are limited to three paths.
 
 **Say which route produced the answer** — its provenance changes with it. Never present an API
 read as a git one, and never answer from the copy loaded at session start while claiming it is
@@ -29,27 +32,55 @@ carrying their own copy.
 
 ## Which repo, and which connector
 
-Both are configuration, never a guess:
+Both come from the workspace's **`workspace.json`**, never a guess. In Cowork it arrives as a
+file uploaded to the project — wherever the sandbox put it (`/mnt/project/`, `~/mnt/uploads/`,
+`~/mnt/.projects/[uuid]/docs/`, flat or under `.claude/`). The connection gate finds it with
+`${CLAUDE_PLUGIN_ROOT}/scripts/cowork-workspace.mjs`; without a shell, look in those places
+yourself.
 
-- **The repo** — `PROJECT_CONTEXT_REPO` (env, or the project's `.claude/settings(.local).json`
-  env block), else a marker file's `contextRepo`. The value `none` means this project has
-  deliberately opted out; there is nothing to reach. See `context-setup` for the full ladder.
-- **The connector** — the context repo's `context.json` `connections.github` names the MCP
-  server to use, and a `context-project.json` marker carries the same name so the very first
-  action of a sandbox session already knows it. On a machine with several scoped GitHub
-  connections, **any other one is off-limits for this project** — a token scoped to a different
-  owner is exactly how the wrong repo gets written. `connection-gate.mjs` enforces this rather
-  than trusting it, so reaching for another project's connector is refused, not merely discouraged.
+- **The repo** — the top-level **`repo`** (`owner/name`). That one, and **never a
+  `members[].repo`**: the members are code and documents with their own history, not the place
+  context lives, and a Cowork write into one is refused by the gate.
+- **The connector** — `connections.github`, chosen exactly as on a laptop: a single name is the
+  connector, and an owner-keyed map
+  (`{ "github": { "c-energie": "github-c-energie", "your-user": "github-personal" } }`, needed
+  because a fine-grained PAT has a single resource owner) is read at **the owner of `repo`**.
+  From Cowork every other GitHub connector is refused — including the map's other entries, which
+  reach other owners' repositories and are not needed for the one repo this route touches.
+  Guessing would cost a 404 that says "not found" when it means "wrong credential".
+  `connection-gate.mjs` enforces this rather than trusting it.
 
-  **It may name more than one.** A fine-grained PAT has a single resource owner, so a project
-  spanning two owners declares a map of owner to connection:
-  `{ "github": { "your-user": "github-personal", "c-energie": "github-personal-c-energie" } }`.
-  Pick by the owner of the repo you are reaching for — that is what the key is for. Guessing
-  costs you a 404 that says "not found" when it means "wrong credential", the same wrong-cause
-  failure a data-source ID gives a Notion create. Where the owner is not knowable, the entry
-  matching the context repo's own owner is the one every core operation here needs.
+**The uploaded copy only bootstraps.** It is a snapshot from whenever someone uploaded it, so
+take exactly two things from it — `repo` and the connector name — and then **re-read
+`.claude/workspace.json` from `repo` over the API**. That copy wins for everything else
+(`state.*`, `members`, `connections` changes made since), and if it disagrees with the upload on
+`repo` or the connector, say so: the upload is stale and should be replaced. (The gate, which has
+no API access, keeps using the uploaded copy; that is why only those two keys are trusted from
+it.) No uploaded `workspace.json` at all means the gate is failing open — say so, and ask for it
+to be attached to the project rather than guessing a repo.
 
 Pass `branch` explicitly (usually `main`) rather than relying on the tool's default.
+
+## What Cowork may write
+
+**Writes go to the workspace `repo` only, and only under:**
+
+- `docs/threads/` — working threads (`save-thread`)
+- `docs/meetings/` — meeting notes
+- `.context/` — machine state, such as the pending queue (`.context/pending/`)
+
+**Everything else is read-only from Cowork** — `docs/memory.md`, `GLOSSARY.md`, `docs/adr/`,
+`CLAUDE.md`, code, all of it. The reason is the rule below that bites hardest: an API write
+replaces the whole file, so a curated file rebuilt from a partial or stale read is silently
+truncated, with no diff anyone sees before it is public. Threads, meetings and queue entries are
+created or appended one at a time and survive that; the curated files are exactly the ones a
+truncation would quietly destroy. **Curate them from a laptop**, where git shows the diff — and
+if the user asks for such an edit here, say so and draft the change in the reply instead.
+
+This is enforced, not merely asked: the connection gate denies any path-taking GitHub write
+(`create_or_update_file`, `push_files`, `delete_file`, and the like) outside those prefixes or
+outside `repo`, naming the allowlist. A `push_files` with one disallowed path is refused whole.
+Paths are compared normalised, so `docs/threads/../memory.md` is refused too.
 
 ## How the MCP route is set up
 
@@ -65,8 +96,8 @@ write mode with a token you have been given** — the scripts read credentials f
 prompt, stdin or the environment precisely so a token never passes through the conversation.
 Point the user at the command; let them run it.
 
-The token wants to be **fine-grained**, scoped to this project's context repo, Contents **read
-and write**, with an expiry. A GitHub PAT has a single resource owner, so a second owner needs a
+The token wants to be **fine-grained**, scoped to this project's workspace repo, Contents
+**read and write**, with an expiry. A GitHub PAT has a single resource owner, so a second owner needs a
 second token *and* a second connection —
 `setup-connectors.mjs --add github:[owner]` declares it and keeps the existing one, promoting the
 value to the owner-keyed map form rather than overwriting.
@@ -103,7 +134,7 @@ session and map them onto the operations below:
 | Operation | Needed by | Tool |
 |---|---|---|
 | Read one file | everything | `get_file_contents` — returns the content **and its `sha`** |
-| List a directory | `threads/`, `pending/` | `get_file_contents` with a directory path, which returns entries |
+| List a directory | `docs/threads/`, `.context/pending/` | `get_file_contents` with a directory path, which returns entries |
 | Recent commits | "what changed since" | `list_commits` |
 | Write one file | `save-thread`, `add-pending` | `create_or_update_file` — needs `sha` when the file exists |
 | Write several in one commit | rare here | `push_files` |
@@ -112,8 +143,9 @@ If the server is missing, or an operation you need has no tool, **stop and name 
 piece.** "I can read the context but cannot write it" is a useful, true answer; guessing a tool
 name and reporting success is not.
 
-When the server is missing entirely, the diagnosis is `context-setup` (is the repo named at
-all? is the declared connection present in this session?) then `setup-connectors` (is the
+When the server is missing entirely, the diagnosis is: is a `workspace.json` attached to the
+project at all, and is the connection it declares present in this session? Then
+`setup-connectors` (is the
 credential scoped to this repo, approved by the org, and unexpired?). Work in that order, and
 reach for `CONTEXT_GIT_TOKEN` and the git route only after those are ruled out: on every
 surface but a laptop shell, this server *is* the route.
@@ -129,26 +161,30 @@ These are the differences that bite. They are not stylistic.
 - **Never reconstruct a file from memory.** Read the current content, modify it, write the whole
   thing back. The API replaces the file; a write built from what you remember of it silently
   truncates everything you forgot. This is the single most damaging failure mode on this path,
-  and it has no equivalent on the git path, where a diff would have shown it.
+  and it has no equivalent on the git path, where a diff would have shown it. It is also why
+  the curated files are off-limits here (see *What Cowork may write*).
 - **Updating an existing file needs its blob `sha`**, returned by `get_file_contents`. Read
   immediately before writing, and pass that `sha` through. Omitting it on a file that exists is
   rejected as a create-over-existing; passing a stale one is the API telling you someone else
   changed the file in between — **re-read and reapply**, never force. Creating a genuinely new
   file takes no `sha`.
-- **Appending means read + append + write back whole**, for the same reason. `pending/` entries
-  and dated thread updates are both appends.
+- **Appending means read + append + write back whole**, for the same reason. `.context/pending/`
+  entries and dated thread updates are both appends.
 - **Pass plain text** where the tool accepts it. Only base64-encode if the tool requires it, and
   never double-encode — a base64 blob committed as text is the kind of thing nobody notices for
   a week.
-- Commit messages follow the context repo's own convention exactly as on the git path
+- Commit messages follow the workspace repo's own convention exactly as on the git path
   (`threads: [topic]`, `pending: [what]`).
 
 ## What this path cannot do
 
 Say so rather than half-doing it:
 
-- **`curate-context`** — moves files, rewrites `memory.md`, and rebuilds `threads/INDEX.md` with
-  `thread-index.mjs`. Multi-file, script-driven, and destructive if half-applied. Shell only.
+- **`curate-context`** — moves files, rewrites `docs/memory.md`, and rebuilds
+  `docs/threads/INDEX.md` with `thread-index.mjs`. Multi-file, script-driven, destructive if
+  half-applied — and `docs/memory.md` is outside the write allowlist anyway. Shell only.
+- **`memory-triage`'s promotion into `docs/memory.md`**, and any edit to `GLOSSARY.md` or
+  `docs/adr/` — read-only from Cowork, by the allowlist above.
 - **`sync-notion-mirror`** (context-notion) — `mirror-render.mjs` owns the mirror folder so that
   an unchanged Notion produces no diff. Hand-writing that folder destroys the property that
   makes its `git diff` readable. Shell only, and **never hand-edit the mirror**.
@@ -158,11 +194,11 @@ Say so rather than half-doing it:
 
 ## Rules that do not change
 
-The context repo's own house rules for `threads/` hold on either route — read its
-`threads/README.md`, `templates/` and `taxonomy.yml` (where they exist) through the connector
+The workspace's own house rules for `docs/threads/` hold on either route — read its
+`docs/threads/README.md` and any templates it points at (where they exist) through the connector
 before writing, exactly as the git path reads them off disk. **No angle brackets in any
 front-matter value** on either route: ingesters read them as a tag and silently drop the field.
 
 **Not this skill:** the Notion side of the same problem — a workspace *guest* whose queries
-return empty rather than erroring — is context-notion's `notion-config`. This file is only about
-reaching the context *repo*.
+return empty rather than erroring — is context-notion's `notion-config`; declaring or provisioning
+a connector is `setup-connectors`. This file is only about reaching the workspace *repo*.

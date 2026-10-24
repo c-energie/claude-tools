@@ -56,9 +56,9 @@ const legacy = (home, connections) => {
 
 // Built from scratch rather than spread over process.env, so a developer with
 // PROJECT_CONTEXT_REPO exported in their own shell does not configure every case below.
-const gate = ({ cwd, home, tool, env = {} }) => {
+const gate = ({ cwd, home, tool, input, env = {} }) => {
   const r = spawnSync(process.execPath, [GATE], {
-    input: JSON.stringify({ tool_name: tool, cwd }),
+    input: JSON.stringify({ tool_name: tool, cwd, ...(input ? { tool_input: input } : {}) }),
     env: { PATH: process.env.PATH, HOME: home, CLAUDE_PROJECT_DIR: cwd, ...env },
     encoding: 'utf8',
   });
@@ -214,6 +214,114 @@ test('a non-MCP tool is ignored silently', () => {
   const r = gate({ cwd: root, home, tool: 'Bash' });
   assert.equal(r.denied, false);
   assert.equal(r.stderr, '');
+});
+
+// ---------------------------------------------------------------- the gate: Cowork route (#61)
+// A sandbox session: no workspace above the working dir, and the workspace.json uploaded to
+// ~/mnt/uploads (flat, as uploads are believed to arrive). HOME is scratch, so this is the one
+// mount layout a test can build without root; cowork-workspace.test.mjs covers the others.
+
+const WS_REPO = 'acme/workspace';
+const cowork = (connections, { at = 'workspace.json', extra = {} } = {}) => {
+  const home = scratch();
+  const file = join(deep(home, 'mnt', 'uploads', dirname(at)), 'workspace.json');
+  writeFileSync(file, JSON.stringify({
+    schema: 1, name: 'acme', repo: WS_REPO,
+    members: [{ dir: 'members/code', repo: 'acme/code', kind: 'code' }],
+    ...(connections === undefined ? {} : { connections }), ...extra,
+  }));
+  return { home, cwd: deep(home, 'sessions', 'outputs') };
+};
+const write = (path, repo = 'workspace', owner = 'acme') => ({ owner, repo, path, content: 'x', message: 'm', branch: 'main' });
+
+test('Cowork: the uploaded workspace.json is found, flat or under .claude/, and gates connectors', () => {
+  for (const at of ['workspace.json', join('.claude', 'workspace.json')]) {
+    const { home, cwd } = cowork({ github: 'github-acme' }, { at });
+    assert.equal(gate({ cwd, home, tool: 'mcp__github-acme__get_file_contents', input: { owner: 'acme', repo: 'workspace', path: 'README.md' } }).denied, false, at);
+    const r = gate({ cwd, home, tool: 'mcp__github-other__get_file_contents' });
+    assert.equal(r.denied, true, at);
+  }
+});
+
+test('Cowork: a walk-up workspace wins over an uploaded one', () => {
+  const { home } = cowork({ github: 'github-uploaded' });
+  const root = workspace(deep(home, 'ws'), { schema: 1, name: 'acme', repo: WS_REPO, connections: { github: 'github-checkout' } });
+  const cwd = member(root);
+  assert.equal(gate({ cwd, home, tool: 'mcp__github-checkout__create_or_update_file', input: write('src/a.py') }).denied, false,
+    'a checkout is the laptop route: no allowlist');
+  assert.equal(gate({ cwd, home, tool: 'mcp__github-uploaded__x' }).denied, true);
+});
+
+test('Cowork: nothing found anywhere fails open, saying where it looked', () => {
+  const home = scratch();
+  const r = gate({ cwd: deep(home, 'sessions', 'outputs'), home, tool: 'mcp__github-acme__create_or_update_file', input: write('docs/memory.md') });
+  assert.equal(r.denied, false);
+  assert.match(r.stderr, /uploaded to the sandbox mount areas/);
+});
+
+test('Cowork: writes under the allowlist pass, curated and code paths are denied naming it', () => {
+  const { home, cwd } = cowork({ github: 'github-acme' });
+  const tool = 'mcp__github-acme__create_or_update_file';
+  for (const path of ['docs/threads/x.md', '.context/pending/y.json']) {
+    const r = gate({ cwd, home, tool, input: write(path) });
+    assert.equal(r.denied, false, `${path}: ${r.reason}`);
+  }
+  for (const path of ['docs/memory.md', 'GLOSSARY.md', 'src/a.py', 'docs/threads/../memory.md']) {
+    const r = gate({ cwd, home, tool, input: write(path) });
+    assert.equal(r.denied, true, path);
+    assert.match(r.reason, /docs\/threads\/, docs\/meetings\/, \.context\//, path);
+    assert.match(r.reason, /truncated/, 'the deny gives the why');
+  }
+  assert.equal(gate({ cwd, home, tool: 'mcp__github-acme__delete_file', input: write('docs/adr/0001.md') }).denied, true);
+});
+
+test('Cowork: push_files with one disallowed path is denied whole', () => {
+  const { home, cwd } = cowork({ github: 'github-acme' });
+  const input = { owner: 'acme', repo: 'workspace', branch: 'main', message: 'm',
+    files: [{ path: 'docs/threads/a.md', content: 'x' }, { path: 'docs/memory.md', content: 'x' }] };
+  const r = gate({ cwd, home, tool: 'mcp__github-acme__push_files', input });
+  assert.equal(r.denied, true);
+  assert.match(r.reason, /"docs\/memory\.md"/);
+  assert.doesNotMatch(r.reason, /"docs\/threads\/a\.md"/, 'only the offending path is named');
+  input.files.pop();
+  assert.equal(gate({ cwd, home, tool: 'mcp__github-acme__push_files', input }).denied, false);
+});
+
+test('Cowork: a write to a member repo or any other repo is denied, reads are not', () => {
+  const { home, cwd } = cowork({ github: 'github-acme' });
+  for (const [owner, repo] of [['acme', 'code'], ['someone', 'else']]) {
+    const r = gate({ cwd, home, tool: 'mcp__github-acme__create_or_update_file', input: write('docs/threads/x.md', repo, owner) });
+    assert.equal(r.denied, true, `${owner}/${repo}`);
+    assert.match(r.reason, /not this workspace's repo/);
+  }
+  for (const input of [{ owner: 'acme', repo: 'code', path: 'src/a.py' }, { owner: 'acme', repo: 'workspace', path: 'docs/memory.md' }]) {
+    assert.equal(gate({ cwd, home, tool: 'mcp__github-acme__get_file_contents', input }).denied, false, JSON.stringify(input));
+  }
+  // A write with no repo named cannot be shown to target the workspace, so it is not allowed.
+  assert.equal(gate({ cwd, home, tool: 'mcp__github-acme__create_or_update_file', input: { path: 'docs/threads/x.md' } }).denied, true);
+});
+
+test('Cowork: a github connector not named for the repo owner is denied, map case included', () => {
+  // Plain string: only that one.
+  let s = cowork({ github: 'github-acme' });
+  assert.equal(gate({ ...s, tool: 'mcp__github-personal__get_file_contents' }).denied, true);
+  // Owner-keyed map: the workspace repo owner's entry passes, the other declared one does not —
+  // on a laptop both would.
+  s = cowork({ github: { acme: 'github-acme', corson94: 'github-personal' } });
+  assert.equal(gate({ ...s, tool: 'mcp__github-acme__get_file_contents' }).denied, false);
+  const r = gate({ ...s, tool: 'mcp__github-personal__get_file_contents' });
+  assert.equal(r.denied, true);
+  assert.match(r.reason, /acme\/workspace's owner \(acme\)/);
+  assert.match(r.reason, /Use github-acme/);
+  // A map with no entry for the owner: no github connector at all.
+  s = cowork({ github: { corson94: 'github-personal' } });
+  const none = gate({ ...s, tool: 'mcp__github-personal__get_file_contents' });
+  assert.equal(none.denied, true);
+  assert.match(none.reason, /no github connection for acme\/workspace's owner/);
+  // Other providers keep the ordinary rule.
+  s = cowork({ github: 'github-acme', notion: 'notion-acme' });
+  assert.equal(gate({ ...s, tool: 'mcp__notion-acme__query' }).denied, false);
+  assert.equal(gate({ ...s, tool: 'mcp__notion-other__query' }).denied, true);
 });
 
 // ---------------------------------------------------------------- setup-connectors in a workspace

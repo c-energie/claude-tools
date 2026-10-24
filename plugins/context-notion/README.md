@@ -127,6 +127,26 @@ root `workspace.mjs` printed — never by a folder or repo name.
 | `sync-notion-mirror` | 🔒 Regenerate the read-only Notion mirror (via `mirror-render.mjs`) |
 | `weekly-review` | The recurring runner: which of the above to run each week, in order |
 
+## Hooks
+
+| Hook | When | What it does |
+| --- | --- | --- |
+| `hooks/adr-nudge.mjs` | `PostToolUse` on `Write` / `Edit` / `MultiEdit` | A numbered ADR (`docs/adr/0001-….md`) was written or edited → tells the model to **offer** mirroring it into the decision log with `log-decision` |
+
+ADRs are written by many routes — `domain-modeling`, `implement`, spec follow-ups, by hand — and
+none of them carried the decision to Notion; the decision log then quietly disagreed with the
+code. The hook is the one trigger every route passes through. It **nudges and never writes**: the
+row needs the ADR's reasoning, which only `log-decision` reads, and the model is told to ask
+the user first, to name the ADR's filename in the row, and to check `query-decisions` before
+logging an edited ADR so a status flip does not create a duplicate. Configured-but-offline goes
+to `add-pending`.
+
+It is silent unless the ADR sits under a `.claude/workspace.json` (found by walking up from the
+ADR, so a member repo's `docs/adr/` counts) whose `state.notion` has a `decisionLog` in
+`databases` or `pageParents` — or `CONTEXT_CONFIG` pins such a config. A legacy context repo is
+**not** resolved (that can clone, and a file-write hook stays off the network), so those
+projects get no nudge. Once per ADR per session; every failure is silence and exit 0.
+
 Only `actions`, `openQuestions` and `decisionLog` are contract keys. The rest of the table
 works off whatever *other* database keys a project declares (`stakeholders`, `relatedProjects`,
 `meetings`, …) — a project without one simply doesn't get that skill's job, and the skill says
@@ -143,6 +163,7 @@ node scripts/mirror-render.mjs "$ROOT" export.json       # render the mirror (--
 node scripts/notion-state.mjs "$CONFIG" block.json       # PLAN writing state.backend + state.notion; --write
 node scripts/vtt-to-text.mjs meeting.vtt --out out.txt   # transcript → compact speaker-labelled text
 node scripts/dates.mjs today                             # add weekly | add 3d | window 7 | age
+node --test hooks/adr-nudge.test.mjs                     # the ADR nudge: synthetic events in, additionalContext out
 node ../context-kit-core/scripts/check-plugin.mjs .       # repo lint — run before any commit
 node ../context-kit-core/scripts/bump-version.mjs . patch
 ```

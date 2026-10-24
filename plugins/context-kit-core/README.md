@@ -320,8 +320,26 @@ that existed the day it was written, and goes stale silently in the dangerous di
 | policy unreadable (no repo, no clone, broken JSON) | pass, with the reason on stderr |
 
 The policy is the nearest `.claude/workspace.json`'s `connections`, found by walking up from the
-project dir — so a member repo nested in a workspace is gated by the workspace. Only when no
-workspace is found does it fall back to the context repo's `context.json` and the marker.
+project dir — so a member repo nested in a workspace is gated by the workspace. When the walk-up
+finds none, it looks for a `workspace.json` **uploaded to a Cowork project**
+(`scripts/cowork-workspace.mjs`: `/mnt/project/`, `~/mnt/.projects/[uuid]/docs/`,
+`~/mnt/uploads/`, the Windows host's `.project-cache/[uuid]/docs/`, flat or under `.claude/`, then
+a bounded search of the mount areas). Only when neither is found does it fall back to the context
+repo's `context.json` and the marker.
+
+**From an uploaded `workspace.json` the gate is stricter** (ADR 0002, #61), because there the
+GitHub API is the only route and every write is an immediate whole-file commit:
+
+| Situation (Cowork) | Outcome |
+| --- | --- |
+| a github connector other than the one for `repo`'s owner — even another entry of the map | **deny** |
+| a path-taking write (`create_or_update_file`, `push_files`, `delete_file`, …) to any repo but `repo` — a member's included | **deny** |
+| a write to `repo` outside `docs/threads/`, `docs/meetings/`, `.context/` | **deny**, naming the allowlist |
+| a read, anywhere the connector reaches | unaffected |
+
+`docs/memory.md`, `GLOSSARY.md` and `docs/adr/` are curated from a laptop: an API write replaces
+the whole file, and a curated file rebuilt from a partial read is truncated without a diff anyone
+sees. A laptop session — a workspace found by walking up — is untouched by all three rows.
 
 Two properties are load-bearing. It **fails open and says why**, because a gate that blocks every
 MCP call the moment a checkout is missing is worse than no gate and breaks the hook contract. And

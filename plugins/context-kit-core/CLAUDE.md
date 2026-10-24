@@ -21,6 +21,8 @@ node --test hooks/workspace-freshness.test.mjs  # the hook inside a workspace; l
 node scripts/bump-version.mjs . patch    # major|minor|patch; writes plugin.json only
 node --test scripts/workspace.test.mjs   # the workspace resolver and its bash twin; stdlib only, no network
 node --test hooks/connection-gate.test.mjs   # the connection gate + setup-connectors' workspace write; no network
+node --test scripts/cowork-workspace.test.mjs   # the uploaded-workspace search + Cowork write allowlist; fake HOME and /mnt
+node scripts/cowork-workspace.mjs        # the workspace.json uploaded to a Cowork sandbox, or why not (--json)
 node scripts/workspace.mjs --no-pull     # the nearest .claude/workspace.json's root, else the context repo (--json)
 bash scripts/workspace-root.sh --no-pull # the same, in bash, for hooks
 bash scripts/workspace-root.sh --no-fallback  # the workspace route only — never runs context-repo.sh
@@ -189,8 +191,9 @@ node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting prom
   copy must be **total** — it sits in front of a fail-open catch, so a throw there would allow
   every MCP call on the machine rather than deny one. The policy is *derived* from the
   nearest `.claude/workspace.json` (`findWorkspace()` only — never `resolveWorkspace()`, whose
-  fallback can pull or clone), and only when there is none from `context.json` (falling back to
-  the marker's mirrored copy, which is what reaches a Cowork sandbox) — never a hand-written deny
+  fallback can pull or clone), then from a `workspace.json` uploaded to a Cowork sandbox (see the
+  next invariant), and only when there is neither from `context.json` (falling back to the
+  marker's mirrored copy) — never a hand-written deny
   list, which enumerates the others and is stale the day a connection is added. It **fails open and says so on stderr** when the policy cannot be
   read: a gate that blocked every MCP call on a missing checkout would be worse than none.
   `connections: {}` denies every provider connector; an absent `connections` key denies
@@ -202,6 +205,25 @@ node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting prom
   workspace `setup-connectors` writes only the top-level `connections` key, through
   `json-block.mjs`'s `upsertBlockInFile()`, and names connections from `name` with `repo`'s owner
   as the default owner key.
+- **In Cowork the workspace is an UPLOADED `workspace.json`, and the gate narrows** (ADR 0002,
+  #61). `scripts/cowork-workspace.mjs`'s `findUploadedWorkspace()` is asked **only when the
+  walk-up found nothing** (a malformed nearest file still goes to the legacy route): the marker
+  search's layouts — `/mnt/project/`, `~/mnt/.projects/*/docs/`, `~/mnt/uploads/`,
+  `[project]/../../.project-cache/*/docs/` — each for `workspace.json` and
+  `.claude/workspace.json`, then a bounded search (depth ≤5, an entry budget, no symlinks, no
+  WSL drive mounts) of the mount areas only, **never the working tree**. A candidate counts only
+  with a `"repo": "owner/name"` — `workspace.json` is also Nx's file name — and a refused one is
+  reported and skipped, not stopped at. It is core-only and deliberately **not** in
+  `findWorkspace()`, which four other plugins copy and every laptop resolver uses. From such a
+  file, two rules apply that a laptop never sees: the github connector is the one keyed by
+  `repo`'s owner (other map entries are denied), and any path-taking GitHub tool that is not a
+  `get_`/`list_`/`search_`-style read must target `repo` itself — never a `members[].repo` — with
+  every path under `COWORK_WRITE_ALLOWLIST` (`docs/threads/`, `docs/meetings/`, `.context/`),
+  normalised, `..` refused. Curated files (`docs/memory.md`, `GLOSSARY.md`, `docs/adr/`) are
+  read-only from Cowork because an API write replaces the whole file. Writes are classified by a
+  **read**-list, so a server's next writing tool is gated on arrival. `context-access` states the
+  same list and adds what the gate cannot do: the upload only bootstraps `repo` and the
+  connector, and the `.claude/workspace.json` re-read from `repo` over the API wins for the rest.
 - **A workspace is the nearest `.claude/workspace.json`, and nothing else decides it** (ADR
   0002). `scripts/workspace.mjs` walks from the working dir to the filesystem root and returns
   the first directory holding one: nearest wins, levels never merge, and the walk does **not**
