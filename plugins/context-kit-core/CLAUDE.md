@@ -258,8 +258,8 @@ node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting prom
   `workspace.json` is a legacy context repo, checked exactly as before and tested FIRST so an
   outer workspace never judges it; anything else is the nearest workspace. In a workspace the
   checks for keys it retired (template, the marker) do not run, and the same rules apply at ADR
-  0002's paths — `docs/memory.md` (and its `@` import in `CLAUDE.md`), `docs/threads/`,
-  `.context/pending/`.
+  0002's paths — `docs/memory.md` (and its `@` import in `CLAUDE.md`, or in the user-level
+  `~/.claude/CLAUDE.md` for the personal layer), `docs/threads/`, `.context/pending/`.
   `--fix` **never writes `workspace.json`**: the doctor owns no key in it. The doctor's one
   network call is `gh repo view` for visibility, made only when `docs/meetings/` or
   `.context/pending/` exists, warning when the workspace repo is PUBLIC; a failed lookup is a

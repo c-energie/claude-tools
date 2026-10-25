@@ -532,14 +532,37 @@ if (!existsSync(join(ROOT, MEMORY_REL))) {
   }
 }
 
+// The personal layer's workspace (ADR 0002) is the exception: its docs/memory.md is imported by
+// the user-level ~/.claude/CLAUDE.md so it loads in every session, and importing it again from
+// its own CLAUDE.md would load it twice there. Any workspace imported that way counts: an `@`
+// path names this file once `~/` is expanded and a relative path is taken from ~/.claude/, as
+// Claude Code resolves it; on Windows a Git Bash `/c/...` path counts and case is ignored.
+const importedByUserClaudeMd = (memoryPath) => {
+  const dir = join(homedir(), '.claude');
+  let text;
+  try { text = readFileSync(join(dir, 'CLAUDE.md'), 'utf8'); } catch { return false; }
+  const win = process.platform === 'win32';
+  const norm = (p) => {
+    if (/^~[\\/]/.test(p)) p = join(homedir(), p.slice(2));
+    else if (win && /^\/[a-z]\//i.test(p)) p = `${p[1]}:${p.slice(2)}`;
+    const r = resolve(dir, p).replace(/\\/g, '/');
+    return win ? r.toLowerCase() : r;
+  };
+  const want = norm(memoryPath);
+  return [...text.matchAll(/(?:^|[\s(])@([^\s`)]+)/g)].some(([, p]) =>
+    norm(p.replace(/[.,;:]+$/, '')) === want);
+};
+
 // In a workspace NOTHING injects memory: the session-start hook loads nothing there, and
-// docs/memory.md reaches a session only through `@docs/memory.md` in the root CLAUDE.md. Drop the
-// import and the file is still there, still curated, and never read — no error anywhere.
+// docs/memory.md reaches a session only through `@docs/memory.md` in the root CLAUDE.md, or the
+// user-level import above. Drop the import and the file is still there, still curated, and never
+// read — no error anywhere.
 if (WS && existsSync(join(ROOT, MEMORY_REL))) {
   const claudeMd = join(ROOT, 'CLAUDE.md');
   if (!existsSync(claudeMd)) {
     add('warn', 'memory', `no CLAUDE.md at the workspace root — nothing imports ${MEMORY_REL}, so no session loads it`);
-  } else if (!/@(\.\/)?docs\/memory\.md\b/.test(readFileSync(claudeMd, 'utf8'))) {
+  } else if (!/@(\.\/)?docs\/memory\.md\b/.test(readFileSync(claudeMd, 'utf8'))
+    && !importedByUserClaudeMd(join(ROOT, MEMORY_REL))) {
     add('warn', 'memory', `CLAUDE.md does not import @${MEMORY_REL} — the workspace's memory is never loaded`);
   }
 }

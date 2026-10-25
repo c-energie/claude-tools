@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, chmodSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,8 +46,7 @@ function fakeGh(visibility) {
   return bin;
 }
 
-function run(script, args, { cwd, gh = null } = {}) {
-  const home = scratch();
+function run(script, args, { cwd, gh = null, home = scratch() } = {}) {
   const PATH = gh ? `${gh}:${process.env.PATH}` : process.env.PATH;
   return spawnSync(process.execPath, [script, ...args], {
     cwd: cwd ?? home, encoding: 'utf8', env: { PATH, HOME: home },
@@ -149,6 +148,29 @@ test('the docs/ layout: a missing import, a missing index, a stale pending item'
   const out = doctor(root, { gh: fakeGh('PRIVATE') });
   assert.deepEqual(checks(out).sort(), ['err:threads', 'warn:index', 'warn:memory', 'warn:pending']);
   assert.match(out.findings.find((f) => f.check === 'pending').message, /^\.context\/pending\/2026-08-01-entry\.md has been queued 84 days/);
+});
+
+// The personal layer (ADR 0002): ~/gh-orgs/docs/memory.md is imported by the user-level
+// ~/.claude/CLAUDE.md so it loads everywhere, and its own CLAUDE.md deliberately does not.
+test('memory imported from the user-level CLAUDE.md counts as imported', { skip: !posix }, () => {
+  const home = scratch();
+  const root = healthy();
+  put(root, 'CLAUDE.md', '# ws\n');
+  put(home, '.claude/CLAUDE.md', `- a rule\n\n@${root}/docs/memory.md\n`);
+  assert.deepEqual(doctor(root, { home }).findings, []);
+
+  // `~/` expands to HOME; an import of some other workspace's memory still leaves this one unread.
+  const inHome = join(home, 'gh-orgs', 'ws');
+  cpSync(root, inHome, { recursive: true });
+  put(home, '.claude/CLAUDE.md', '@~/gh-orgs/ws/docs/memory.md\n');
+  assert.deepEqual(doctor(inHome, { home }).findings, []);
+  // A relative path is taken from ~/.claude/, not the doctor's cwd; trailing punctuation is prose.
+  put(home, '.claude/CLAUDE.md', 'See (@../gh-orgs/ws/docs/memory.md).\n');
+  assert.deepEqual(doctor(inHome, { home }).findings, []);
+  put(home, '.claude/CLAUDE.md', '@docs/memory.md\n');
+  assert.deepEqual(checks(doctor(inHome, { home, cwd: inHome })), ['warn:memory']);
+  put(home, '.claude/CLAUDE.md', '@~/gh-orgs/other/docs/memory.md\n');
+  assert.deepEqual(checks(doctor(inHome, { home })), ['warn:memory']);
 });
 
 test('retired keys are not checked in a workspace', { skip: !posix }, () => {
