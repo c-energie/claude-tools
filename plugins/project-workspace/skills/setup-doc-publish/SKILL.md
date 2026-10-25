@@ -11,8 +11,9 @@ reality disagree, so the maintainer can fix the guide.
 doc-publish is set up **per document**. Find the document:
 `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" document`
 prints it as JSON — the one this session is inside, else the only one; with several it lists
-them: ask, then pass `--document <name>`. Below, `<writing_dir>` is its `path` and
-`<analysis_dir>` its `analysis_path`.
+them: ask, then pass `--document <name>`. Below, `<writing_dir>` is its `path`,
+`<analysis_dir>` its `analysis_path` (a nested analysis) and `workspace_analyses` the
+workspace analyses feeding it, each with its `path` and the `documents` it feeds.
 
 Then read doc-publish's own docs before acting on anything below that has
 drifted: [README](https://github.com/c-energie/doc-publish) and
@@ -22,14 +23,25 @@ Where things live — this is the part that surprises everyone. There is no chec
 doc-publish and nothing imports it; it is a **command**, run from a **home directory** that
 holds its per-machine `.env` and gets its `build/` and `dist/` (all gitignored):
 
-| The document has | Home | `DP` below is | `.env` holds |
+| The document has | Home | `DP` below is | doc-publish finds the document by |
 |---|---|---|---|
-| an analysis repo | `<analysis_dir>/` | `uv run doc-publish` — installed into that venv by the analysis repo's `publish` extra | `DOC_REPO=<absolute writing_dir>` plus its settings |
-| no analysis repo | `<writing_dir>/` | `uvx --from git+https://github.com/c-energie/doc-publish.git doc-publish` — no venv at all | `DOC_REPO=<absolute writing_dir>` plus its settings |
+| a nested analysis (`<analysis_dir>` set) | `<analysis_dir>/` | `uv run doc-publish` — installed into that venv by the analysis repo's `publish` extra | walking up: the analysis sits inside the document |
+| no nested analysis, but a workspace analysis feeding it, if the user wants to run from there | that analysis's `path` | `uv run doc-publish`, as above | `.claude/workspace.json`, when that analysis feeds **one** document. Feeding several, it cannot choose: **every** `DP` command below takes `--document <writing_dir>` |
+| neither | `<writing_dir>/` | `uvx --from git+https://github.com/c-energie/doc-publish.git doc-publish` — no venv at all | walking up: run from inside the document |
 
-`DOC_REPO` is needed in both: `doc_analysis` finds the document from `layout.toml`, but
-doc-publish reads only `DOC_REPO`. In the analysis repo it must name the same directory
-`layout.toml` does, or `doc_analysis` warns.
+**No `DOC_REPO` in any of these.** doc-publish resolves the document as `--document`, then
+`DOC_REPO`, then the nearest directory at or above the home holding the root `.tex`, then
+`.claude/workspace.json` — the same structure `doc_analysis` reads. A `DOC_REPO` there only
+repeats it, and goes stale: if it ever names a different document than the structure does,
+doc-publish and `doc_analysis` both stop on it. The several-documents case is `--document`,
+never `DOC_REPO`, because a `.env` set to one document is silently wrong for the next.
+
+**`DOC_REPO=<absolute writing_dir>` is for a home no structure describes**: an analysis
+checkout beside the document that the workspace does not record (the sibling layout), or a
+document elsewhere on disk. Write it there, and only there.
+
+A workspace analysis's home is one `.env`, `build/` and `dist/` for every document it feeds;
+building one replaces the last one's `build/`.
 
 Its **state lives in the document repo**, `<writing_dir>/.doc-publish/`, and must be
 committed there. Losing `notion_manifest.json` makes the next sync create a second copy of
@@ -42,14 +54,46 @@ Ask before every commit, push, Notion sync and `publish`.
 **With an analysis repo:**
 `uv run --no-project --python 3.12 "${CLAUDE_SKILL_DIR}/../setup-project-workspace/setup_workspace.py" --root "${CLAUDE_PROJECT_DIR}" sync --document <name> --extra publish`
 — records `publish` among the document's extras in `.claude/workspace.json` and syncs with all of
-them (a bare `uv sync` would uninstall the others). Add
-`DOC_REPO=<absolute path of writing_dir>` to `<analysis_dir>/.env` if it is not there
-(gitignored in the analysis repo). Then `cd <analysis_dir> && uv run doc-publish --help`.
+them (a bare `uv sync` would uninstall the others). Then
+`cd <analysis_dir> && uv run doc-publish --help`.
 
-**Without:** in `<writing_dir>/`, make sure `.gitignore` has `/.env` (writing-template's
-does; an older or adopted document repo may not — add it and commit, asking), then write
-`<writing_dir>/.env` with `DOC_REPO=<absolute path of writing_dir>`. Then `DP --help` from
-there; the first run fetches doc-publish into uv's cache.
+**From a workspace analysis:**
+`... setup_workspace.py ... sync --analysis <its dir> --extra publish`, the same way; then
+`uv run doc-publish --help` from its `path`.
+
+**Without either:** in `<writing_dir>/`, make sure `.gitignore` has `/.env`, `/build/` and
+`/dist/` — writing-template's has only `/.env`, and an older or adopted document repo may have
+none; add the missing lines and commit, asking. They are not optional: run from inside the
+document, `build/` holds `corpus_draft.md` (every LaTeX comment) one `git add .` from
+Overleaf, and `DP build` refuses until git ignores it. Then `DP --help` from there; the first
+run fetches doc-publish into uv's cache.
+
+**Then, every time — including a re-run of this skill**, from the home:
+
+1. `DP config`. Its `document:` line must name `<writing_dir>` and say how — `found at or
+   above ...` (walking up), `workspace analysis ... feeds`, or `--document`. That line is the
+   proof; do not reason it out from the table instead.
+2. If it says `unresolved` and the home is one no structure describes (above), write
+   `DOC_REPO=<absolute path of writing_dir>` into the home's `.env` (gitignored; keep every
+   other line) and run `DP config` again. If the home *is* in the table, a missing `DOC_REPO`
+   is not the fault: fix what `DP config` names (a root `.tex` it cannot see is
+   `DOC_MAIN_TEX`, §2; an analysis feeding nothing yet is `attach-analysis`).
+3. If the home's `.env` already holds `DOC_REPO` (or `THESIS_REPO`, its old name), check it
+   with both `DP config` runs below **without** `--document`, which would hide it:
+   - `DP config` reads `unresolved - DOC_REPO=... is not the document ...` (every other
+     command fails on it), or the `DOC_REPO` names another directory than `<writing_dir>`:
+     **a conflict**. Report both paths and ask which
+     is right; change nothing until the user answers. A wrong `DOC_REPO` is a line to remove
+     (on yes); a wrong structure is the wrong home, or a workspace analysis attached to the
+     wrong documents.
+   - Otherwise run `DOC_REPO=' ' THESIS_REPO=' ' DP config` — blank values, which the `.env`
+     cannot override, so this shows what the structure finds alone. If it names
+     `<writing_dir>` too (or, feeding several, lists it and you are using `--document`), the
+     line is redundant: harmless, but **offer** to remove it, and remove that one line only on
+     yes. If it says `unresolved`, the line is needed: keep it.
+   - In a nested analysis with no `doc_analysis/layout.py` (nor `src/doc_analysis/layout.py`:
+     older than analysis-template #12) the line is `doc_analysis`'s, written by
+     `/project-workspace:add-analysis`: leave it.
 
 ## 2. Diagnose, then scaffold
 
@@ -64,7 +108,8 @@ DP init        # writes .doc-publish/ + two skills into the DOCUMENT repo
 
 `init` keeps existing files (the `AGENTS.md`/`CLAUDE.md` already in the document repo stay).
 If the root `.tex` is not one of `main/thesis/dissertation/report/book.tex`, `doctor` fails
-until `DOC_MAIN_TEX=<file>.tex` is in the home's `.env`.
+until `DOC_MAIN_TEX=<file>.tex` is in the home's `.env` — and walking up cannot find the
+document without it either.
 
 ## 3. Build and finish the contract
 

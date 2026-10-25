@@ -1626,13 +1626,35 @@ def install_setup_nested(document, text):
         f"{document.name}/: commit it there; it restores the analysis repo on a fresh clone)")
 
 
+def feeding_analyses(state, doc):
+    """The workspace analyses whose `documents` name `doc`, each with how many documents
+    it feeds. setup-doc-publish needs that count (#64): run from a workspace analysis
+    feeding one document, doc-publish finds it from workspace.json alone, while one feeding
+    several needs `--document` on every command. Reported here so no skill reads
+    workspace.json's members itself."""
+    mine = doc["dir"].strip("/")
+    fed = []
+    for member in workspace_analyses(state):
+        feeds = [d.strip("/") for d in member.get("documents") or []]
+        if mine in feeds:
+            fed.append({"dir": member["dir"], "path": (ROOT / member["dir"]).as_posix(),
+                        "documents": feeds, "extras": member.get("extras", [])})
+    return fed
+
+
 def cmd_document(args):
-    """Print the document a skill should act on, or every document with --all, as JSON."""
+    """Print the document a skill should act on, or every document with --all, as JSON.
+    Here rather than in describe(): only this step's readers need the workspace analyses,
+    and describe() is per document, without the state they are found in."""
     state = read_state()
+
+    def shown(doc):
+        return {**describe(doc), "workspace_analyses": feeding_analyses(state, doc)}
+
     if args.all:
-        print(json.dumps([describe(doc) for doc in documents(state)], indent=2))
+        print(json.dumps([shown(doc) for doc in documents(state)], indent=2))
     else:
-        print(json.dumps(describe(find_document(state, args.document)), indent=2))
+        print(json.dumps(shown(find_document(state, args.document)), indent=2))
     return 0
 
 

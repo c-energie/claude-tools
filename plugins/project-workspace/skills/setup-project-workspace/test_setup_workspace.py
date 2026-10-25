@@ -923,6 +923,43 @@ class AttachAnalysis(WorkspaceAnalysis):
         return next(m for m in state["members"] if m["dir"] == "x")
 
 
+class DocumentNamesItsWorkspaceAnalyses(AttachAnalysis):
+    """#64: setup-doc-publish picks doc-publish's home, and whether every command needs
+    `--document`, from the workspace analyses `document` reports -- never by reading
+    workspace.json's members itself."""
+
+    def shown(self, *flags):
+        self.call("document", *flags)
+        return json.loads(self.out)
+
+    def test_an_analysis_feeding_one_document_is_listed_with_that_count(self):
+        self.attach("--document", "thesis")
+        fed = self.shown("--document", "thesis")["workspace_analyses"]
+        self.assertEqual([(m["dir"], m["documents"]) for m in fed], [("x", ["thesis"])])
+        self.assertEqual(fed[0]["path"], (self.tmp / "x").as_posix())
+        self.assertEqual(self.shown("--document", "paper")["workspace_analyses"], [])
+
+    def test_one_feeding_several_lists_them_all_from_each_document(self):
+        self.attach("--document", "thesis")
+        self.attach("--document", "paper")
+        for name in ("thesis", "paper"):
+            fed = self.shown("--document", name)["workspace_analyses"]
+            self.assertEqual(fed[0]["documents"], ["thesis", "paper"])
+
+    def test_a_nested_analysis_is_not_one_of_them(self):
+        # It is describe()'s analysis_path: listed here too, it would read as a second home.
+        self.nest_analysis_in_thesis()
+        info = self.shown("--document", "thesis")
+        self.assertEqual(info["analysis_dir"], "a")
+        self.assertEqual(info["workspace_analyses"], [])
+
+    def test_all_carries_it_for_every_document(self):
+        self.attach("--document", "paper")
+        listed = {d["dir"]: d["workspace_analyses"] for d in self.shown("--all")}
+        self.assertEqual(listed["thesis"], [])
+        self.assertEqual([m["dir"] for m in listed["paper"]], ["x"])
+
+
 class SyncEveryAnalysis(WorkspaceAnalysis):
     def setUp(self):
         super().setUp()
