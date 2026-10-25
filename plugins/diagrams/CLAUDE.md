@@ -23,8 +23,8 @@ bash scripts/setup-diagram-store.smoke.sh        # setup steps twice + every gua
 node scripts/gallery-build.mjs [store] [store] --out ~/Desktop/diagrams.html --today 2026-08-31
 ```
 
-`DIAGRAMS_STORE=owner/repo` or `CONTEXT_CONFIG=path/to/context.json` pins the config, so every
-script runs with no context repo. `node --test scripts/diagram-store.test.mjs` covers the resolver
+`DIAGRAMS_STORE=owner/repo` or `CONTEXT_CONFIG=path/to/workspace.json` pins the config, so every
+script runs with no workspace. `node --test scripts/diagram-store.test.mjs` covers the resolver
 offline (env, cwd, context and origin owner are injected). `--today` and `--date` pin dates so output can be
 compared.
 
@@ -35,22 +35,21 @@ compared.
   side: a writer and a reader agreeing only by convention stop agreeing the first time the record
   changes, and the symptom is a gallery quietly missing rows while still rendering.
 - **No default store, ever.** The store is named by `DIAGRAMS_STORE`, else the repo's
-  `.diagrams.json`, else `state.diagrams.repo` in the nearest `.claude/workspace.json` or the
-  context repo's `context.json` (`locateStore`); none is an
+  `.diagrams.json`, else `state.diagrams.repo` in the nearest `.claude/workspace.json`
+  (`locateStore`; the context repo's `context.json` rung went with #60); none is an
   **error listing all three** — never a fallback, never "the store that exists on this machine",
-  never inferred from the origin owner (the error may *suggest* it). The ladder made context-kit
+  never inferred from the origin owner (the error may *suggest* it). The ladder made a workspace
   optional (2026-10-15); it added no default. The stores are a
   permission boundary between orgs; a default means an unconfigured project writing into another
-  org's store, silently, and it is in the history by the time anyone notices. Same shape as the
-  core layer's rule for `PROJECT_CONTEXT_REPO`, and for the same reason: *configured*,
-  *unconfigured* and *opted out* must stay three distinguishable outcomes.
+  org's store, silently, and it is in the history by the time anyone notices. *Configured*, *unconfigured*
+  and *opted out* must stay three distinguishable outcomes.
 - **The org boundary is checked on every resolve, not once at setup.** Home is the cwd repo's
-  origin owner, else the context repo's owner; a store in another org throws unless the block
+  origin owner, else the workspace `repo`'s owner; a store in another org throws unless the block
   carries `crossOrg: true` (`DIAGRAMS_CROSS_ORG=1` for the env rung). A config file travels
   between repos, so the check travels with the use. No home → `unchecked`, reported, not refused.
 - **`setup-diagram-store` creates stores private (and refuses to adopt a public one without
   `--public-ok`), never nests a checkout in a work tree, commits and pushes only its own files,
-  and never writes a checkout path into a config.** `.diagrams.json` and `context.json` are shared; `dir` there is one machine's fact
+  and never writes a checkout path into a config.** `.diagrams.json` and `workspace.json` are shared; `dir` there is one machine's fact
   (`DIAGRAM_STORE_DIR` is the per-machine override). `config` refuses `--dir` for that reason.
   Its `setup-observer/` is a verbatim copy of skills@c-energie's master (`check-plugin` checks).
 - **`index.jsonl` is append-only.** One line per diagram, so concurrent saves conflict on
@@ -82,7 +81,8 @@ compared.
   not an XML parse: the input is a file Claude just wrote, a dependency-free script cannot parse
   HTML properly anyway, and a missed label costs one search hit while a thrown parser costs the
   whole save.
-- **`context-repo.sh`, `dates.mjs`, `bash-bin.mjs` and `workspace.mjs` are copies of context-kit-core's** — a
+- **`dates.mjs` and `workspace.mjs` are copies of context-kit-core's** — a
   skill can only reference `${CLAUDE_PLUGIN_ROOT}/scripts/…` inside its own plugin. Fix the
   original in **context-kit-core** first, then copy. `check-plugin.mjs` errors on drift.
-- **Never spawn bare `bash` from a `.mjs`** — always `bashBin()`. See core's CLAUDE.md for why.
+- **Never spawn bare `bash` from a `.mjs`** — nothing here does since #60; anything that needs
+  it again copies in core's `bashBin()`. See core's CLAUDE.md for why.

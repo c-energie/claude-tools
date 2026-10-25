@@ -47,7 +47,7 @@ nobody noticed is the bug.
 
 ## Why a plugin and not part of the context stack
 
-It reads no `context.json` and needs no context repo. It is useful in any workspace that has
+It reads no `workspace.json` state and needs no context plugin. It is useful in any workspace that has
 installed the harness, which is a topic boundary of its own — the same reason `devhub` and
 `diagrams` are separate plugins rather than skills inside `context-kit-core`.
 

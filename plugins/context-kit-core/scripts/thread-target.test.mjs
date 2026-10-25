@@ -122,19 +122,32 @@ test('a member dir that is only a name prefix does not match', () => {
   assert.equal(threadTarget({ cwd: join(root, 'application') }).repo, 'acme/application');
 });
 
-test('no workspace: the context-repo route, everything else null', () => {
+// #60: there is no context-repo route to fall to. Outside a workspace a thread has no home.
+test('no workspace: no route, everything null, and the reason said', () => {
   const t = threadTarget({ cwd: deep(scratch(), 'plain') });
-  assert.equal(t.route, 'context-repo');
+  assert.equal(t.route, null);
   assert.equal(t.root, null);
   assert.equal(t.dir, null);
+  assert.match(t.messages.join('\n'), /no \.claude[\\/]workspace\.json/);
 });
 
-test('a malformed nearest workspace.json: the context-repo route, reported — never the outer one', () => {
+test('a malformed nearest workspace.json: no route, reported — never the outer one', () => {
   const outer = workspace(scratch(), { schema: 1 });
   const inner = workspace(deep(outer, 'inner'), '{ not json');
   const t = threadTarget({ cwd: inner });
-  assert.equal(t.route, 'context-repo');
+  assert.equal(t.route, null);
+  assert.equal(t.root, null);
   assert.match(t.messages.join('\n'), /malformed/);
+});
+
+test('CLI outside a workspace: the JSON line still printed, route=none on stderr, exit 1', () => {
+  const plain = deep(scratch(), 'plain');
+  const r = spawnSync(process.execPath, [TARGET], {
+    cwd: plain, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: plain },
+  });
+  assert.equal(r.status, 1);
+  assert.equal(JSON.parse(r.stdout).route, null);
+  assert.match(r.stderr, /route=none/);
 });
 
 test('CLI: one JSON line on stdout, the route on stderr, CLAUDE_PROJECT_DIR honoured', () => {

@@ -7,7 +7,7 @@
 // (domain-modeling), and that ADR arrived another way. ADRs are also written by `implement`, by
 // spec follow-ups and by hand; a file-write trigger is the one place every route passes through.
 // The session then told the issue the project had no decision log at all, because it looked for
-// context.json in the code repo. Under ADR 0002 the config is found by walking up to the nearest
+// its config in the code repo. Under ADR 0002 the config is found by walking up to the nearest
 // `.claude/workspace.json`, which is what this does — from the ADR's own directory.
 //
 // IT NUDGES; IT NEVER WRITES. The row is `log-decision`'s job: what it should say needs the ADR's
@@ -32,13 +32,11 @@
 // shape. The walk up from the ADR finds the same workspace either way, and that workspace's
 // decision log is the one the row belongs in.
 //
-// GATED ON A DECISION LOG TO WRITE TO. The config ladder is lib.mjs's first two rungs:
-// `CONTEXT_CONFIG` if pinned (tests, and anyone who pins it), else the nearest workspace.json
-// above the ADR via findWorkspace(). lib.mjs itself is not imported: it exits the process on a
-// config it cannot load and writes to stderr, and a hook must do neither. The legacy context-repo
-// rung is deliberately NOT taken: resolving it runs context-repo.sh, which can clone, and a
-// file-write hook must not touch the network. Projects still on a context repo get no nudge —
-// silence, which is the failure this hook is allowed. No `state.backend: "notion"`, or no
+// GATED ON A DECISION LOG TO WRITE TO. The config ladder is lib.mjs's: `CONTEXT_CONFIG` if
+// pinned (tests, and anyone who pins it), else the nearest workspace.json above the ADR via
+// findWorkspace(). lib.mjs itself is not imported: it exits the process on a config it cannot
+// load and writes to stderr, and a hook must do neither. No workspace above the ADR means no
+// nudge — silence, which is the failure this hook is allowed. No `state.backend: "notion"`, or no
 // `decisionLog` in `databases` or `pageParents`, means there is nowhere to log to, and a nudge
 // toward somewhere that does not exist is worse than none. Reachability is NOT tested here:
 // configured-but-offline is `add-pending`'s case, and the injected text says so.
@@ -49,8 +47,8 @@
 // a wall of identical injections. A state file that cannot be written does not stop the nudge.
 //
 // NODE, NOT SHELL. No jq to be missing, and no bare `bash` to resolve to WSL's System32\bash.exe
-// on Windows — a hook command string cannot call bashBin(), so the way to honour that invariant
-// is not to need bash at all (connection-gate.mjs is the precedent).
+// on Windows — a hook command string cannot pick Git Bash, so the way to stay clear of that is
+// not to need bash at all (connection-gate.mjs is the precedent).
 //
 // FAIL SILENT. Every path exits 0, and every error — unreadable stdin, malformed JSON, missing or
 // malformed config — exits with no output, so a broken hook never blocks a write or ends a turn.

@@ -14,7 +14,7 @@ A project workspace holds several documents; each is a document repo with, optio
 analysis repo nested inside it (root `CONTEXT.md` has the terms; the shape is
 `docs/adr/0001-project-workspace-nested-documents.md`).
 
-Outside the context stack, like `devhub` and `skills`: it reads no `context.json`.
+Outside the context stack, like `devhub` and `skills`: it owns `workspace.json`'s identity and `members`, and nothing else.
 
 ## Invariants
 
@@ -74,8 +74,8 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
   nearest file (a directory of that name included) stops the walk and is reported with its
   path and parse error, never skipped past to an outer workspace. `FindsTheRoot` in
   `test_setup_workspace.py` mirrors `workspace.test.mjs`'s cases: **change one walk, change the
-  other, and extend both test files.** Unlike the resolver there is no context-repo fallback:
-  a malformed file stops the step.
+  other, and extend both test files.** As in the resolver (which lost its context-repo fallback
+  in #60), a malformed file stops the step.
 - **Script paths in SKILL.md bodies are `${CLAUDE_SKILL_DIR}/...`**; one skill reaching another's
   script uses `${CLAUDE_SKILL_DIR}/../[skill]/...`. Never a repo-relative `.claude/skills/` path —
   the workspace no longer has one.
@@ -91,5 +91,5 @@ Outside the context stack, like `devhub` and `skills`: it reads no `context.json
 - **The scripts are stdlib-only Python with LF endings**, run through
   `uv run --no-project --python 3.12`, every write routed through `write`/`run` so `--dry-run`
   covers it. Their tests are the check: run both suites (README.md, "Tests") before a bump.
-- **No shared script copies** from context-kit-core: nothing here calls `context-repo.sh`,
-  `dates.mjs` or `bash-bin.mjs`.
+- **No shared script copies** from context-kit-core: nothing here calls `workspace.mjs` or
+  `dates.mjs`.

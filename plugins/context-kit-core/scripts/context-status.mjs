@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// What is OUTSTANDING across the context ladder: the queues that have filled up and the skill
-// that drains each one.
+// What is OUTSTANDING in a workspace: the queues that have filled up and the skill that drains
+// each one.
 //
-//   node context-status.mjs <workspace-or-context-repo-root> [--json] [--today YYYY-MM-DD]
-//   node context-status.mjs <root> --no-memory     # skip the native-memory scan (the slow part)
+//   node context-status.mjs <dir> [--json] [--today YYYY-MM-DD]   # the nearest workspace at or above <dir>
+//   node context-status.mjs <dir> --no-memory     # skip the native-memory scan (the slow part)
 //
-// IN A WORKSPACE (ADR 0002 — workspace.mjs's rootKind(), the same test context-doctor applies)
-// the queues are counted from their new homes: unlogged thread outcomes and curation lag in
-// docs/threads/ against docs/memory.md, the Notion queue in .context/pending/, and native memory
-// through memory-triage.mjs, which already knows a workspace. A legacy context repo is counted
-// exactly as before while the fallback lasts.
+// The workspace (ADR 0002) is found by workspace.mjs's rootKind(), the same test context-doctor
+// applies, and the queues are counted from ADR 0002's layout: unlogged thread outcomes and
+// curation lag in docs/threads/ against docs/memory.md, the Notion queue in .context/pending/,
+// and native memory through memory-triage.mjs. A directory that is not a workspace is refused
+// (exit 2); one holding a context.json is told context repos are retired (#60), since the
+// context-repo mode that counted threads/ and pending/ at its root went with that route.
 //
 // WHY A SCRIPT. Every number here is a count against a threshold, and a queue whose depth is
 // re-estimated in prose each time is a queue nobody trusts enough to drain. This answers all of
@@ -59,15 +60,15 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) die(`--today needs YYYY-MM-DD, got ${opt
 const start = resolve(positional[0] ?? '.');
 if (!existsSync(start)) die(`no such directory: ${start}`);
 const where = rootKind(start);
-const WS = where?.kind === 'workspace';
-const root = where?.root ?? start;
+if (!where) {
+  die(existsSync(join(start, 'context.json'))
+    ? `${start} holds context.json but no .claude/workspace.json — context repos are retired (ADR 0002, #60); `
+      + 'this project needs a workspace (project-workspace:setup-project-workspace)'
+    : `no .claude/workspace.json at or above ${start} — not a workspace`);
+}
+const root = where.root;
 
 // ---------------------------------------------------------------- small helpers
-
-const readJson = (file) => {
-  const raw = readFileSync(file, 'utf8');
-  return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
-};
 
 // Same UTC calendar arithmetic as dates.mjs `age`: whole days elapsed, no timezone drift.
 const ageDays = (iso) => {
@@ -135,35 +136,28 @@ const sibling = (script, args) => {
 // A malformed workspace.json is fatal, as in memory-triage.mjs: counting the queues of a
 // workspace no route is using would report on a home the session is not in. context-doctor is
 // where it is diagnosed.
-let ctx;
-if (WS) {
-  if (where.error) die(`${where.file} is malformed — ${where.error} (context-doctor reports it)`);
-  ctx = where.config;
-} else {
-  const cfgFile = join(root, 'context.json');
-  if (!existsSync(cfgFile)) die(`no context.json at ${root} — not a context repo, and no .claude/workspace.json above it`);
-  try { ctx = readJson(cfgFile); } catch (e) { die(`context.json is not valid JSON (${e.message})`); }
-}
+if (where.error) die(`${where.file} is malformed — ${where.error} (context-doctor reports it)`);
+const ctx = where.config;
 
-const repoName = (WS ? ctx.repo ?? ctx.name : ctx.contextRepo) ?? basename(root);
+const repoName = ctx.repo ?? ctx.name ?? basename(root);
 
 const actions = [];   // the punchline: what to run, in the order it makes sense to run it
 
 // ---------------------------------------------------------------- 1. threads awaiting curation
 
-// ADR 0002's layout in a workspace. No archive is defined there yet (curate-context has not
-// moved), so none is counted rather than one guessed at.
-const THREADS_REL = WS ? 'docs/threads' : 'threads';
+// ADR 0002's layout. The archive is not counted, so no number claims an archive it never looked
+// in.
+const THREADS_REL = 'docs/threads';
 const threadsDir = join(root, THREADS_REL);
 const allThreads = itemsIn(threadsDir);
-const reviewed = stampedDate(join(root, WS ? 'docs/memory.md' : 'memory.md'), 'last reviewed');
+const reviewed = stampedDate(join(root, 'docs/memory.md'), 'last reviewed');
 const since = reviewed ? allThreads.filter((f) => (fileDate(f) ?? '9999-99-99') > reviewed) : allThreads;
 
 const indexFile = join(threadsDir, 'INDEX.md');
 const indexed = existsSync(indexFile)
   ? (readFileSync(indexFile, 'utf8').match(/^\s*[-*]?\s*`?\d{4}-\d{2}-\d{2}/gm) ?? []).length
   : null;
-const archived = WS ? 0 : itemsIn(join(root, 'Archive', 'threads')).length;
+const archived = 0;
 
 const threads = {
   total: allThreads.length,
@@ -254,7 +248,7 @@ if (reconcile.carrying > 0) {
 // pending/ belongs to whichever backend layer is installed — context-notion owns its format.
 // Counting files needs none of that, and a queue nobody counts is a queue nobody drains, so
 // the count is reported and the parsing is left to the layer entitled to do it.
-const PENDING_REL = WS ? '.context/pending' : 'pending';
+const PENDING_REL = '.context/pending';
 const pendingDir = join(root, PENDING_REL);
 const pending = { present: existsSync(pendingDir), count: itemsIn(pendingDir).length };
 if (pending.count > 0) actions.push(`drain the ${PENDING_REL}/ queue (${pending.count} item(s)) — /process-pending if this project uses Notion`);
@@ -275,7 +269,7 @@ if (!flags.has('no-memory')) {
 
 const data = {
   root, repo: repoName, today,
-  kind: WS ? 'workspace' : 'project context repo',
+  kind: 'workspace',
   layout: { threads: THREADS_REL, pending: PENDING_REL },
   queues: { threads, reconcile, pending, memory },
   actions,
@@ -299,7 +293,7 @@ L.push(`  ${data.kind} · threads in ${THREADS_REL}/ · pending in ${PENDING_REL
 
 head('THREADS AWAITING CURATION', '/curate-context');
 L.push(`    ${threads.total} thread(s) in ${THREADS_REL}/, ${threads.archived} archived`);
-L.push(`    last review: ${threads.lastReviewed ?? `never stamped in ${WS ? 'docs/memory.md' : 'memory.md'}`}${threads.reviewedAge !== null ? ` (${threads.reviewedAge}d ago)` : ''} · ${threads.sinceReview} thread(s) since`);
+L.push(`    last review: ${threads.lastReviewed ?? `never stamped in docs/memory.md`}${threads.reviewedAge !== null ? ` (${threads.reviewedAge}d ago)` : ''} · ${threads.sinceReview} thread(s) since`);
 L.push(threads.index.present
   ? `    ${THREADS_REL}/INDEX.md lists ${threads.index.entries} of ${threads.index.covers}${threads.index.behind ? '  — BEHIND' : ''}`
   : `    ${THREADS_REL}/INDEX.md is absent`);

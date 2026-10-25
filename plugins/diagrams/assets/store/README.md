@@ -22,7 +22,7 @@ gallery.html              built, gitignored; rebuild rather than commit
   window" long after forgetting which tag they gave the thing. The labels are the search; the
   tags are the filter.
 - **This store is a permission boundary.** It is a per-org repo with its own access, named by
-  each project (`DIAGRAMS_STORE`, a repo's `.diagrams.json`, or `context.json`'s
+  each project (`DIAGRAMS_STORE`, a repo's `.diagrams.json`, or its workspace's
   `state.diagrams.repo`) and never defaulted. Read on the plugin
   catalog is not read on this.
 

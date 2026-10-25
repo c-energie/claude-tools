@@ -7,10 +7,10 @@
 //   node setup-connectors.mjs --add slack     also declare a provider not yet in the block
 //   node setup-connectors.mjs --add github:c-energie   declare a SECOND github connection,
 //                                             the one serving that resource owner
-//   node setup-connectors.mjs --context <path/to/context.json or workspace.json>
+//   node setup-connectors.mjs --context <path/to/.claude/workspace.json, or its workspace dir>
 //
-// The `connections` block in the nearest `.claude/workspace.json` (ADR 0002) — or, for a project
-// not yet migrated to a workspace, its context repo's context.json — is the source of truth, e.g.
+// The `connections` block in the nearest `.claude/workspace.json` (ADR 0002) is the source of
+// truth — the only one since context repos were retired (#60) — e.g.
 //   { "github": "github-acme", "notion": "notion-acme" }
 // It names which MCP server serves each provider HERE, which is what stops a machine holding
 // several projects' connections from writing through the wrong one. If the block is missing,
@@ -34,22 +34,20 @@
 // exactly the repo that writes `{}` and means it; treating that as an omission nags forever and
 // invites someone to "fix" it. `--add [provider]` is how a deliberate none is reopened.
 //
-// IN A WORKSPACE, `connections` IS THE ONLY KEY THIS WRITES. workspace.json has one writing owner
+// `connections` IS THE ONLY KEY THIS WRITES. workspace.json has one writing owner
 // per top-level key (see workspace.mjs) and this script owns `connections`, so the edit goes
 // through json-block.mjs's top-level upsert: every other byte survives, and a `connections` nested
-// inside `state` or a member entry cannot be mistaken for the root one — which the raw-text
-// search the context.json path still uses could not promise. A malformed nearest workspace.json
-// is REFUSED rather than stepped past: the resolver falls back to the context repo for loading,
-// but a writer that did the same would edit a file that is no longer this directory's policy.
+// inside `state` or a member entry cannot be mistaken for the root one. A malformed nearest
+// workspace.json is REFUSED rather than stepped past to an outer one, whose policy is not this
+// directory's.
 //
 // The runtime is copied out of the plugin into ~/.mcp/ before use, so the paths written into
 // the Claude configs survive a plugin update, reinstall or marketplace re-sync.
 import { createInterface } from 'node:readline/promises';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bashBin, bashPath } from '../bash-bin.mjs';
 import { homedir } from 'node:os';
 import { configPaths, detectConfigPaths } from './secret-store.mjs';
 import { findWorkspace, WORKSPACE_FILE } from '../workspace.mjs';
@@ -100,51 +98,6 @@ function splitAdd(arg) {
   return i < 0 ? [String(arg), null] : [String(arg).slice(0, i), String(arg).slice(i + 1) || null];
 }
 
-// ---------------------------------------------------------------- writing context.json
-
-// EDIT THE RAW TEXT, never a parsed-and-restringified object. A context repo's context.json is
-// hand-written and hand-formatted — inline objects, a comment key above each block — and
-// JSON.stringify(cfg, null, 2) reformats all of it: every inline object explodes into a block
-// and the trailing newline is lost, so a two-line change lands as ninety and the real edit is
-// unreviewable. This tool writes to a repo whose whole point is that its history reads. The
-// diff IS the product. (Done wrong here until 2026-08-30; context-doctor.mjs got it right
-// first and its replaceOnce() is the same idea.)
-
-// Render a connections value in the prevailing inline style, dropping to one line per provider
-// only when a single line would be unreadable.
-function renderConnections(v, indent) {
-  const inline = (o) => `{ ${Object.entries(o)
-    .map(([k, x]) => `${JSON.stringify(k)}: ${typeof x === 'string' ? JSON.stringify(x) : inline(x)}`)
-    .join(', ')} }`;
-  const one = inline(v);
-  if (one.length + indent.length <= 110) return one;
-  const pad = `${indent}  `;
-  return `{\n${Object.entries(v)
-    .map(([k, x]) => `${pad}${JSON.stringify(k)}: ${typeof x === 'string' ? JSON.stringify(x) : inline(x)}`)
-    .join(',\n')}\n${indent}}`;
-}
-
-// Span of the JSON value following "connections": in raw text. Brace-matched and string-aware,
-// so a brace inside a value cannot end it early. Returns null when the key is absent or the
-// value is not an object — callers must then say what they are about to do instead of guessing.
-function connectionsSpan(raw) {
-  const key = raw.search(/"connections"\s*:/);
-  if (key < 0) return null;
-  let i = raw.indexOf(':', key) + 1;
-  while (i < raw.length && /\s/.test(raw[i])) i++;
-  if (raw[i] !== '{') return null;
-  const start = i;
-  let depth = 0, inStr = false, esc = false;
-  for (; i < raw.length; i++) {
-    const c = raw[i];
-    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
-    if (c === '"') inStr = true;
-    else if (c === '{') depth++;
-    else if (c === '}' && --depth === 0) return { start, end: i + 1 };
-  }
-  return null;
-}
-
 function has(cmd) {
   const probe = process.platform === 'win32'
     ? spawnSync('cmd', ['/c', `${cmd} --version`], { encoding: 'utf8', windowsHide: true })
@@ -156,7 +109,7 @@ function has(cmd) {
 // rejects — strip it before parsing anything user-editable.
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 
-// ---------------------------------------------------------------- context.json
+// ---------------------------------------------------------------- the workspace file
 
 // Neither Node nor cmd/PowerShell expands a leading ~ in an argument, so do it here — people
 // copy paths out of documentation and shell prompts where the tilde is conventional.
@@ -166,124 +119,42 @@ function expandHome(p) {
   return p;
 }
 
-// The managed clone lives at ~/.context/<owner>/<repo> — the same layout context-repo.sh
-// uses, since it is what puts clones there. Owner included because context repos tend to
-// all be named "context", and it is its own directory level so the layout mirrors GitHub's.
-const cloneDir = (repo) => join(homedir(), '.context', ...repo.split('/'));
-
-// Which context repo does this project declare? The env var, then the project's .claude
-// settings files (local beats project, matching the client's own precedence). Parsed as
-// real JSON — the value normally sits inside an "env" block.
-function declaredRepo() {
-  if (process.env.PROJECT_CONTEXT_REPO) return process.env.PROJECT_CONTEXT_REPO;
-  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-  for (const f of ['settings.local.json', 'settings.json']) {
-    const p = join(cwd, '.claude', f);
-    if (!existsSync(p)) continue;
-    try {
-      const s = readJson(p);
-      const v = s?.env?.PROJECT_CONTEXT_REPO ?? s?.PROJECT_CONTEXT_REPO;
-      if (typeof v === 'string' && v) return v;
-    } catch { /* an unparsable settings file names nothing */ }
-  }
-  return null;
-}
-
-// context-repo.sh runs under Git Bash, where $HOME is /c/Users/... — so on Windows it
-// prints an MSYS path Node cannot stat. Map /c/... back to C:\... before use.
-function nativePath(p) {
-  const m = process.platform === 'win32' && /^\/([a-zA-Z])(\/.*)?$/.exec(p);
-  return m ? `${m[1].toUpperCase()}:${(m[2] ?? '/').replace(/\//g, '\\')}` : p;
-}
-
-// The plugin's resolver owns marker-file discovery, git credentials, and the first-time
-// clone into ~/.context — anything beyond "the clone is already there".
-function resolverContext() {
-  const resolver = join(HERE, '..', '..', 'scripts', 'context-repo.sh');
-  if (!existsSync(resolver)) return null;
-  const bash = bashBin();
-  if (!bash) return null;
-  const out = spawnSync(bash, [bashPath(resolver), '--no-pull'],
-    { encoding: 'utf8', windowsHide: true });
-  if (out.status !== 0) return null;
-  const root = nativePath((out.stdout ?? '').trim());
-  if (!root) return null;
-  const p = join(root, 'context.json');
-  return existsSync(p) ? p : null;
-}
-
 // A file is a workspace file by its place, `.claude/workspace.json`, never by its contents —
 // the same rule the resolver uses to decide what a directory is.
 const isWorkspaceFile = (p) => resolve(p).endsWith(sep + WORKSPACE_FILE);
 
-// Explicit path, then the nearest workspace.json, then the declared repo's managed clone in
-// ~/.context, then the resolver (which can create that clone), then the working directory. Never
-// guess a context repo — if none of these produce one, say precisely why and stop.
-// -> { path, workspace?: true } or { path: null, hint }
+// Explicit path, else the nearest workspace.json. Never guess: if neither produces one, say
+// precisely why and stop. A context.json is refused by name, so someone holding a retired
+// context repo learns why rather than reading "not found".
+// -> { path } or { path: null, hint }
 function findContext(explicit) {
   if (explicit) {
     let p = resolve(expandHome(explicit));
     if (!existsSync(p)) return { path: null, hint: `--context ${explicit} does not exist` };
-    // Accept the file itself, or a directory holding a context.json or a .claude/workspace.json.
-    if (!p.endsWith('.json')) {
-      const ctx = join(p, 'context.json');
-      p = existsSync(ctx) ? ctx : join(p, WORKSPACE_FILE);
-    }
-    return existsSync(p)
-      ? { path: p, workspace: isWorkspaceFile(p) }
-      : { path: null, hint: `--context ${explicit} holds no context.json or ${WORKSPACE_FILE}` };
-  }
-
-  // The workspace first, found by walking up — a member repo nested inside a workspace declares
-  // no repo of its own, and the legacy routes below look only in the project dir itself.
-  const ws = findWorkspace(process.env.CLAUDE_PROJECT_DIR || process.cwd());
-  if (ws?.root) return { path: ws.file, workspace: true };
-  if (ws?.error) {
+    if (!p.endsWith('.json')) p = join(p, WORKSPACE_FILE);
+    if (existsSync(p) && isWorkspaceFile(p)) return { path: p };
     return {
       path: null,
-      hint: `${ws.file} is malformed (${ws.error}) — fix it first; editing the context repo's `
-        + 'connections instead would change a policy this directory no longer uses',
+      hint: basename(p) === 'context.json'
+        ? `--context ${explicit} is a context repo's context.json; context repos are retired (ADR 0002, #60) — connections live in the workspace's ${WORKSPACE_FILE}`
+        : `--context ${explicit} is not, and holds no, ${WORKSPACE_FILE}`,
     };
   }
 
-  const repo = declaredRepo();
-  if (repo) {
-    const managed = join(cloneDir(repo), 'context.json');
-    if (existsSync(managed)) return { path: managed };
-    const cloned = resolverContext();
-    if (cloned) return { path: cloned };
-    return existsSync(cloneDir(repo))
-      ? {
-          path: null,
-          hint: `${cloneDir(repo)} exists but holds no context.json — is ${repo} really a context repo?`,
-        }
-      : {
-          path: null,
-          hint: `this project declares PROJECT_CONTEXT_REPO=${repo}, but there is no clone at `
-            + `${cloneDir(repo)} and cloning failed (offline, or no git credential — `
-            + `try 'gh auth login' or CONTEXT_GIT_TOKEN)`,
-        };
-  }
-
-  const found = resolverContext();
-  if (found) return { path: found };
-
-  const local = resolve('context.json');
-  return { path: existsSync(local) ? local : null };
+  // Found by walking up — a member repo nested inside a workspace declares nothing of its own.
+  const ws = findWorkspace(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  if (ws?.root) return { path: ws.file };
+  if (ws?.error) return { path: null, hint: `${ws.file} is malformed (${ws.error}) — fix it first` };
+  return { path: null, hint: `no ${WORKSPACE_FILE} at or above the working directory` };
 }
 
-// A short project identifier for naming connections, from the file's own fields or the
-// directory holding it. Context repos are often "<project>-context", so drop that suffix. A
-// workspace has exactly one name field, `name`, and its directory is the one ABOVE .claude/ —
-// basename(dirname(file)) would name every workspace ".claude".
-function projectSlug(contextFile, cfg, workspace) {
-  const raw = workspace
-    ? (cfg.name ?? basename(dirname(dirname(contextFile))))
-    : (cfg.project ?? cfg.name ?? cfg.slug ?? basename(dirname(contextFile)));
+// A short project identifier for naming connections: the workspace's `name`, else the directory
+// ABOVE .claude/ — basename(dirname(file)) would name every workspace ".claude".
+function projectSlug(contextFile, cfg) {
+  const raw = cfg.name ?? basename(dirname(dirname(contextFile)));
   return String(raw)
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/-context$/, '')
     .replace(/^-+|-+$/g, '') || 'project';
 }
 
@@ -363,15 +234,14 @@ async function main() {
 
   console.log('\nProject connections\n');
 
-  const { path: contextFile, hint, workspace } = findContext(at('--context'));
+  const { path: contextFile, hint } = findContext(at('--context'));
   if (!contextFile) {
-    bad(hint ?? 'No workspace.json or context.json found.');
-    console.log('\n  Context repos are cloned to ~/.context/<owner>/<repo>, named by the');
-    console.log("  PROJECT_CONTEXT_REPO env var or the project's .claude/settings.json.");
-    console.log('  Pass --context <path> to override, or see the context-setup skill.\n');
+    bad(hint);
+    console.log('\n  Run this from inside a workspace, or pass --context <path>. A folder becomes a');
+    console.log('  workspace through project-workspace:setup-project-workspace.\n');
     return 1;
   }
-  ok(`${workspace ? 'workspace' : 'context'}: ${contextFile}`);
+  ok(`workspace: ${contextFile}`);
 
   let cfg;
   try { cfg = readJson(contextFile); }
@@ -380,7 +250,7 @@ async function main() {
     bad(`${contextFile}: top level is not a JSON object`); return 1;
   }
 
-  const slug = projectSlug(contextFile, cfg, workspace);
+  const slug = projectSlug(contextFile, cfg);
   // DEEP copy, and the original captured as text before anything touches it. A spread is
   // shallow, so once a provider's value is a map, `connections[p][owner] = name` mutates the
   // parsed cfg as well — and the change test below then compares the object with itself, finds
@@ -433,11 +303,10 @@ async function main() {
           && !Array.isArray(connections[p]) && connections[p][extraOwner]) {
         ok(`${p}: ${connections[p][extraOwner]} (already declared for ${extraOwner})`); continue;
       }
-      // The owner of the context repo itself is the right default for the connection that was
+      // The owner of the workspace's own `repo` is the right default for the connection that was
       // already there: it is the owner every core skill actually needs (save-thread, the
-      // bootstrap read), and the project slug is a project name, not a GitHub owner. In a
-      // workspace that is the workspace's own `repo`.
-      const homeRepo = workspace ? cfg.repo : cfg.contextRepo;
+      // bootstrap read), and the project slug is a project name, not a GitHub owner.
+      const homeRepo = cfg.repo;
       const homeOwner = (typeof homeRepo === 'string' && homeRepo.includes('/'))
         ? homeRepo.split('/')[0]
         : slug;
@@ -463,9 +332,9 @@ async function main() {
     if (JSON.stringify(connections) !== connectionsBefore) {
       if (checkOnly) {
         warn('connections block would change — re-run without --check to write it');
-      } else if (workspace) {
-        // Backup first, as on the context.json path; upsertBlockInFile refuses (throws, having
-        // written nothing) rather than corrupt a file it cannot edit safely.
+      } else {
+        // Backup first; upsertBlockInFile refuses (throws, having written nothing) rather than
+        // corrupt a file it cannot edit safely.
         copyFileSync(contextFile, `${contextFile}.bak-connections`);
         try {
           upsertBlockInFile(contextFile, 'connections', connections);
@@ -474,29 +343,6 @@ async function main() {
         }
         ok(`wrote connections to ${contextFile} (backup: .bak-connections)`);
         console.log('  Commit it — the workspace repo is what the rest of the team reads.');
-      } else {
-        const raw = readFileSync(contextFile, 'utf8');
-        const span = connectionsSpan(raw);
-        copyFileSync(contextFile, `${contextFile}.bak-connections`);
-        if (span) {
-          // Indent of the line the key sits on, so a multi-line render lines up with its
-          // neighbours rather than announcing which tool wrote it.
-          const lineStart = raw.lastIndexOf('\n', span.start) + 1;
-          const indent = (raw.slice(lineStart).match(/^[ \t]*/) ?? [''])[0];
-          writeFileSync(contextFile,
-            raw.slice(0, span.start) + renderConnections(connections, indent) + raw.slice(span.end));
-          ok(`wrote connections to ${contextFile} (backup: .bak-connections)`);
-        } else {
-          // No connections key yet, or one this cannot locate unambiguously. Restringifying is
-          // the only option left, and it reformats the file — so say so rather than let a
-          // reviewer discover ninety lines of churn in their next diff.
-          cfg.connections = connections;
-          writeFileSync(contextFile, `${JSON.stringify(cfg, null, 2)}\n`);
-          ok(`wrote connections to ${contextFile} (backup: .bak-connections)`);
-          warn('context.json had no "connections" block to edit in place, so the whole file was');
-          warn('  reformatted. Check the diff: the connections change is the only intended one.');
-        }
-        console.log('  Commit it — the context repo is what the rest of the team reads.');
       }
     }
 

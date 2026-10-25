@@ -133,7 +133,7 @@ test('no decision log configured is silent', () => {
   }
 });
 
-test('no workspace above the ADR is silent — the legacy context repo is never resolved', () => {
+test('no workspace above the ADR is silent — a configured context repo is never resolved', () => {
   const dir = scratch();
   silent(run(event(dir, join(dir, 'docs', 'adr', '0001-x.md')), { env: { PROJECT_CONTEXT_REPO: 'c-energie/nowhere' } }));
 });

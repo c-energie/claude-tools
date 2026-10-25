@@ -11,7 +11,7 @@
 //   --json    machine-readable result on stdout
 //   --width N wrap an inline render longer than N columns (default 110)
 //
-// WHY THIS EXISTS. A context repo's context.json is hand-written and hand-formatted: a
+// WHY THIS EXISTS. A workspace's .claude/workspace.json is hand-written and hand-formatted: a
 // `_comment_[key]` above each block carrying the reasoning for it, inline objects laid out by
 // hand, a deliberate key order. `JSON.stringify(cfg, null, 2)` reformats all of it — every
 // inline object explodes into a block, every comment key moves, the trailing newline is lost —
@@ -245,7 +245,7 @@ export function upsertBlock(raw, key, value, { width = 110 } = {}) {
 
   // Never hand back a file that stopped being valid JSON, or that says something other than what
   // the caller asked for. Cheap, and it turns every rendering bug into a refusal rather than a
-  // corrupted context repo.
+  // corrupted workspace file.
   let round;
   try { round = JSON.parse(stripBom(text)); }
   catch (e) { refuse(`the edit would not have parsed (${e.message}); nothing written`); }
@@ -266,7 +266,7 @@ export function upsertBlockInFile(file, key, value, { width = 110, write = true 
 
 // ---------------------------------------------------------------- CLI
 
-// A plan-by-default CLI, matching init-context.mjs: the default run writes nothing and shows what
+// A plan-by-default CLI: the default run writes nothing and shows what
 // it would do, and it takes an explicit --write to act. It is also how this file is verified —
 // this repo has no test runner, so externally visible CLI behaviour is the seam.
 function main(argv) {

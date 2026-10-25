@@ -9,10 +9,9 @@
 // session is in:
 //   {"route":"workspace","root":"/abs/ws","dir":"docs/threads","index":"docs/threads/INDEX.md",
 //    "from":"app/src","repo":"acme/app"}
-// There is no routing question here at all. PROJECT_CONTEXT_THREADS and the repo layer
-// (.claude/threads/) are not consulted: the flag existed to keep one person's working notes out
-// of a repo shared as a tool, and the workspace already is the one place context lives — a
-// member's .claude/threads/ is exactly the second home the ADR retires.
+// There is no routing question here at all: the workspace is the one place context lives, and a
+// member's .claude/threads/ is exactly the second home the ADR retires. (PROJECT_CONTEXT_THREADS,
+// which once routed threads between a repo and its context repo, went with that route in #60.)
 //
 // `repo` is the member repo the session is standing in, for the thread's `repo:` front-matter,
 // so docs/threads/ stays readable once several members write into it. It is null at the root and
@@ -26,13 +25,15 @@
 // A nested clone with no parseable origin gives `repo: null` and a stderr line saying so; the
 // skill asks rather than leaving the provenance off unremarked.
 //
-// OUTSIDE A WORKSPACE — {"route":"context-repo", ...nulls}: the skill's existing steps
-// (context-repo.sh --writable and --threads) apply unchanged. A malformed nearest workspace.json
-// routes here too, reported on stderr, because that is what workspace.mjs does with one; a
-// thread routed differently from the context the session loaded is the disagreement the shared
-// findWorkspace() exists to prevent.
+// OUTSIDE A WORKSPACE — {"route":null, ...nulls}, still printed, with the reason and
+// `route=none` on stderr, and exit 1: a thread has no home there, and the context-repo route that
+// used to take it was deleted (#60). A malformed nearest workspace.json gives the same answer,
+// reported, because workspace.mjs resolves nothing from one either; a thread routed differently
+// from the context the session loaded is the disagreement the shared findWorkspace() exists to
+// prevent — so never on to an outer workspace.
 //
-// Read-only, no network, never prompts. Exit 0 on both routes; 2 on an unknown option.
+// Read-only, no network, never prompts. Exit 0 in a workspace, 1 outside one, 2 on an unknown
+// option.
 import { realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { relative, resolve, sep, isAbsolute } from 'node:path';
@@ -104,8 +105,10 @@ export function threadTarget({ cwd = process.env.CLAUDE_PROJECT_DIR || process.c
       from: from && from.length ? from.join('/') : null, repo, messages,
     };
   }
-  if (found?.error) messages.push(`${found.file}: malformed, ignored — ${found.error}`);
-  return { route: 'context-repo', root: null, dir: null, index: null, from: null, repo: null, messages };
+  messages.push(found?.error
+    ? `${found.file}: malformed, ignored — ${found.error}`
+    : 'no .claude/workspace.json at or above the working directory — a thread has no home here');
+  return { route: null, root: null, dir: null, index: null, from: null, repo: null, messages };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -115,6 +118,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
   const { messages, ...t } = threadTarget();
   for (const m of messages) console.error(`thread-target.mjs: ${m}`);
-  console.error(`thread-target.mjs: route=${t.route}`);
+  console.error(`thread-target.mjs: route=${t.route ?? 'none'}`);
   console.log(JSON.stringify(t));
+  process.exit(t.route ? 0 : 1);
 }

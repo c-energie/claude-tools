@@ -1,6 +1,6 @@
 ---
 name: notion-discover
-description: Discover a project's Notion workspace into its config's state block (workspace.json, or a legacy context.json) — enumerate the databases the project's declared Notion connection can see, capture their IDs and exact property schemas, map them to the actions/decisionLog/openQuestions keys, and write state.notion with the user's confirmation. Triggers like "fill in the notion state block", "fill in the context.json state block", "discover my notion workspace", "wire up notion for this project", "set up the notion databases", "map my notion databases".
+description: Discover a project's Notion workspace into its workspace.json state block — enumerate the databases the project's declared Notion connection can see, capture their IDs and exact property schemas, map them to the actions/decisionLog/openQuestions keys, and write state.notion with the user's confirmation. Triggers like "fill in the notion state block", "fill in the workspace.json state block", "discover my notion workspace", "wire up notion for this project", "set up the notion databases", "map my notion databases".
 ---
 
 # Discover a Notion workspace into the project's config
@@ -14,15 +14,15 @@ skill writes the very contract that file defines.
 Resolve the config as `notion-config` §1 does — on a laptop:
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 CONFIG="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" config)"
 ```
 
-`$CONFIG` is `.claude/workspace.json` in a workspace, `context.json` in a legacy context repo
-(the marker + GitHub connector in a sandbox). Read it. `connections.notion` names the ONLY Notion connection to
-use — if it is missing, or that server's tools are absent from this session, stop and point
-the user at `context-setup` / the connector setup script rather than using another
-project's connection.
+`$CONFIG` is the workspace's `.claude/workspace.json` (the uploaded copy + GitHub connector in a
+sandbox). Read it. `connections.notion` names the ONLY Notion connection to use — if it is
+missing, or that server's tools are absent from this session, stop and point the user at
+context-kit-core's `setup-connectors` rather than using another project's connection. No
+workspace at all: point them at project-workspace's `setup-project-workspace`.
 
 ## 2. Enumerate what the connection can see
 
@@ -88,5 +88,5 @@ Reload `$CONFIG` and confirm it parses and the block is present (on a laptop,
 became available: `add-action`, `log-decision`, `add-open-question`, `query-decisions`,
 `update-action` now work in this project, against these databases.
 
-**Not this skill:** wiring the connector itself (config files, tokens) is `context-setup` /
-the setup scripts; day-to-day reads and writes are the skills this unlocks.
+**Not this skill:** wiring the connector itself (config files, tokens) is context-kit-core's
+`setup-connectors`; making a folder a workspace is project-workspace's `setup-project-workspace`; day-to-day reads and writes are the skills this unlocks.

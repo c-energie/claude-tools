@@ -1,25 +1,19 @@
 #!/usr/bin/env node
 // Find the workspace a session is in: the nearest `.claude/workspace.json` at or above the
-// working directory. Falls back to the context-repo route (context-repo.sh) while unmigrated
-// projects still exist — ADR 0002's transition; a later ticket deletes the fallback.
+// working directory (ADR 0002). There is no other route: the context-repo fallback that served
+// unmigrated projects was deleted once the last one moved (#60).
 //
 //   node workspace.mjs                 # print the workspace root on stdout, the route on stderr
-//   node workspace.mjs --no-pull       # ...passed to the fallback only (the workspace route
-//   node workspace.mjs --writable      #    does no network at all, so has nothing to skip)
 //   node workspace.mjs --json          # {root, route, file} on stdout instead of the bare path
-//   node workspace.mjs --no-fallback   # the workspace route only: never run context-repo.sh
 //
-// stdout is the absolute root and nothing else, so `ROOT="$(node workspace.mjs)"` works as it
-// does for context-repo.sh. stderr always carries one `workspace.mjs: route=...` line saying
-// which route answered — during the transition "which home did this session load?" is the
-// first question anyone debugging it asks, and silence would make the two routes look alike.
-// Exit 1 when neither route resolves, with the reason on stderr; callers decide whether that is
-// fatal, exactly as they already do for context-repo.sh. Never prompts, never throws.
+// --no-pull, --writable and --no-fallback are accepted and ignored: they were the fallback's,
+// and a caller written before #60 must not start failing on an unknown option.
 //
-// --no-fallback is for a caller that only wants to know WHETHER this is a workspace — the
-// session-start hook, which runs its own legacy loader when it is not. Without it, asking that
-// question outside a workspace runs context-repo.sh, which may clone a context repo just to
-// answer "no".
+// stdout is the absolute root and nothing else, so `ROOT="$(node workspace.mjs)"` works. stderr
+// always carries one `workspace.mjs: route=...` line (`route=workspace` or `route=none`), so a
+// session that resolved nothing says why rather than going quiet. Exit 1 when there is no
+// workspace, with the reason on stderr; callers decide whether that is fatal. Never prompts,
+// never throws, never touches the network.
 //
 // THE FILE — `.claude/workspace.json`, schema 1 (ADR 0002):
 //
@@ -47,24 +41,20 @@
 //     members as nested clones, so a session in a member is inside a .git that is not the
 //     workspace. Stopping there is exactly how the old resolver cloned a second copy of a
 //     context that was already on disk above it.
-//   - A malformed nearest file is REPORTED (path + parse error) and the walk stops there, going
-//     to the fallback — it never skips past to an outer workspace. Skipping would silently load
-//     a different workspace's context because of a typo in this one.
+//   - A malformed nearest file is REPORTED (path + parse error) and the walk stops there, resolving
+//     nothing — it never skips past to an outer workspace. Skipping would silently load a
+//     different workspace's context because of a typo in this one.
 //   - A schema other than 1 is reported but still resolves: where the root is does not depend on
 //     what the file says, and refusing would break every session the day a schema 2 ships.
 //
 // `workspace-root.sh` is this resolver's bash TWIN for hooks, not a copy — the drift rule
 // cannot compare them, so workspace.test.mjs runs both against the same fixtures. Change both.
 import { existsSync, readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bashBin } from './bash-bin.mjs';
 
 export const WORKSPACE_FILE = join('.claude', 'workspace.json');
 export const SCHEMA = 1;
-
-const here = dirname(fileURLToPath(import.meta.url));
 
 /** The nearest `.claude/workspace.json` at or above `start`.
  *  -> null when there is none all the way to the filesystem root;
@@ -94,48 +84,25 @@ export function findWorkspace(start = process.cwd()) {
 }
 
 /** What a directory handed to a DIAGNOSTIC is — context-doctor and context-status, which are
- *  given a root rather than resolving one, and must check legacy context repos exactly as before
- *  while the fallback lasts (ADR 0002's transition).
- *  -> { kind: 'context-repo', root } when `start` itself holds context.json and no workspace.json.
- *     Tested FIRST, before any walk: a context repo is a root of its own, and walking up from one
- *     would judge it by whichever workspace happened to sit above its clone.
+ *  given a root rather than resolving one.
  *  -> { kind: 'workspace', root, file, config } — findWorkspace() from `start`, nearest wins;
  *  -> { kind: 'workspace', root, file, error } when that nearest file is malformed. `root` is the
  *     directory holding its .claude/, so a doctor can report the file rather than lose it;
- *  -> null when it is neither. Reads only; validates nothing beyond findWorkspace()'s own test. */
+ *  -> null when there is none. A leftover context.json is not a kind any more (#60): a retired
+ *     context repo is simply not a workspace. Reads only. */
 export function rootKind(start) {
-  const dir = resolve(start);
-  if (existsSync(join(dir, 'context.json')) && !existsSync(join(dir, WORKSPACE_FILE))) {
-    return { kind: 'context-repo', root: dir };
-  }
-  const found = findWorkspace(dir);
+  const found = findWorkspace(resolve(start));
   if (!found) return null;
   if (found.error) return { kind: 'workspace', root: dirname(dirname(found.file)), file: found.file, error: found.error };
   return { kind: 'workspace', ...found };
 }
 
-/** The legacy route, unchanged: context-repo.sh run from `cwd`. CLAUDE_PROJECT_DIR is pinned to
- *  `cwd` because the script prefers it over $PWD — inheriting a different one would make the
- *  two routes look from two different places. */
-function legacyRoot(cwd, args, env) {
-  const bash = bashBin();
-  if (!bash) return { root: null, error: 'no Git Bash found to run context-repo.sh (see bash-bin.mjs)' };
-  const r = spawnSync(bash, [join(here, 'context-repo.sh'), ...args], {
-    cwd, env: { ...env, CLAUDE_PROJECT_DIR: cwd }, encoding: 'utf8', windowsHide: true,
-  });
-  const stderr = (r.stderr ?? '').trim();
-  const root = r.status === 0 ? (r.stdout ?? '').trim().split('\n').pop() : '';
-  if (root) return { root, stderr };
-  return { root: null, stderr, error: r.error ? String(r.error.message) : `context-repo.sh exited ${r.status}` };
-}
-
 /** Resolve the workspace root. Never throws.
- *  -> { root, route: 'workspace' | 'context-repo' | null, file, messages[] }
+ *  -> { root, route: 'workspace' | null, file, messages[] }
  *  `messages` is everything worth putting on stderr, in order; the CLI prints them. */
-export function resolveWorkspace({ cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd(), args = [], env = process.env, fallback = true } = {}) {
+export function resolveWorkspace({ cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd() } = {}) {
   const messages = [];
-  const start = resolve(cwd);
-  const found = findWorkspace(start);
+  const found = findWorkspace(resolve(cwd));
   if (found?.root) {
     if (found.config.schema !== SCHEMA) {
       messages.push(`${found.file}: schema is ${JSON.stringify(found.config.schema)}, this resolver knows ${SCHEMA} — resolving the root anyway`);
@@ -143,33 +110,24 @@ export function resolveWorkspace({ cwd = process.env.CLAUDE_PROJECT_DIR || proce
     messages.push(`route=workspace (${found.file})`);
     return { root: found.root, route: 'workspace', file: found.file, messages };
   }
-  if (found?.error) messages.push(`${found.file}: malformed, ignored — ${found.error}`);
-  if (!fallback) {
-    messages.push(`route=none — ${found?.error ? 'the nearest .claude/workspace.json is malformed' : 'no .claude/workspace.json above the working directory'}, and --no-fallback skips the context repo`);
-    return { root: null, route: null, file: found?.file ?? null, messages };
+  if (found?.error) {
+    messages.push(`${found.file}: malformed, ignored — ${found.error}`);
+    messages.push('route=none — the nearest .claude/workspace.json is malformed');
+  } else {
+    messages.push('route=none — no .claude/workspace.json above the working directory');
   }
-  const legacy = legacyRoot(start, args, env);
-  // context-repo.sh's own lines already name their source; they are relayed as written.
-  if (legacy.stderr) messages.push(...legacy.stderr.split('\n'));
-  if (legacy.root) {
-    messages.push(`route=context-repo (${found?.error ? 'the nearest .claude/workspace.json is malformed' : 'no .claude/workspace.json above the working directory'})`);
-    return { root: legacy.root, route: 'context-repo', file: null, messages };
-  }
-  messages.push(`route=none — no workspace, and the context-repo fallback did not resolve (${legacy.error})`);
   return { root: null, route: null, file: found?.file ?? null, messages };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const passThrough = [];
-  let json = false, fallback = true;
+  let json = false;
   for (const a of process.argv.slice(2)) {
     if (a === '--json') json = true;
-    else if (a === '--no-fallback') fallback = false;
-    else if (a === '--no-pull' || a === '--writable') passThrough.push(a);
+    else if (a === '--no-pull' || a === '--writable' || a === '--no-fallback') continue;
     else { console.error(`workspace.mjs: unknown option ${a}`); process.exit(2); }
   }
-  const r = resolveWorkspace({ args: passThrough, fallback });
-  for (const m of r.messages) console.error(m.startsWith('context-repo.sh: ') ? m : `workspace.mjs: ${m}`);
+  const r = resolveWorkspace();
+  for (const m of r.messages) console.error(`workspace.mjs: ${m}`);
   if (json) console.log(JSON.stringify({ root: r.root, route: r.route, file: r.file }));
   else if (r.root) console.log(r.root);
   process.exit(r.root ? 0 : 1);

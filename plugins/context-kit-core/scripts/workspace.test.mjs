@@ -5,10 +5,9 @@
 //
 //   node --test plugins/context-kit-core/scripts/workspace.test.mjs
 //
-// Offline is achieved rather than assumed, as in hooks/load-context.test.mjs: the legacy
-// fallback is pinned with PROJECT_CONTEXT_DIR to a `git init` with no remote and run with
-// --no-pull, so context-repo.sh finds a checkout on disk and never touches the network. HOME is
-// a scratch dir because context-repo.sh globs and searches `$HOME/mnt` for markers.
+// No network: the resolver reads the filesystem only. A legacy context checkout configured
+// through PROJECT_CONTEXT_REPO / PROJECT_CONTEXT_DIR is kept as a fixture, to prove the retired
+// context-repo route (#60) is never consulted.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,8 +40,8 @@ const workspace = (dir, body = { schema: 1, name: 'fixture', members: [] }) => {
 };
 const deep = (...parts) => { const d = join(...parts); mkdirSync(d, { recursive: true }); return d; };
 
-// A legacy context checkout for the fallback to find. No commit and no identity config: the
-// resolver only looks for .git/.
+// A legacy context checkout the retired fallback would once have found. No commit and no
+// identity config: the old resolver only looked for .git/.
 const legacyClone = (base) => {
   const clone = deep(base, 'clone');
   const git = spawnSync('git', ['init', '-q', clone], { encoding: 'utf8' });
@@ -58,14 +57,23 @@ const envFor = (home, clone) => ({
   ...(clone ? { PROJECT_CONTEXT_REPO: REPO, PROJECT_CONTEXT_DIR: clone } : {}),
 });
 
+// Git Bash on Windows prints its own spelling of a path (/tmp/..., /c/Users/...); cygpath turns
+// it back into the one node walked, so the twins are compared on what they found, not on how
+// each shell spells it.
+const native = (p) => {
+  if (!p || process.platform !== 'win32') return p;
+  const r = spawnSync('cygpath', ['-w', p], { encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : p;
+};
+
 // Every case runs three ways — the API, the .mjs CLI and the bash twin — and they must agree.
 const both = (cwd, env) => {
-  const api = resolveWorkspace({ cwd, args: ['--no-pull'], env });
-  const mjs = spawnSync(process.execPath, [MJS, '--no-pull', '--json'], { cwd, env, encoding: 'utf8' });
-  const sh = spawnSync('bash', [SH, '--no-pull'], { cwd, env, encoding: 'utf8' });
+  const api = resolveWorkspace({ cwd, env });
+  const mjs = spawnSync(process.execPath, [MJS, '--json'], { cwd, env, encoding: 'utf8' });
+  const sh = spawnSync('bash', [SH], { cwd, env, encoding: 'utf8' });
   const cli = mjs.stdout.trim() ? JSON.parse(mjs.stdout) : {};
   assert.equal(cli.root, api.root, `CLI and API disagree: ${mjs.stderr}`);
-  assert.equal(sh.stdout.trim() || null, api.root, `bash twin disagrees with workspace.mjs: ${sh.stderr}`);
+  assert.equal(native(sh.stdout.trim()) || null, api.root, `bash twin disagrees with workspace.mjs: ${sh.stderr}`);
   return { api, mjs, sh, cli };
 };
 
@@ -101,43 +109,36 @@ test('with two nested workspaces, the inner one wins from inside it — and noth
   assert.equal(both(deep(outer, 'projects'), envFor(outer)).api.root, outer);
 });
 
-test('with no workspace above the cwd, the legacy context-repo result is returned', () => {
+// The context-repo fallback is gone (#60): a configured PROJECT_CONTEXT_REPO with a checkout on
+// disk is the control that proves nothing is read from it any more.
+test('with no workspace above the cwd, nothing resolves — even with a context repo configured', () => {
   const base = scratch();
   const clone = legacyClone(base);
-  const cwd = deep(base, 'project');
-  const { api, mjs, sh, cli } = both(cwd, envFor(base, clone));
-  assert.equal(api.root, clone);
-  assert.equal(api.route, 'context-repo');
-  assert.equal(cli.route, 'context-repo');
-  assert.match(mjs.stderr, /route=context-repo/);
-  assert.match(sh.stderr, /route=context-repo/);
-});
-
-test('neither route resolving exits 1 with the reason, and does not throw', () => {
-  const base = scratch();
-  const { api, mjs, sh } = both(deep(base, 'project'), envFor(base));
+  const { api, mjs, sh, cli } = both(deep(base, 'project'), envFor(base, clone));
   assert.equal(api.root, null);
   assert.equal(api.route, null);
+  assert.equal(cli.route, null);
   assert.equal(mjs.status, 1);
   assert.equal(sh.status, 1);
-  assert.match(mjs.stderr, /no context repo configured/);
-  assert.match(sh.stderr, /route=none/);
+  for (const err of [api.messages.join('\n'), mjs.stderr, sh.stderr]) {
+    assert.match(err, /route=none — no \.claude\/workspace\.json above the working directory/);
+    assert.doesNotMatch(err, /context-repo/);
+  }
 });
 
 for (const [label, body] of [
   ['a parse error', '{ "schema": 1, "name": '],
   ['a top level that is not an object', '[1, 2]'],
 ]) {
-  test(`a malformed workspace.json (${label}) is reported and the resolver falls back`, () => {
+  test(`a malformed workspace.json (${label}) is reported and nothing resolves`, () => {
     const base = scratch();
-    const clone = legacyClone(base);
     const root = workspace(deep(base, 'ws'), body);
-    const file = join(root, '.claude', 'workspace.json');
-    const { api, mjs, sh } = both(deep(root, 'sub'), envFor(base, clone));
-    assert.equal(api.root, clone);
-    assert.equal(api.route, 'context-repo');
+    const { api, mjs, sh } = both(deep(root, 'sub'), envFor(base, legacyClone(base)));
+    assert.equal(api.root, null);
+    assert.equal(api.route, null);
     for (const err of [api.messages.join('\n'), mjs.stderr, sh.stderr]) {
-      assert.ok(err.includes(file), `the malformed file's path is named: ${err}`);
+      // The tail, not the whole path: Git Bash spells the scratch dir its own way on Windows.
+      assert.match(err, /ws[\\/]\.claude[\\/]workspace\.json/, `the malformed file's path is named: ${err}`);
       assert.match(err, /malformed/);
     }
   });
@@ -145,20 +146,19 @@ for (const [label, body] of [
 
 test('a malformed inner workspace never falls through to the outer one', () => {
   const base = scratch();
-  const clone = legacyClone(base);
   const outer = workspace(deep(base, 'outer'));
   const inner = workspace(deep(outer, 'inner'), 'not json');
-  const { api } = both(inner, envFor(base, clone));
-  assert.equal(api.route, 'context-repo', 'skipping to the outer workspace would load the wrong context');
+  const { api } = both(inner, envFor(base));
+  assert.equal(api.root, null, 'skipping to the outer workspace would load the wrong context');
 });
 
 test('a directory named workspace.json is malformed to both twins, not skipped past', () => {
   const base = scratch();
-  const clone = legacyClone(base);
   const outer = workspace(deep(base, 'outer'));
   const inner = deep(outer, 'inner', '.claude', 'workspace.json');
-  const { api } = both(dirname(dirname(inner)), envFor(base, clone));
-  assert.equal(api.route, 'context-repo');
+  const { api, sh } = both(dirname(dirname(inner)), envFor(base));
+  assert.equal(api.root, null);
+  assert.match(sh.stderr, /malformed/);
 });
 
 test('an unknown schema is reported but still resolves', () => {
@@ -179,49 +179,26 @@ test('unknown keys, top level and inside members, reach the caller untouched', (
   assert.deepEqual(findWorkspace(root).config, body);
 });
 
-test('unknown options are refused with exit 2, as context-repo.sh does', () => {
+test('unknown options are refused with exit 2', () => {
   const root = workspace(scratch());
   const env = envFor(root);
   assert.equal(spawnSync(process.execPath, [MJS, '--bogus'], { cwd: root, env }).status, 2);
   assert.equal(spawnSync('bash', [SH, '--bogus'], { cwd: root, env }).status, 2);
 });
 
-// --no-fallback is how the session-start hook asks "is this a workspace?" without the question
-// itself running context-repo.sh — which, configured, may clone a repo just to answer no.
-test('--no-fallback: a workspace still resolves, and with none the legacy route is never asked', () => {
+// The flags the fallback used to take are still accepted, so a caller written before #60 (a
+// skill in a plugin not yet updated) keeps working. They change nothing.
+test('--no-pull, --writable and --no-fallback are accepted and change nothing', () => {
   const root = workspace(scratch());
   const env = envFor(root);
-  assert.equal(resolveWorkspace({ cwd: root, env, fallback: false }).root, root);
-  assert.equal(spawnSync('bash', [SH, '--no-fallback'], { cwd: root, env, encoding: 'utf8' }).stdout.trim(), root);
-
-  // A configured legacy checkout that the default resolves to — and --no-fallback must not.
-  const base = scratch();
-  const clone = legacyClone(base);
-  const cwd = deep(base, 'project');
-  const legacyEnv = envFor(base, clone);
-  assert.equal(both(cwd, legacyEnv).api.route, 'context-repo', 'the control: the fallback would answer');
-  const api = resolveWorkspace({ cwd, args: ['--no-pull'], env: legacyEnv, fallback: false });
-  const mjs = spawnSync(process.execPath, [MJS, '--no-fallback'], { cwd, env: legacyEnv, encoding: 'utf8' });
-  const sh = spawnSync('bash', [SH, '--no-fallback'], { cwd, env: legacyEnv, encoding: 'utf8' });
-  assert.equal(api.root, null);
-  assert.equal(api.route, null);
-  for (const r of [mjs, sh]) {
-    assert.equal(r.status, 1);
-    assert.equal(r.stdout.trim(), '');
-    assert.match(r.stderr, /route=none .*--no-fallback/);
-    assert.doesNotMatch(r.stderr, /context-repo\.sh:/, 'context-repo.sh was not run');
+  for (const flag of ['--no-pull', '--writable', '--no-fallback']) {
+    const mjs = spawnSync(process.execPath, [MJS, flag], { cwd: root, env, encoding: 'utf8' });
+    const sh = spawnSync('bash', [SH, flag], { cwd: root, env, encoding: 'utf8' });
+    assert.equal(mjs.stdout.trim(), root, `${flag}: ${mjs.stderr}`);
+    assert.equal(native(sh.stdout.trim()), root, `${flag}: ${sh.stderr}`);
   }
-});
-
-test('--no-fallback: a malformed nearest file is still reported, and still not skipped past', () => {
   const base = scratch();
-  const outer = workspace(deep(base, 'outer'));
-  const inner = workspace(deep(outer, 'inner'), 'not json');
-  const env = envFor(base);
-  const api = resolveWorkspace({ cwd: inner, env, fallback: false });
-  const sh = spawnSync('bash', [SH, '--no-fallback'], { cwd: inner, env, encoding: 'utf8' });
-  assert.equal(api.root, null);
-  assert.equal(sh.stdout.trim(), '');
-  assert.match(api.messages.join('\n'), /malformed/);
-  assert.match(sh.stderr, /malformed/);
+  const sh = spawnSync('bash', [SH, '--no-fallback'], { cwd: base, env: envFor(base), encoding: 'utf8' });
+  assert.equal(sh.status, 1);
+  assert.match(sh.stderr, /route=none/);
 });

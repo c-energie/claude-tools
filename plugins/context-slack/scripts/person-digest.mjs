@@ -89,7 +89,7 @@ if (groups.has(UNASSIGNED)) {
   if (lines.length) blocks.push(['**Unassigned**', ...lines].join('\n'));
 }
 
-// The project's name is the caller's to supply (it lives in context.json, which this script
+// The project's name is the caller's to supply (it lives in workspace.json, which this script
 // doesn't read) — without it the digest still reads correctly, just unbranded.
 const header = `**${opts.title ? `${opts.title} — who's` : "Who's"} got what** · ${pretty(now)}`;
 const messages = [];

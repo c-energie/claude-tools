@@ -1,6 +1,6 @@
 ---
 name: setup-diagram-store
-description: Connect a project to its org's diagram store — create or adopt the private store repo, name it in .diagrams.json or context.json, prove a save and a gallery build. Use when diagram-store.mjs where finds no store named or the store not cloned, or the user asks to set up a diagram store.
+description: Connect a project to its org's diagram store — create or adopt the private store repo, name it in .diagrams.json, prove a save and a gallery build. Use when diagram-store.mjs where finds no store named or the store not cloned, or the user asks to set up a diagram store.
 ---
 
 # Set up a diagram store
@@ -13,7 +13,7 @@ default, and the org-boundary check. This skill ends with the store named on one
 cloned:
 
 ```
-<project repo>/.diagrams.json   { "repo": "acme-co/diagrams" }     ← or context.json state.diagrams (a workspace.json: by hand, for now)
+<project repo>/.diagrams.json   { "repo": "acme-co/diagrams" }     ← or workspace.json state.diagrams (by hand, for now)
 ~/acme-co/diagrams/             the store checkout (private repo)
 |-- README.md  .gitattributes  .gitignore
 |-- index.jsonl                 empty, append-only
@@ -68,13 +68,15 @@ Ask a few at a time; defaults in brackets.
    shared and never records a path, so every later session finds the checkout through that
    variable. Set it before §4: Windows `setx DIAGRAM_STORE_DIR "<dir>"`, else an `export` line in
    the shell profile; then open a new terminal and restart Claude Code.
-4. **Where to name it** — `check`'s `target` line. No context repo → `repo-file`. With one, ask:
-   `repo-file` ties the store to this repo (committed with it, works without context-kit);
-   `context` names it for the whole project. Recommend `repo-file` when unsure.
+4. **Where to name it** — `check`'s `target` line: always `repo-file`, which ties the store to
+   this repo (committed with it, works without a workspace). To name it for a whole workspace
+   instead, the user adds `"state": { "diagrams": { "repo": "[owner]/[repo]" } }` to its
+   `.claude/workspace.json` by hand — this skill does not edit that file. (`--target context`
+   wrote a context repo's `context.json`; it is refused since #60.)
 5. **Project name** (`repo-file` only) [the repo directory's name].
 6. **A starter `taxonomy.json`?** [no] — absent honestly means "no vocabulary agreed yet".
-7. **Cross-org** — only if the store's owner differs from `check`'s `origin` (or the context
-   repo's owner). Explain that diagrams saved here become readable by that org, and ask. Only an
+7. **Cross-org** — only if the store's owner differs from `check`'s `origin` (or the
+   workspace `repo`'s owner). Explain that diagrams saved here become readable by that org, and ask. Only an
    explicit yes means `--cross-org`.
 
 Read the whole plan back as a table — repo, mode, dir, target, project, taxonomy, cross-org, and
@@ -125,16 +127,15 @@ Done at `OK <dir> matches its upstream`. Fallback: `! git -C "<dir>" push -u ori
 ## 4. Name it
 
 ```bash
-SETUP --dry-run config --target <repo-file|context> --repo <owner>/<repo> [--project <name>] [--cross-org]
-SETUP config --target <repo-file|context> --repo <owner>/<repo> [--project <name>] [--cross-org]
+SETUP --dry-run config --target repo-file --repo <owner>/<repo> [--project <name>] [--cross-org]
+SETUP config --target repo-file --repo <owner>/<repo> [--project <name>] [--cross-org]
 ```
 
 Show the dry run's file content first. Done at `OK <root> resolves to <repo> via …, checkout
 <dir>` — the file just written names the store and the checkout exists. Refusals: a config that
 already names another repo, or names this one but cannot work (no `repo`, or cross-org without
 `crossOrg`) — a hand edit, with the user; `repo-file` from a directory that is not its repo's root
-(re-run with the `--root` it names); `context` with no context repo, a `.diagrams.json` that
-would shadow it, or a context repo behind its remote (pull first); a cross-org store without
+(re-run with the `--root` it names); `--target context` (retired); a cross-org store without
 `--cross-org`; `DIAGRAMS_STORE` set. `FAILED: … no checkout at …` means `DIAGRAM_STORE_DIR` is
 missing (§2 question 3).
 
@@ -164,5 +165,5 @@ working directory only` means the root has no subdirectory; say so.
 Then tell the user `/diagrams:save-diagram` and `/diagrams:browse-diagrams` are ready.
 
 **Not this skill:** saving a diagram is `save-diagram`; looking through the store is
-`browse-diagrams`; a project with no context repo that wants one is
-`context-kit-core:context-setup` or `init-context`.
+`browse-diagrams`; a project with no workspace that wants one is
+`project-workspace:setup-project-workspace`.

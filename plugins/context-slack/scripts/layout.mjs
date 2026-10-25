@@ -5,39 +5,38 @@
 // in context-notion's copy FIRST, then here. check-plugin.mjs errors on drift.
 //
 // Where this layer's files live under a resolved root — the meetings folder, the offline queue
-// and the Notion mirror — in a workspace and in a legacy context repo.
+// and the Notion mirror — in a workspace (ADR 0002).
 //
 //   node layout.mjs <root>             # one `key=path` line each, absolute
 //   node layout.mjs <root> pending     # just that path (kind|config|meetings|pending|done|mirror|templates|taxonomy)
 //   node layout.mjs <root> --json      # everything, plus the root-relative forms under `rel`
 //
-// <root> is what workspace.mjs printed (`ROOT="$(node workspace.mjs --writable)"`); this script
+// <root> is what workspace.mjs printed (`ROOT="$(node workspace.mjs)"`); this script
 // never resolves one itself, so a skill and the scripts it runs cannot be pointed at two homes.
 //
-//                 workspace (ADR 0002)       context repo (legacy)
-//   config        .claude/workspace.json     context.json
-//   meetings      docs/meetings/             meetings/
-//   pending       .context/pending/          pending/
-//   done          .context/pending/done/     pending/done/
-//   mirror        .context/notion/           notion/
-//   templates     templates/                 templates/
-//   taxonomy      taxonomy.yml               taxonomy.yml
+//   config        .claude/workspace.json
+//   meetings      docs/meetings/
+//   pending       .context/pending/
+//   done          .context/pending/done/
+//   mirror        .context/notion/
+//   templates     templates/
+//   taxonomy      taxonomy.yml
 //
 // WHY ONE TABLE, HERE. Before workspaces every skill typed `pending/` and `notion/` and every
-// script joined them onto the root itself. With two layouts that is a dozen places to choose
-// between them, and the first one that guessed wrong would write the queue into a directory
-// process-pending never reads — the entry is committed, nothing errors, and the thing it asked
-// for never reaches Notion. So the choice is made once, by this file, and the scripts and
-// skills ask it.
+// script joined them onto the root itself, and the first one that guessed wrong would write the
+// queue into a directory process-pending never reads — the entry is committed, nothing errors,
+// and the thing it asked for never reaches Notion. So the paths are named once, by this file,
+// and the scripts and skills ask it.
 //
-// WHAT DECIDES THE KIND. The root is a workspace when the nearest `.claude/workspace.json` at or
-// above it is a valid one AT the root itself — findWorkspace(), the resolver's own walk, never a
-// folder or repo name. A malformed one there makes it a context repo, which is what the
-// resolver fell back to; a workspace found only ABOVE the root (a legacy clone checked out
-// inside some workspace) does not make the clone one.
+// THERE IS ONE LAYOUT. The context-repo layout (context.json, meetings/, pending/, notion/ at the
+// root) was deleted with the context-repo route (#60). `kind` says whether the root IS a
+// workspace: 'workspace' when the nearest `.claude/workspace.json` at or above it is a valid one
+// AT the root itself (findWorkspace(), the resolver's own walk, never a folder or repo name),
+// else null — a malformed file there, or a workspace found only ABOVE the root, does not make
+// the root one. The paths are the workspace's either way; a caller about to WRITE checks `kind`.
 //
-// `templates/` and `taxonomy.yml` stay at the root in both: they are the repo's own house rules,
-// and the workspace layout moved machine state and docs, not those.
+// `templates/` and `taxonomy.yml` stay at the root: they are the repo's own house rules, and the
+// workspace layout moved machine state and docs, not those.
 //
 // Origin: context-notion — the queue and the mirror are Notion-coupled. context-slack carries a
 // copy (notify-pending and the digest's mirror fallback read the same paths); fix this one first.
@@ -46,29 +45,20 @@ import { fileURLToPath } from 'node:url';
 import { findWorkspace, WORKSPACE_FILE } from './workspace.mjs';
 
 const REL = {
-  workspace: {
-    config: WORKSPACE_FILE,
-    meetings: join('docs', 'meetings'),
-    pending: join('.context', 'pending'),
-    done: join('.context', 'pending', 'done'),
-    mirror: join('.context', 'notion'),
-  },
-  'context-repo': {
-    config: 'context.json',
-    meetings: 'meetings',
-    pending: 'pending',
-    done: join('pending', 'done'),
-    mirror: 'notion',
-  },
+  config: WORKSPACE_FILE,
+  meetings: join('docs', 'meetings'),
+  pending: join('.context', 'pending'),
+  done: join('.context', 'pending', 'done'),
+  mirror: join('.context', 'notion'),
 };
 
-/** The layout under `root`. -> { root, kind: 'workspace'|'context-repo', rel: {…}, …absolute paths }
+/** The layout under `root`. -> { root, kind: 'workspace'|null, rel: {…}, …absolute paths }
  *  `rel` uses `/` on every platform: it is written into files and messages (`.context/pending/actions.md`),
  *  which must read the same whoever ran the script. */
 export function layout(root) {
   const abs = resolve(root);
-  const kind = findWorkspace(abs)?.root === abs ? 'workspace' : 'context-repo';
-  const rel = { ...REL[kind], templates: 'templates', taxonomy: 'taxonomy.yml' };
+  const kind = findWorkspace(abs)?.root === abs ? 'workspace' : null;
+  const rel = { ...REL, templates: 'templates', taxonomy: 'taxonomy.yml' };
   for (const k of Object.keys(rel)) rel[k] = rel[k].split('\\').join('/');
   const out = { root: abs, kind, rel };
   for (const [k, v] of Object.entries(rel)) out[k] = join(abs, v);

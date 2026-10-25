@@ -1,6 +1,6 @@
 ---
 name: memory-triage
-description: Drain Claude's own per-directory memory into the shared context layers — naming what belongs to the personal layer, promoting a project fact into the workspace's docs/memory.md (or the context repo outside a workspace), a code convention into a CLAUDE.md, and leaving genuinely machine-local notes alone. Triggers like "triage my memory", "drain claude's memory into the context repo", "what has claude remembered that should be shared", "my memories are scattered across projects", "promote my memories".
+description: Drain Claude's own per-directory memory into the shared context layers — naming what belongs to the personal layer, promoting a project fact into the workspace's docs/memory.md, a code convention into a CLAUDE.md, and leaving genuinely machine-local notes alone. Triggers like "triage my memory", "drain claude's memory into the workspace", "what has claude remembered that should be shared", "my memories are scattered across projects", "promote my memories".
 disable-model-invocation: true
 ---
 
@@ -20,7 +20,7 @@ Where each fact belongs:
 | --- | --- | --- |
 | machine-local | leave it in native memory | nobody: this laptop, this path |
 | repo | that repo's `CLAUDE.md` | anyone who clones the code |
-| project | the workspace's `docs/memory.md` — outside a workspace, the context repo's `memory.md` | the project's people |
+| project | the workspace's `docs/memory.md` | the project's people |
 | personal | the personal layer the user-level `~/.claude/CLAUDE.md` imports — **not promoted by this skill** | you |
 
 > **Rewrites a durable layer and stamps files outside any repo — run only when asked.**
@@ -29,15 +29,15 @@ Where each fact belongs:
 ## 1. Scan
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/memory-triage.mjs" scan "$ROOT"
 ```
 
-`workspace.mjs` names its route on stderr. **`route=workspace`**: `ROOT` is the nearest
-`.claude/workspace.json`'s directory and project facts go to `$ROOT/docs/memory.md` — the file
-the workspace's `CLAUDE.md` imports. **`route=context-repo`**: no workspace, and everything below
-applies to the context repo's `memory.md` exactly as before. The scan prints which file it means
-(`project facts go to:`); trust that line rather than re-deriving it.
+`ROOT` is the nearest `.claude/workspace.json`'s directory, and project facts go to
+`$ROOT/docs/memory.md`, the file the workspace's `CLAUDE.md` imports. A non-zero exit
+(`route=none` on stderr) means there is no workspace: say so and stop, since a project fact has
+no project home to go to. The scan prints which file it means (`project facts go to:`); trust
+that line rather than re-deriving it.
 
 The scan reads **only the store for this working directory**, and this is the part to
 understand before reading its output. It does not try to work out which other directories belong
@@ -67,7 +67,7 @@ Watch for these too:
 - **Machine-local stays put.** A laptop path, a `UV_LINK_MODE` workaround, where a binary
   lives — these are true of this machine and nowhere else. Promoting them pollutes a shared
   layer with something no one else can use.
-- **A code convention is `CLAUDE.md`**, not the context repo. Test runner, folder naming, build
+- **A code convention is `CLAUDE.md`**, not `docs/memory.md`. Test runner, folder naming, build
   commands: they belong with the code they govern.
 
 ## 3. Promote — into this repo only
@@ -111,7 +111,7 @@ Stage only the file(s) you promoted into and commit, in the destination repo:
 git -C "$ROOT" add docs/memory.md && git -C "$ROOT" commit -m "memory: promote from native memory"
 ```
 
-(`memory.md` outside a workspace.) Show the user the diff and **ask before pushing** — a durable
+Show the user the diff and **ask before pushing** — a durable
 layer is loaded by every session, everyone's. Push (`git -C "$ROOT" push`) only on an explicit
 yes; otherwise leave the commit local and say so.
 
@@ -121,6 +121,6 @@ Say what moved where, what you deliberately left local and why, and what you cou
 An entry nobody can classify should stay where it is and be named — a fact filed under a guess
 is worse than one left in the inbox.
 
-**Not this skill:** condensing a context repo's own threads is `curate-context`; checking a
+**Not this skill:** condensing the workspace's threads is `curate-context`; checking a
 repo's config for silent drift is `context-doctor`; writing up the current session is
 `save-thread`.

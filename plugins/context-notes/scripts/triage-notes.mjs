@@ -7,35 +7,34 @@
 //   node triage-notes.mjs resolve "$ROOT" --repos repos.json   # ...and route topics against it
 //   node triage-notes.mjs resolve "$ROOT" --repos repos.json --topics "dev-hub,IP,claude"
 //
-// Reads `state.notes` from the workspace's `.claude/workspace.json` (ADR 0002), or from a
-// legacy context repo's context.json. Contacts nothing, reads no note, and writes nothing:
+// Reads `state.notes` from the workspace's `.claude/workspace.json` (ADR 0002) — the only root
+// since context repos were retired (#60). Contacts nothing, reads no note, and writes nothing:
 // every destination belongs to a later issue. Exit 0 = it ran, 1 = it refused (unconfigured /
 // opted out / unresolved), 2 = it could not run at all.
 //
 // WHICH ROOT. `[checkout]` is used exactly as given when it is passed. Omitted, it is found the
 // way every other plugin finds it since #53 — workspace.mjs's resolveWorkspace(): the nearest
-// `.claude/workspace.json` at or above the working directory first, and only then the legacy
-// context-repo.sh route. Before #82 this script knew only the second, so inside a workspace it
-// reported `unresolved` — and once #58 moved the last real `state.notes` into a workspace.json,
-// note triage was broken everywhere. A malformed nearest workspace.json is reported on stderr
+// `.claude/workspace.json` at or above the working directory. (Before #82 this script knew only
+// the context-repo route, so once #58 moved the last real `state.notes` into a workspace.json,
+// note triage was broken everywhere; #60 deleted that route.) A malformed nearest workspace.json is reported on stderr
 // and never skipped past to an outer one: that is the resolver's rule, inherited, not restated.
 //
-// THERE IS NO DEFAULT CONFIGURATION, and that is the load-bearing decision. A workspace or context
-// repo without `state.notes` is UNCONFIGURED, and must never fall back to another project's block —
+// THERE IS NO DEFAULT CONFIGURATION, and that is the load-bearing decision. A workspace without
+// `state.notes` is UNCONFIGURED, and must never fall back to another project's block —
 // a fallback is exactly how one org's notes end up proposed as issues in another org's
 // repository. For the same reason the four outcomes below stay four, never three:
 //
 //   configured    — a `state.notes` block that validates
-//   unconfigured  — a workspace or context repo with no block. Says so loudly and names the file.
+//   unconfigured  — a workspace with no block. Says so loudly and names the file.
 //   opted-out     — `notes` set to the opt-out sentinel. Exits silently; a repo that will never
 //                   triage notes must not nag, and "helpfully" configuring an opt-out undoes a
 //                   decision somebody made.
-//   unresolved    — no workspace and no context repo at all. Go and find the right one; editing
+//   unresolved    — no workspace at all. Go and find the right one; editing
 //                   a config file that nothing is reading is wasted work.
 //
 // THERE IS DELIBERATELY NO TOPIC MAP. A topic resolves to a repository when its name equals a
 // repository name CHARACTER FOR CHARACTER in one of the declared organisations, and to a thread
-// in the resolved workspace (or context repo) otherwise. A map can name a repository that no longer exists; an
+// in the resolved workspace otherwise. A map can name a repository that no longer exists; an
 // exact match cannot. No aliases, no prefix or suffix matching, no fuzzy matching: `claude` does
 // not become `claude-tools`, and a near-miss is never a hit.
 //
@@ -48,7 +47,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { resolveWorkspace, WORKSPACE_FILE } from './workspace.mjs';
 
-// In step with hooks/load-context.sh, context-repo.sh and context-kit-core's link-context.mjs.
+// In step with is_optout() in context-kit-core's hooks/workspace-freshness.sh.
 export const OPTOUT = ['none', 'off', 'false', 'no', '-', 'disabled'];
 export const VISIBILITIES = ['personal', 'shared'];
 
@@ -73,53 +72,52 @@ const readJson = (file) => {
  * Which root `[checkout]` means. Passed: used exactly as given — the skill already resolved it,
  * and re-walking from it would let an explicit path be silently replaced by some outer one.
  * Omitted: resolveWorkspace(), so this script and every other plugin agree on which home a
- * session is in. `--no-pull` because a config read must never wait on the network.
+ * session is in. The resolver touches no network.
  *
- * @returns {{root:string|null, route:'given'|'workspace'|'context-repo'|null, messages:string[]}}
+ * @returns {{root:string|null, route:'given'|'workspace'|null, messages:string[]}}
  * `messages` are the resolver's stderr lines; the CLI relays them, because "which home did this
  * load?" is the first question anyone debugging a wrong configuration asks.
  */
 export function resolveRoot(given, opts = {}) {
   if (given) return { root: resolve(given), route: 'given', messages: [] };
-  const r = resolveWorkspace({ args: ['--no-pull'], ...opts });
+  const r = resolveWorkspace(opts);
   return { root: r.root, route: r.route, messages: r.messages };
 }
 
 /**
- * Load and validate `state.notes` from a root: `.claude/workspace.json` when the root holds one,
- * else `context.json`.
+ * Load and validate `state.notes` from a root's `.claude/workspace.json`.
  *
  * @returns {{status:'configured'|'unconfigured'|'opted-out'|'unresolved', notes?:object,
- *            errors:string[], file:string|null, kind?:'workspace'|'context-repo',
- *            repo?:string|null, says:string, fix:string}}
+ *            errors:string[], file:string|null, repo?:string|null, says:string, fix:string}}
  *
  * The four statuses are the result, not the wording: a caller distinguishes them by `status`
- * and never by parsing a message. They are the same four in both kinds of root.
+ * and never by parsing a message.
  *
- * A workspace.json AT the root wins over a context.json beside it — the same precedence as
- * rootKind() in workspace.mjs — and a malformed one is reported as such, never passed over for
- * the context.json: falling through would read a different project's block because of a typo.
+ * A malformed workspace.json is reported as such. A context.json is never read, beside one or
+ * instead of one: context repos were retired in #60, and a root holding only a context.json is
+ * unresolved, said in so many words so nobody edits the file nothing reads.
  *
- * `repo` is the root's own repository — workspace.json's `repo`, context.json's `contextRepo` —
- * which is what "is this target me" compares against (thread routing, handoff draining). Read
- * here once, from the file actually loaded, so no command can take it from the other file.
+ * `repo` is the root's own repository — workspace.json's `repo` — which is what "is this target
+ * me" compares against (thread routing, handoff draining). Read here once, from the file actually
+ * loaded, so no command can take it from anywhere else.
  */
 export function loadConfig(root) {
   if (!root) {
     return {
       status: 'unresolved', errors: [], file: null,
-      says: 'No workspace (no .claude/workspace.json at or above here) and no context repo resolved for this session, so there is no configuration to read.',
-      fix: 'Run from inside the project\'s workspace — the directory whose .claude/workspace.json carries state.notes, or any member below it. Only a project not yet moved to a workspace is linked to a context repo with context-setup. Do not edit any config file until you know which one is being read.',
+      says: 'No workspace (no .claude/workspace.json at or above here) resolved for this session, so there is no configuration to read.',
+      fix: 'Run from inside the project\'s workspace — the directory whose .claude/workspace.json carries state.notes, or any member below it. Do not edit any config file until you know which one is being read.',
     };
   }
-  const wsFile = join(root, WORKSPACE_FILE);
-  const kind = existsSync(wsFile) ? 'workspace' : 'context-repo';
-  const file = kind === 'workspace' ? wsFile : join(root, 'context.json');
-  const name = kind === 'workspace' ? 'workspace.json' : 'context.json';
+  const file = join(root, WORKSPACE_FILE);
+  const name = 'workspace.json';
   if (!existsSync(file)) {
+    const retired = existsSync(join(root, 'context.json'));
     return {
       status: 'unresolved', errors: [], file: null,
-      says: `A checkout resolved at ${root}, but it has neither ${WORKSPACE_FILE} nor context.json — it is not a workspace root or a context repo.`,
+      says: retired
+        ? `${root} holds a context.json and no ${WORKSPACE_FILE}: it is a context repo, and context repos are retired (ADR 0002, #60), so nothing is read from it.`
+        : `A checkout resolved at ${root}, but it has no ${WORKSPACE_FILE} — it is not a workspace root.`,
       fix: 'Pass the workspace root (or omit [checkout] and let the nearest .claude/workspace.json be found), or run context-doctor against it.',
     };
   }
@@ -130,37 +128,37 @@ export function loadConfig(root) {
     // An array or a bare string parses, but has no state for a block to live in.
     if (ctx === null || typeof ctx !== 'object' || Array.isArray(ctx)) throw new Error('top level is not a JSON object');
   } catch (e) {
-    return { status: 'unconfigured', errors: [`${name} is not valid JSON (${e.message})`], file, kind,
+    return { status: 'unconfigured', errors: [`${name} is not valid JSON (${e.message})`], file,
       says: `${file} does not parse, so nothing could be read from it.`,
       fix: 'Fix the JSON, then re-run.' };
   }
-  const repo = (kind === 'workspace' ? ctx.repo : ctx.contextRepo) ?? null;
-  const where = kind === 'workspace' ? 'workspace' : 'repo';
+  const repo = ctx.repo ?? null;
+  const where = 'workspace';
 
   const state = ctx.state;
   const raw = state && typeof state === 'object' && !Array.isArray(state) ? state.notes : undefined;
 
   // The opt-out sentinel, spelled the same way it is everywhere else. Silent by design.
   if (typeof raw === 'string' && OPTOUT.includes(raw.trim().toLowerCase())) {
-    return { status: 'opted-out', errors: [], file, kind, repo,
+    return { status: 'opted-out', errors: [], file, repo,
       says: `This ${where} has opted out of note triage (state.notes is "${raw}").`,
       fix: 'Nothing to do. That is a decision, not a gap — do not "fix" it by writing a block.' };
   }
 
   if (raw === undefined || raw === null) {
-    return { status: 'unconfigured', errors: [], file, kind, repo,
+    return { status: 'unconfigured', errors: [], file, repo,
       says: `${file} has no state.notes block, so this ${where} is not configured for note triage.`,
       fix: `Add a "notes" block under "state" in ${file}: a mindPalace (dataSource + database), an ordered organisations list of {owner, visibility}, and sensitiveTerms. There is no default and none will be inferred — falling back to another project's block is how one org's notes end up as issues in another org's repository.` };
   }
 
   const errors = validate(raw);
   if (errors.length) {
-    return { status: 'unconfigured', errors, file, kind, repo,
+    return { status: 'unconfigured', errors, file, repo,
       says: `${file} has a state.notes block, but it does not validate.`,
       fix: 'Fix each fault named above. Each names the key it is about, so a bad organisation entry is caught here rather than surfacing three steps later as a mysterious thread routing.' };
   }
 
-  return { status: 'configured', notes: raw, errors: [], file, kind, repo,
+  return { status: 'configured', notes: raw, errors: [], file, repo,
     says: `Configured from ${file}.`, fix: '' };
 }
 
@@ -1076,18 +1074,18 @@ export function planThreads(batch, { taxonomy, resolvedRepo } = {}) {
 // because "the queue is empty" should be something seen rather than assumed.
 
 /**
- * Where the queue lives, by kind of root, as a `/`-separated path relative to it — the same form
+ * Where the queue lives, as a `/`-separated path relative to the workspace root — the same form
  * every message prints, so what the script says and where the model moves things agree.
  *
  * A WORKSPACE keeps it at `.context/handoff/`, beside `.context/pending/`: ADR 0002 retired
  * `handoff/` as a top-level folder (amended for #83) but kept this outbox, because the rule it
  * protects — nothing is ever written into a shared org from the personal layer — still needs
- * somewhere to park shared-target output. A LEGACY CONTEXT REPO keeps `handoff/` until #60
- * deletes the fallback. Reading `handoff/` in a workspace instead would report "no queue" over a
- * real backlog, which is exactly the silent backlog this queue exists to surface.
+ * somewhere to park shared-target output. A context repo's top-level `handoff/` went with the
+ * context-repo route (#60). Reading `handoff/` in a workspace instead would report "no queue" over
+ * a real backlog, which is exactly the silent backlog this queue exists to surface.
  */
-export function handoffRel(kind) {
-  const dir = kind === 'workspace' ? '.context/handoff' : 'handoff';
+export function handoffRel() {
+  const dir = '.context/handoff';
   return { dir, done: `${dir}/done` };
 }
 
@@ -1185,7 +1183,7 @@ export function classifyHandoff(item, { organisations = [], selfRepo = null, unr
  * read rather than one assumed for it.
  */
 export function readHandoffQueue(dir, opts = {}) {
-  const rel = opts.rel ?? handoffRel('context-repo').dir;
+  const rel = opts.rel ?? handoffRel().dir;
   let files = [];
   try {
     files = readdirSync(dir).filter((f) => f.endsWith('.md') && !['README.md', 'INDEX.md'].includes(f)).sort();
@@ -1208,7 +1206,7 @@ export function readHandoffQueue(dir, opts = {}) {
  */
 export function renderCarriedOver(queue, { drained = null } = {}) {
   const lines = [];
-  const rel = queue.rel ?? handoffRel('context-repo').dir;
+  const rel = queue.rel ?? handoffRel().dir;
   if (!queue.applicable) {
     lines.push(`  carried over (0) — this repo has no ${rel}/ queue.`);
     return lines.join('\n');
@@ -1272,14 +1270,12 @@ function main(argv) {
     process.exit(2);
   }
 
-  // `select` reads only the pages it is handed, so it resolves nothing: with no [checkout] the
-  // resolver's fallback may run context-repo.sh, and a step that needs no config must not pay
-  // for — or be refused by — finding one.
+  // `select` reads only the pages it is handed, so it resolves nothing: a step that needs no
+  // config must not be refused by failing to find one.
   let root = null;
   if (cmd !== 'select') {
     const r = resolveRoot(given);
-    // context-repo.sh's own lines already name their source; the rest are the resolver's.
-    for (const m of r.messages) console.error(m.startsWith('context-repo.sh: ') ? m : `workspace.mjs: ${m}`);
+    for (const m of r.messages) console.error(`workspace.mjs: ${m}`);
     root = r.root;
   }
   const cfg = loadConfig(root);
@@ -1615,13 +1611,11 @@ function main(argv) {
     if (cfg.status !== 'configured') {
       console.error(`triage-notes — ${cfg.status}`); console.error(`  ${cfg.says}`); process.exit(1);
     }
-    // workspace.json's `repo` in a workspace, context.json's `contextRepo` otherwise — loadConfig
-    // read it from the file it loaded, so "is this target me" asks about the right repository.
+    // workspace.json's `repo` — loadConfig read it from the file it loaded, so "is this target
+    // me" asks about the right repository.
     const selfRepo = cfg.repo;
     const unreachableArg = flagValue(argv, 'unreachable');
-    // .context/handoff/ in a workspace, handoff/ in a legacy context repo — by the kind of file
-    // loadConfig actually read, the same way it took selfRepo, so the two cannot disagree.
-    const rel = handoffRel(cfg.kind);
+    const rel = handoffRel();
     const queue = readHandoffQueue(join(root, ...rel.dir.split('/')), {
       rel: rel.dir,
       organisations: cfg.notes.organisations,
@@ -1634,7 +1628,7 @@ function main(argv) {
     // Reported at the START of every run, INCLUDING ZERO, so an empty queue is a thing that was
     // seen rather than assumed.
     console.log(`triage-notes — handoff backlog: ${queue.total} item(s)`);
-    if (!queue.applicable) { console.log(`  (this ${cfg.kind === 'workspace' ? 'workspace' : 'repo'} has no ${rel.dir}/ directory)`); return; }
+    if (!queue.applicable) { console.log(`  (this workspace has no ${rel.dir}/ directory)`); return; }
     console.log('');
     console.log(renderCarriedOver(queue));
     if (queue.drain.length) {

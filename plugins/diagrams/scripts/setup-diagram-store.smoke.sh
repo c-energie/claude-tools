@@ -88,14 +88,11 @@ proj "$T/p10" test-org/p10
 echo '{ "repo": "other-org/diagrams" }' > "$T/p10/.diagrams.json"
 t 0 "STATE named-refused" --root "$T/p10" check
 
-echo "== #12 context: nested null untouched, sub-keys kept"
+echo "== #12 --target context is retired (#60): refused, nothing written"
 proj "$T/p12" test-org/p12
-printf '{\n  "project": "Ctx",\n  "contextRepo": "test-org/ctx",\n  "connections": { "x": { "state": null } },\n  "state": null\n}\n' > "$T/ctx12.json"
-CONTEXT_CONFIG="$T/ctx12.json" t 0 "^OK" --root "$T/p12" config --target context --repo test-org/diagrams
-check "#12 nested state:null kept" 'grep -q "\"x\":{\"state\":null}\|\"x\": {\s*\"state\": null" "$T/ctx12.json" || node -e "process.exit(require(process.argv[1]).connections.x.state===null?0:1)" "$T/ctx12.json"'
-printf '{ "project": "C", "contextRepo": "test-org/ctx", "state": { "notion": 1, "diagrams": { "org": "Keep" } } }\n' > "$T/ctx12b.json"
-CONTEXT_CONFIG="$T/ctx12b.json" t 0 "^OK" --root "$T/p12" config --target context --repo test-org/diagrams
-check "#12 state.diagrams.org kept, state.notion kept" 'node -e "const j=require(process.argv[1]);process.exit(j.state.diagrams.org===\"Keep\"&&j.state.notion===1&&j.state.diagrams.repo===\"test-org/diagrams\"?0:1)" "$T/ctx12b.json"'
+printf '{ "project": "C", "contextRepo": "test-org/ctx", "state": null }\n' > "$T/ctx12.json"
+CONTEXT_CONFIG="$T/ctx12.json" t 2 "retired" --root "$T/p12" config --target context --repo test-org/diagrams
+check "#12 context.json untouched" 'node -e "process.exit(require(process.argv[1]).state===null?0:1)" "$T/ctx12.json"'
 
 echo "== #14 fresh/adopt edge cases"
 mkdir -p "$T/s14a"; git init -q -b main "$T/s14a"; echo x > "$T/s14a/f"; git -C "$T/s14a" add f; git -C "$T/s14a" commit -qm x

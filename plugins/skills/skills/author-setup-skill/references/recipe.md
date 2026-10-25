@@ -23,7 +23,7 @@ specifics.
    skill reads it instead of re-asking. **Owned state defaults to JSON**; use TOML only when
    people hand-edit the file, since node reads JSON natively and has no TOML parser. When the
    record already exists — defined by other skills, as `setup-diagram-store` fills in
-   `.diagrams.json` or `context.json` `state.diagrams` — the setup **joins** it instead of
+   `.diagrams.json` or `workspace.json` `state.diagrams` — the setup **joins** it instead of
    inventing a file: it writes their schema, and its trigger is their check failing. **A shared state file must not carry a machine path**:
    once committed it is read on every clone, and an absolute checkout dir is true on one laptop
    only. A per-machine path belongs in an env var, and a step that writes committed state

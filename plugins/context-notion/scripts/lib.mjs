@@ -3,14 +3,13 @@
 // The config is per-project: the `state.notion` block of the project's config file — nothing
 // is baked in. Resolution order:
 //   1. CONTEXT_CONFIG=/path/to/file.json  — explicit, no git, no bash needed; still wins
-//   2. the nearest `.claude/workspace.json` (ADR 0002) — findWorkspace(), the resolver's own walk
-//   3. the context repo via context-repo.sh --no-pull, and its context.json — the legacy route,
-//      until the last context repo is migrated
+//   2. the nearest `.claude/workspace.json` (ADR 0002) — resolveWorkspace(), the resolver's own
+//      walk. There is no third rung: the context-repo route was deleted in #60.
 // Either way the project must declare `"state": { "backend": "notion", "notion": {…} }` —
 // a project without a Notion backend has nothing for these scripts to run against, and
 // saying so beats pretending with an empty roster.
 //
-// 2 and 3 are one call to resolveWorkspace() rather than a walk of this file's own: a session
+// 2 is one call to resolveWorkspace() rather than a walk of this file's own: a session
 // whose context loaded from the workspace must not have its roster read from somewhere else,
 // and two walks are how that would start. Its route line is NOT relayed on success — these
 // scripts' stdout is a report or JSON and their stderr is read by people — but a malformed
@@ -21,14 +20,12 @@ import { layout } from './layout.mjs';
 
 function configPath() {
   if (process.env.CONTEXT_CONFIG) return process.env.CONTEXT_CONFIG;
-  const r = resolveWorkspace({ args: ['--no-pull'] });
+  const r = resolveWorkspace();
   for (const m of r.messages) if (/malformed/.test(m) && !m.startsWith('route=')) console.error(`note: ${m}`);
   if (!r.root) {
-    throw new Error(r.messages.filter((m) => m.startsWith('route=none')).pop() ?? 'no workspace and no context repo resolved');
+    throw new Error(r.messages.filter((m) => m.startsWith('route=none')).pop() ?? 'no workspace resolved');
   }
-  // Git Bash prints POSIX paths (/c/Users/…) that win32 path.join would mangle into \c\Users\….
-  const root = process.platform === 'win32' ? r.root.replace(/^\/([A-Za-z])\//, '$1:/') : r.root;
-  return layout(root).config;
+  return layout(r.root).config;
 }
 
 let parsed;
@@ -39,8 +36,7 @@ try {
   parsed = { path, json: JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) };
 } catch (e) {
   console.error(`Cannot load the project's config: ${e.message.split('\n')[0]}`);
-  console.error('Run inside a workspace (.claude/workspace.json), set CONTEXT_CONFIG=/path/to/file.json, '
-    + 'or check PROJECT_CONTEXT_REPO points at a reachable context repo.');
+  console.error('Run inside a workspace (.claude/workspace.json), or set CONTEXT_CONFIG=/path/to/file.json.');
   process.exit(2);
 }
 

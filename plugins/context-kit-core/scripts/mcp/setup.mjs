@@ -103,7 +103,7 @@ async function addConnector(rl, env) {
 
   // No default. The convention is <provider>-<project>, and the project half is the whole point
   // of the name — it is what lets a machine hold several same-provider connections scoped to
-  // different workspaces, and what context.json's `connections` block matches against. This
+  // different workspaces, and what workspace.json's `connections` block matches against. This
   // used to default to one specific project's connector, which is a project fact in the core
   // plugin: accepting it by pressing enter silently wired every project to that one's name.
   let name = '';

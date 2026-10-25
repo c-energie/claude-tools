@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Render a project's Notion mirror — `.context/notion/` in a workspace, `notion/` in a legacy
-// context repo (layout.mjs decides which) — the read-only slice of Notion that
+// Render a project's Notion mirror — `.context/notion/` in the workspace (layout.mjs names it) —
+// the read-only slice of Notion that
 // people without a working Notion connection (workspace guests, whose queries return empty
 // rather than erroring) can still read.
 //
 //   node mirror-render.mjs <root> <export.json> [--today YYYY-MM-DD] [--dry-run]
 //
-// <root> is a workspace root or a context repo, as workspace.mjs printed it.
+// <root> is the workspace root, as workspace.mjs printed it.
 //
 // The point of doing this in a script rather than in prose: the mirror is regenerated in full
 // on every sync, so its formatting must be byte-identical between runs. Anything that renders
@@ -54,15 +54,14 @@ const positional = args.filter((a, i) =>
 const root = positional[0];
 const input = positional[1];
 if (!root) {
-  console.error('mirror-render.mjs: needs the workspace or context repo root, then the export JSON');
+  console.error('mirror-render.mjs: needs the workspace root, then the export JSON');
   process.exit(2);
 }
-// The guard against rendering into the wrong directory. A workspace proves itself with its own
-// workspace.json (layout.mjs's test); a legacy context repo still has to show its memory.md.
+// The guard against rendering into the wrong directory: a workspace proves itself with its own
+// workspace.json (layout.mjs's test). A retired context repo is refused like any other directory.
 const where = layout(root);
-if (where.kind !== 'workspace' && !existsSync(join(root, 'memory.md'))) {
-  console.error(`mirror-render.mjs: ${root} is neither a workspace (no .claude/workspace.json) `
-    + 'nor a context repo (no memory.md)');
+if (where.kind !== 'workspace') {
+  console.error(`mirror-render.mjs: ${root} is not a workspace root (no valid .claude/workspace.json there)`);
   process.exit(2);
 }
 

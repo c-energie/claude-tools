@@ -52,7 +52,7 @@ a static feature is not a compromise, it is the correct answer. A repo may have 
   gathered together with what every other cloned repo declares for the project.
 
 Ask: *would someone go looking for this under this repo's name?* Writing up a meeting is
-not "a thing I do to the context repo", even though the context repo is where the files
+not "a thing I do to the workspace repo", even though the workspace repo is where the files
 live — so it belongs on the Project tab.
 
 Moving the shelf changes nothing else. This repo still owns the feature, it still runs in
@@ -168,8 +168,9 @@ that is the whole justification, and it is why the *parameter* rules above are s
 the `argv` itself is free. Do not design a feature that takes a command as a parameter. If
 you find yourself wanting to, you want a plugin, where the repo's own code decides.
 
-**Not this skill:** wiring a project to its context repo, or changing the context plugins
-themselves, is `context-kit-core`'s `context-setup` and `update-plugin`. Declaring which
+**Not this skill:** making a folder a workspace is project-workspace's
+`setup-project-workspace`; declaring its connections is `context-kit-core`'s `setup-connectors`;
+changing the context plugins themselves is its `update-plugin`. Declaring which
 credentials a repo uses is the `secrets-declare` skill. Adding this repo to a catalogue so
 `devhub` clones it and shows these features at all is `devhub-catalogue`. This one only writes
 the `devhub.toml` (and its plugin) of the repo you are standing in — it never commits, and

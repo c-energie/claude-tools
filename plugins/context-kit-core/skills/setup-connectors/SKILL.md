@@ -1,13 +1,12 @@
 ---
 name: setup-connectors
-description: Provision the MCP connections a project declares in its workspace.json or context.json — one credential per connection, scoped to that project's repos or workspace — and diagnose why a declared connection is missing or wrong. Triggers like "set up my connectors", "the project's github connection isn't there", "I'm getting the wrong notion workspace", "add a scoped PAT for this project", "why can't Claude see this repo".
+description: Provision the MCP connections a project declares in its workspace.json — one credential per connection, scoped to that project's repos or workspace — and diagnose why a declared connection is missing or wrong. Triggers like "set up my connectors", "the project's github connection isn't there", "I'm getting the wrong notion workspace", "add a scoped PAT for this project", "why can't Claude see this repo".
 ---
 
 # Provision this project's declared connections
 
-The `connections` block in the nearest `.claude/workspace.json` (or, for a project not yet in a
-workspace, its context repo's `context.json`) names which MCP server serves each
-provider here — e.g. `{ "github": "github-thesis", "notion": "notion-thesis" }`. This skill
+The `connections` block in the nearest `.claude/workspace.json` names which MCP server serves
+each provider here — e.g. `{ "github": "github-thesis", "notion": "notion-thesis" }`. This skill
 makes those exist on the current machine, each backed by its own narrowly-scoped credential.
 
 **Why per-project credentials.** One connection per provider per machine would authenticate as
@@ -38,21 +37,19 @@ Reports each declared connection as configured or missing, and names any other c
 the same provider present on this machine — those belong to other projects and are off-limits
 here. Read the output back to the user before changing anything.
 
-The script finds the policy on its own: first the nearest `.claude/workspace.json` at or above
-the project dir — a member repo inside a workspace uses the workspace's — and only without one,
-`context.json`, via `PROJECT_CONTEXT_REPO` (the env var, or the project's
-`.claude/settings*.json`), whose managed clone lives at `~/.context/owner/repo` — cloned there on
-first use. `--context path` is an override for odd layouts, not the normal route. In a workspace
-it edits **only** the `connections` key and leaves every other byte alone; a malformed nearest
-`workspace.json` is refused — fix it, rather than letting the script edit some other file.
+The script finds the policy on its own: the nearest `.claude/workspace.json` at or above the
+project dir; a member repo inside a workspace uses the workspace's. `--context path` (the file,
+or the workspace directory holding it) is an override for odd layouts, not the normal route; a
+retired context repo's `context.json` is refused by name. It edits **only** the `connections`
+key and leaves every other byte alone; a malformed nearest `workspace.json` is refused, so fix
+it rather than letting the script edit some other file.
 
-If it can't find `context.json`, that's `context-setup`'s job, not this one — the context repo
-isn't configured. If it finds the file but there's **no `connections` key at all**, offer to add
-one; the block is what stops a multi-workspace machine writing to the wrong place.
+If there is no workspace at all, that's `project-workspace:setup-project-workspace`'s job, not
+this one. If the file has **no `connections` key at all**, offer to add one; the block is what
+stops a multi-workspace machine writing to the wrong place.
 
 **`"connections": {}` is not the same thing, and must not be treated as one.** An empty block is
-a decision already taken — this project declares no connections — exactly as `none` is a decision
-about the repo name rather than a missing one. The script reports it and exits 0; say so and stop
+a decision already taken: this project declares no connections. The script reports it and exits 0; say so and stop
 rather than offering to fill it in. A repo whose whole safety property is holding no workspace
 credential is precisely the one that writes `{}` and means it. If the user genuinely wants to
 reopen it, `--add [provider]` names what to declare.
@@ -101,5 +98,5 @@ that "doesn't appear" is almost always this.
 node ~/.mcp/mcp-launch.mjs <connection-name> --print
 ```
 
-**Not this skill:** configuring which context repo a project uses is `context-setup`;
+**Not this skill:** making a folder a workspace is `project-workspace:setup-project-workspace`;
 re-pulling context mid-session is `refresh-context`.

@@ -1,12 +1,12 @@
 ---
 name: add-pending
-description: Queue an action, decision, open question, stakeholder or project in the project's pending queue (.context/pending/ in a workspace, pending/ in a legacy context repo) when the Notion connection is unavailable — the fallback for workspace guests and offline sessions. Triggers like "add this to pending", "queue this for Notion", "log this, I have no Notion access", and any add-action / log-decision request that fails because Notion cannot be reached.
+description: Queue an action, decision, open question, stakeholder or project in the project's pending queue (.context/pending/ in the workspace) when the Notion connection is unavailable — the fallback for workspace guests and offline sessions. Triggers like "add this to pending", "queue this for Notion", "log this, I have no Notion access", and any add-action / log-decision request that fails because Notion cannot be reached.
 ---
 
 # Queue something for Notion
 
-Writes an entry into the project's **pending queue** — `.context/pending/` in a workspace,
-`pending/` in a legacy context repo — the inbox for sessions that can't reach Notion. Someone with a working connection transfers it later with `process-pending`.
+Writes an entry into the project's **pending queue** — `.context/pending/` in the workspace —
+the inbox for sessions that can't reach Notion. Someone with a working connection transfers it later with `process-pending`.
 
 **When to use this instead of the direct skill:** if Notion works, use the real skill — a
 pending entry is a delay, not a destination. If a Notion write fails or returns nothing
@@ -19,14 +19,14 @@ when the project declares no Notion backend at all — the queue needs none.
 ## 1. Find the queue
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 PENDING="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" pending)"
 ```
 
-`workspace.mjs` finds the nearest `.claude/workspace.json` and falls back to the context repo
-(stderr names the `route=`); `layout.mjs` says where that root keeps the queue. Use `$PENDING`
-as given — never type `pending/` or `.context/pending/` yourself: a guess that picks the other
-layout commits the entry where `process-pending` never looks. Stop if either exits non-zero —
+`workspace.mjs` finds the nearest `.claude/workspace.json` (stderr names the `route=`);
+`layout.mjs` says where that root keeps the queue. Use `$PENDING` as given — never type
+`.context/pending/` yourself: a guess that gets it wrong commits the entry where
+`process-pending` never looks. Stop if either exits non-zero —
 say so rather than writing the entry somewhere else, which loses it. Dates via `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs"` (`today`, `add 3d`, `add
 weekly`) — never head-math.
 
@@ -64,7 +64,7 @@ At the **bottom**, in the format `pending-parse.mjs` owns:
 - **The `##` heading is the title and only the title** — no owner, date or status in it.
 - **Dates are `YYYY-MM-DD`** — anything else is rejected at transfer rather than guessed at.
 - **Owner names are the short names from the project's roster** (`state.notion.people` in
-  the project's config — `.claude/workspace.json`, or a legacy `context.json`). Anyone else goes in `notes`.
+  the workspace's `.claude/workspace.json`). Anyone else goes in `notes`.
 - **Write what you know; don't research it.** Name-only entries are fine — enrichment happens
   after transfer.
 - Never touch anything above the first `##`, never edit an entry that isn't yours.

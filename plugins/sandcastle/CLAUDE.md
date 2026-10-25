@@ -19,8 +19,8 @@ a harness install; the third gets a backlog ready for the engine's epic mode:
 
 None depends on another being run, and each says so in its `Not this skill:` line.
 
-It is deliberately **outside the context stack**. It reads no `context.json`, needs no context
-repo, and is useful in any workspace that has installed `@c-energie/sandcastle-harness`. Filing it
+It is deliberately **outside the context stack**. It reads no `workspace.json` state, needs no
+context plugin, and is useful in any workspace that has installed `@c-energie/sandcastle-harness`. Filing it
 under `context-kit-core` because both are "tooling" would put facts about a placeholder contract
 and three output blocks into the layer whose whole rule is that it knows nothing but generic
 context machinery. Same test as `devhub` and `diagrams`: same people, new topic, new plugin.

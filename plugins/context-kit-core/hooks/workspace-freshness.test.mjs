@@ -1,5 +1,5 @@
-// Tests for load-context.sh inside a workspace, where the session-start hook loads nothing and
-// only warns when the workspace is behind its origin. Node standard library only — no
+// Tests for workspace-freshness.sh, the session-start hook: it loads nothing, and only warns
+// when the workspace is behind its origin. Node standard library only — no
 // package.json, no dependency.
 //
 //   node --test plugins/context-kit-core/hooks/workspace-freshness.test.mjs
@@ -8,17 +8,17 @@
 // below is a file copy, and the two failure cases use a remote that cannot exist (a missing
 // path) and one that never answers (an `ext::` transport running `sleep`). Commits carry their
 // identity in the environment, so nothing depends on a git user.name being set wherever this
-// runs. HOME is a scratch dir, as in load-context.test.mjs: the legacy loader globs `$HOME/mnt`.
+// runs. HOME is a scratch dir, so nothing on the developer's machine can decide a case.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'load-context.sh');
+const HOOK = join(dirname(fileURLToPath(import.meta.url)), 'workspace-freshness.sh');
 const MEMORY_MARK = 'FIXTURE MEMORY LINE';
 
 const tmps = [];
@@ -68,17 +68,17 @@ const teammatePushes = (fix, n) => {
   git(fix.seed, 'push', '-q', 'origin', 'main');
 };
 
-// Built from scratch, not spread over process.env, so a developer's own PROJECT_CONTEXT_REPO
-// or CONTEXT_KIT_AUTOLOAD cannot decide a case. PROJECT_CONTEXT_REPO is deliberately SET, to a
-// checkout that would load: inside a workspace it must be ignored, and an empty stdout then
-// proves the legacy loader did not run rather than that it had nothing to load.
-const run = ({ fix, cwd = fix.ws, env = {} }) => {
+// Built from scratch, not spread over process.env, so a developer's own CONTEXT_KIT_AUTOLOAD
+// cannot decide a case. PROJECT_CONTEXT_REPO is deliberately SET, to a checkout the retired
+// legacy loader would have printed (#60): an empty stdout then proves nothing reads it any more,
+// rather than that there was nothing to load.
+const run = ({ fix, cwd = fix.ws, env = {}, args = [] }) => {
   const clone = join(fix.base, 'legacy');
   mkdirSync(clone, { recursive: true });
   writeFileSync(join(clone, 'memory.md'), `# Memory\n\n- ${MEMORY_MARK}\n`);
   spawnSync('git', ['init', '-q', clone]);
   const started = Date.now();
-  const r = spawnSync('bash', [HOOK], {
+  const r = spawnSync('bash', [HOOK, ...args], {
     cwd,
     encoding: 'utf8',
     env: {
@@ -103,7 +103,7 @@ const note = (out) => {
   return j.systemMessage;
 };
 
-test('up to date: no output at all — and the legacy loader did not run', () => {
+test('up to date: no output at all — and no context repo is loaded', () => {
   const fix = fixture();
   assert.equal(run({ fix }).out, '');
 });
@@ -115,7 +115,8 @@ test('behind origin by N: one line stating N and the command, and nothing is pul
   const line = note(run({ fix }).out);
   assert.match(line, /3 commits behind origin\/main/);
   assert.match(line, /pull --ff-only/);
-  assert.ok(line.includes(fix.ws), 'names the workspace');
+  // The tail, not the whole path: Git Bash spells the scratch dir its own way on Windows.
+  assert.match(line, new RegExp(`${basename(fix.base)}[\\\\/]ws\\b`), 'names the workspace');
   assert.equal(git(fix.ws, 'rev-parse', 'HEAD'), before, 'a fetch, never a pull');
 });
 
@@ -179,15 +180,22 @@ test('CONTEXT_KIT_AUTOLOAD=off silences it, even when behind', () => {
   assert.equal(run({ fix, env: { CONTEXT_KIT_AUTOLOAD: 'off' } }).out, '');
 });
 
-test('a malformed workspace.json is not a workspace: the legacy loader runs, as the resolver falls back', () => {
+test('a malformed workspace.json is not a workspace: silent, and no context repo is loaded', () => {
   const fix = fixture();
+  teammatePushes(fix, 1);
   writeFileSync(join(fix.ws, '.claude', 'workspace.json'), '{ not json');
-  assert.ok(run({ fix }).out.includes(MEMORY_MARK));
+  assert.equal(run({ fix }).out, '');
 });
 
-test('outside any workspace, the legacy loader still loads', () => {
+test('outside any workspace: silent, even with a context repo configured', () => {
   const fix = fixture();
   const proj = join(fix.base, 'project');
   mkdirSync(proj);
-  assert.ok(run({ fix, cwd: proj }).out.includes(MEMORY_MARK));
+  assert.equal(run({ fix, cwd: proj }).out, '');
+});
+
+test('--refresh, the retired loader\'s hand invocation, is ignored like any other argument', () => {
+  const fix = fixture();
+  teammatePushes(fix, 1);
+  assert.match(note(run({ fix, args: ['--refresh'] }).out), /1 commit behind/);
 });

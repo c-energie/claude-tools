@@ -5,8 +5,8 @@
 // FIRST, then here — a drifted copy means a queue that reads differently depending on which
 // plugin looked at it, which is exactly what the single-definition rule exists to prevent.
 //
-// Parse the project's pending inbox — `.context/pending/` in a workspace, `pending/` in a legacy
-// context repo (layout.mjs decides which) — the queue where anyone without a working Notion
+// Parse the project's pending inbox — `.context/pending/` in the workspace (layout.mjs names
+// it) — the queue where anyone without a working Notion
 // connection writes actions, decisions, questions, stakeholders and projects for later transfer
 // into Notion. Workspace *guests* are the usual case: the connector returns them nothing rather
 // than erroring, so an empty result is never evidence of absence and they need somewhere to
@@ -15,7 +15,7 @@
 //
 //   node pending-parse.mjs <root> [--type action] [--json]
 //
-// <root> is a workspace root or a context repo, as workspace.mjs printed it. Every `file` this
+// <root> is the workspace root, as workspace.mjs printed it. Every `file` this
 // reports is relative to it (`.context/pending/actions.md`), and --drain resolves the same form.
 //
 // The entry format is defined here, once, rather than described in five skill files that then
@@ -53,7 +53,7 @@ const typeFilter = (() => {
   return i >= 0 ? args[i + 1] : undefined;
 })();
 
-if (!root) { console.error('pending-parse.mjs: needs the workspace or context repo root'); process.exit(2); }
+if (!root) { console.error('pending-parse.mjs: needs the workspace root'); process.exit(2); }
 const where = layout(root);
 const dir = where.pending;
 // Relative, with `/`, as it appears in messages and in the `file` of every entry.
@@ -454,7 +454,7 @@ if (args.includes('--slack')) {
       + `written (${errored.map((e) => `\`${e.file.slice(rel.length + 1)}:${e.line}\``).join(', ')}) `
       + '— a date or a status Notion won\'t take.', '');
   }
-  out.push(`In ${where.kind === 'workspace' ? 'the workspace' : 'the context repo'} → \`${rel}/\`. `
+  out.push(`In the workspace → \`${rel}/\`. `
     + 'Run `context-notion:process-pending` to transfer them.');
 
   const text = out.join('\n');

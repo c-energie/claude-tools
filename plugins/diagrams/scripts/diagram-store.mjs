@@ -7,7 +7,7 @@
 // drift the first time a field is added, and the symptom is a gallery quietly missing rows.
 //
 // Nothing here knows an org, a repo name or a tag. The store is named by the PROJECT
-// (DIAGRAMS_STORE, the repo's .diagrams.json, or state.diagrams.repo in its context.json — see
+// (DIAGRAMS_STORE, the repo's .diagrams.json, or state.diagrams.repo in its workspace.json — see
 // locateStore) and the vocabulary by the STORE (its own taxonomy.json). Both are read at
 // runtime; neither has a default.
 //
@@ -25,10 +25,6 @@ import { homedir } from 'node:os';
 import { resolveWorkspace } from './workspace.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-// Git Bash prints POSIX paths (/c/Users/…) that win32 path.join would mangle into \c\Users\….
-const posixToNative = (p) =>
-  (process.platform === 'win32' ? p.replace(/^\/([A-Za-z])\//, '$1:/') : p);
 
 // ---------------------------------------------------------------- the record
 
@@ -61,27 +57,22 @@ export const serialise = (entry) => {
 // ---------------------------------------------------------------- the project's config
 
 /** The project's config file: CONTEXT_CONFIG, else the nearest `.claude/workspace.json` at or
- *  above `cwd` (ADR 0002), else the context repo's context.json — one resolveWorkspace() call,
- *  the walk every other layer uses, so a member repo nested in a workspace names the workspace's
- *  store rather than whatever context repo the legacy route lands on (observed 2026-10-25: a
- *  smeter-validation member resolved to the personal second-brain). */
+ *  above `cwd` (ADR 0002) — one resolveWorkspace() call, the walk every other layer uses, so a
+ *  member repo nested in a workspace names the workspace's store. There is no context-repo rung
+ *  any more (#60). */
 export function readConfig(cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd()) {
   const path = process.env.CONTEXT_CONFIG ?? (() => {
-    const r = resolveWorkspace({ cwd, args: ['--no-pull'] });
-    // Relayed because it silently changes which file names the store: a typo in workspace.json
-    // would otherwise send a member repo back to whatever context repo the legacy route finds.
-    for (const m of r.messages) if (/malformed/.test(m) && !m.startsWith('route=')) console.error(`note: ${m}`);
+    const r = resolveWorkspace({ cwd });
     if (r.route === 'workspace') return r.file;
-    if (!r.root) {
-      throw new Error(r.messages.filter((m) => m.startsWith('route=none')).pop() ?? 'no workspace and no context repo resolved');
-    }
-    return join(posixToNative(r.root), 'context.json');
+    // A malformed nearest file is named, not just "none": a typo there is a one-line fix.
+    throw new Error(r.messages.filter((m) => /malformed/.test(m) && !m.startsWith('route=')).concat(
+      r.messages.filter((m) => m.startsWith('route=none'))).join('; ') || 'no workspace resolved');
   })();
   // A BOM is what PowerShell's Set-Content leaves behind; JSON.parse rejects it.
   return { path, json: JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) };
 }
 
-/** A workspace or context repo is OPTIONAL: a project with neither names its store some other way.
+/** A workspace is OPTIONAL: a project without one names its store some other way.
  *  So an unresolvable one is a null here, with the reason kept for the error message —
  *  except when CONTEXT_CONFIG is set, where a missing file is the caller's mistake and says so. */
 export function readConfigSoft(cwd) {
@@ -91,10 +82,11 @@ export function readConfigSoft(cwd) {
   }
 }
 
-/** A workspace.json (ADR 0002) names its own repo in `repo`; a context.json in `contextRepo`.
- *  Told apart by the file, never the folder: the same rule the resolver uses. */
+/** A workspace.json (ADR 0002) names its own repo in `repo`. Told apart by the file, never the
+ *  folder: the same rule the resolver uses. Any other file (a retired context.json handed in
+ *  through CONTEXT_CONFIG) is not a workspace and names no store. */
 export const isWorkspace = (cfg) => /[\\/]\.claude[\\/]workspace\.json$/.test(cfg?.path ?? '');
-export const configOwner = (cfg) => (isWorkspace(cfg) ? cfg.json.repo : cfg?.json?.contextRepo)?.split('/')[0] ?? null;
+export const configOwner = (cfg) => (isWorkspace(cfg) ? cfg.json.repo : null)?.split('/')[0] ?? null;
 
 export const REPO_FILE = '.diagrams.json';
 
@@ -127,9 +119,9 @@ export function originOwner(cwd = process.cwd()) {
 
 /** Where this project's store is named, first match wins:
  *    1. DIAGRAMS_STORE=owner/repo           — one shell or session; tests; Cowork
- *    2. .diagrams.json in the current repo  — ties the store to the repo, no context repo needed
- *    3. context.json state.diagrams         — the context-kit route
- *  None of them → an error naming all three. The ladder makes context-kit optional; it does NOT
+ *    2. .diagrams.json in the current repo  — ties the store to the repo, no workspace needed
+ *    3. workspace.json state.diagrams       — the workspace route (ADR 0002)
+ *  None of them → an error naming all three. The ladder makes a workspace optional; it does NOT
  *  add a default: nothing is inferred from an origin owner or from what exists on disk. */
 export function locateStore({ env = process.env, cwd = process.cwd(), context = readConfigSoft, owner = originOwner } = {}) {
   if (env.DIAGRAMS_STORE) {
@@ -150,12 +142,11 @@ export function locateStore({ env = process.env, cwd = process.cwd(), context = 
     };
   }
   const { cfg, why } = context();
-  const d = cfg?.json?.state?.diagrams ?? null;
+  const d = isWorkspace(cfg) ? cfg.json?.state?.diagrams ?? null : null;
   if (d?.repo) {
-    const ws = isWorkspace(cfg);
     return {
-      source: ws ? 'workspace.json' : 'context.json', configPath: cfg.path, block: d,
-      project: (ws ? cfg.json.name ?? cfg.json.repo : cfg.json.project ?? cfg.json.contextRepo) ?? null,
+      source: 'workspace.json', configPath: cfg.path, block: d,
+      project: (cfg.json.name ?? cfg.json.repo) ?? null,
       repoRoot: rf.root,
       contextOwner: configOwner(cfg),
     };
@@ -165,8 +156,8 @@ export function locateStore({ env = process.env, cwd = process.cwd(), context = 
     'No diagram store is named for this project. Name one in any of:\n'
     + '  1. DIAGRAMS_STORE=[owner]/[repo]               (this shell only)\n'
     + `  2. ${REPO_FILE} at the repo root:  { "repo": "[owner]/[repo]" }\n`
-    + `  3. .claude/workspace.json (or a context repo's context.json):  "state": { "diagrams": { "repo": "[owner]/[repo]" } }`
-    + (cfg ? `   (${cfg.path} has none)` : `   (no workspace or context repo: ${why})`)
+    + `  3. .claude/workspace.json:  "state": { "diagrams": { "repo": "[owner]/[repo]" } }`
+    + (cfg ? `   (${cfg.path} has none)` : `   (no workspace: ${why})`)
     + '\n'
     + (suggest ? `This repo's owner is ${suggest}, so ${suggest}/diagrams is the likely store — confirm it, it is not assumed.\n` : '')
     + 'There is no default on purpose: a default would let this project write into another '
@@ -196,10 +187,10 @@ export function resolveStore({ mustExist = true, env = process.env, cwd = proces
   // The org boundary, checked on every resolve rather than once at setup: a config file is
   // copied between repos, and the check must travel with the use, not with the writing.
   // "Home" is the repo being worked in; a workspace that is not a repo falls back to the
-  // context repo's owner. Unknown is reported, not refused — there is nothing to compare.
+  // workspace's own `repo` owner. Unknown is reported, not refused — there is nothing to compare.
   const storeOwner = repo.split('/')[0];
   const home = owner(cwd) ?? loc.contextOwner
-    ?? (loc.source === 'context.json' || loc.source === 'workspace.json' ? null : configOwner(context().cfg));
+    ?? (loc.source === 'workspace.json' ? null : configOwner(context().cfg));
   if (home && home.toLowerCase() !== storeOwner.toLowerCase() && d.crossOrg !== true) {
     throw new Error(
       `${loc.configPath} names the store ${repo}, but this work belongs to ${home}.\n`
@@ -210,9 +201,8 @@ export function resolveStore({ mustExist = true, env = process.env, cwd = proces
   }
   const boundary = !home ? 'unchecked' : (home.toLowerCase() === storeOwner.toLowerCase() ? 'same-org' : 'cross-org (declared)');
 
-  // Own root, not ~/.context: that root is for context repos specifically, and a store living
-  // there would say nothing false, but would invite the same tooling that resolves context repos
-  // to resolve stores too, blurring a boundary that is deliberately separate.
+  // Its own clone root, kept apart from anything that holds project context, so nothing that
+  // resolves a workspace is ever tempted to resolve a store too.
   const dir = d.dir
     ?? (process.env.DIAGRAM_STORE_DIR || null)   // empty means unset, not the cwd
     ?? join(homedir(), ...repo.split('/'));
@@ -462,7 +452,7 @@ if (isMain) {
       console.log(`org      ${s.org}`);
       console.log(`project  ${s.project ?? '(unnamed)'}`);
       console.log(`config   ${s.configPath}  (${s.source})`);
-      console.log(`boundary ${s.boundary}${s.home ? ` — this work belongs to ${s.home}` : ' — no origin or context repo to compare against'}`);
+      console.log(`boundary ${s.boundary}${s.home ? ` — this work belongs to ${s.home}` : ' — no origin or workspace to compare against'}`);
     } else if (cmd === 'taxonomy') {
       const s = resolveStore();
       const t = readTaxonomy(s.dir);

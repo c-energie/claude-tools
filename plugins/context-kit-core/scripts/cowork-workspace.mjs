@@ -6,10 +6,10 @@
 //
 // WHY THIS EXISTS. A Cowork sandbox has no shell, no checkout and no env var: files arrive as an
 // uploaded folder, and GitHub is a host-run MCP connector. So workspace.mjs's walk-up finds
-// nothing there, and before this the connection gate fell back to the context-project.json
-// marker that load-context.sh mirrored — a marker ADR 0002 retires along with the loader. With
-// neither, the gate failed open in exactly the surface where a wrong connector is easiest to
-// reach for. This looks where the marker search already looked, for the file that replaced it.
+// nothing there. The connection gate used to fall back to a context-project.json marker that
+// the old session-start loader mirrored; ADR 0002 retired both, and #60 deleted them. Without
+// this the gate would fail open in exactly the surface where a wrong connector is easiest to
+// reach for. It looks where that marker search used to look, for the file that replaced it.
 //
 // ONLY FOR WHEN THE WALK-UP FOUND NOTHING. A workspace above the working directory is a
 // checkout, and a checkout is always the better answer than a copy someone uploaded; callers
@@ -18,7 +18,7 @@
 // plugins' copies use on a laptop, where a stray file under ~/mnt must never decide anything.
 // It is core-only, not a COPIES entry: the gate is its one caller.
 //
-// WHERE IT LOOKS, in order — the layouts the marker search covers (context-repo.sh), then a
+// WHERE IT LOOKS, in order — the layouts the retired marker search covered, then a
 // bounded search of the mount areas, never the working tree:
 //   /mnt/project/                            one Cowork / claude.ai layout
 //   ~/mnt/.projects/[uuid]/docs/             the /sessions/... layout: attached project files

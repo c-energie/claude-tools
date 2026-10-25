@@ -272,4 +272,4 @@ questions it.
 **Not this skill:** changing the harness *engine* — the runner, the planner's parsing, the config
 seam, a pin strategy — is a change to `c-energie/sandcastle-harness` and belongs in that
 repository. Writing a repo's `devhub.toml` is `devhub-feature`. Writing up work into a project's
-context repo is `save-thread`.
+workspace is `save-thread`.

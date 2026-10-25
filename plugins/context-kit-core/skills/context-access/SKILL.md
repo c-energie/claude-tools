@@ -10,8 +10,7 @@ user-invocable: false
 property of where the session is running, not something to discover by failure:
 
 - **Claude Code on a laptop** — the context is the workspace checkout, found with
-  `${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs` (the nearest `.claude/workspace.json`; until
-  every project has migrated, it falls back to a context repo through `context-repo.sh`), and
+  `${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs` (the nearest `.claude/workspace.json`), and
   `git` is the route. Full history, atomic commits, and the `scripts/*.mjs` are all available.
   Prefer this whenever `bash` runs.
 - **Cowork / cloud sandboxes** — the **GitHub API over MCP**, described in this file, against

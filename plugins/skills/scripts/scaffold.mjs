@@ -153,7 +153,7 @@ function validate(s) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) errs.push('`existingState`: {files: [where the record lives], check: "the command that succeeds once it is filled in"}');
     else {
       for (const k of Object.keys(e)) if (!EXISTING_KEYS.has(k)) errs.push(`existingState.${k}: unknown key`);
-      if (!(Array.isArray(e.files) && e.files.length && e.files.every(str))) errs.push('existingState.files: the files the record lives in, e.g. [".diagrams.json", "context.json"]');
+      if (!(Array.isArray(e.files) && e.files.length && e.files.every(str))) errs.push('existingState.files: the files the record lives in, e.g. [".diagrams.json", ".claude/workspace.json"]');
       if (!str(e.check)) errs.push('existingState.check: a command that exits 0 once the record is filled in — failing is the trigger');
     }
   }

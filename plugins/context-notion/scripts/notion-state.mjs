@@ -7,8 +7,7 @@
 //   node notion-state.mjs <config> - --write                    # the block on stdin
 //   --json   machine-readable result
 //
-// <config> is `node layout.mjs "$ROOT" config`: `.claude/workspace.json` in a workspace,
-// `context.json` in a legacy context repo. The same rule holds for both.
+// <config> is `node layout.mjs "$ROOT" config`: the workspace's `.claude/workspace.json`.
 //
 // WHY A SCRIPT. `state` is not this plugin's block — each `state.*` key belongs to the plugin
 // that reads it (ADR 0002; workspace.mjs's header), and workspace.json's other top-level keys

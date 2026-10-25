@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Drain Claude's native per-directory memory into the context ladder.
 //
-//   node memory-triage.mjs scan <workspace-or-context-repo-root> [--dir path] [--json] [--today YYYY-MM-DD]
+//   node memory-triage.mjs scan <workspace-root> [--dir path] [--json] [--today YYYY-MM-DD]
 //   node memory-triage.mjs mark <memory-file> --to "your-org/workspace docs/memory.md" [--today ...]
 //
 // THE PROBLEM. Claude's own memory lives in ~/.claude/projects/[mangled-cwd]/memory/, keyed by
@@ -25,8 +25,9 @@
 // ~/gh-orgs) would be exactly the guess the single-store rule refuses. A PERSONAL entry
 // (`type: user` / `feedback`) is therefore reported as belonging elsewhere, never promoted here.
 //
-// IN A WORKSPACE (a root holding .claude/workspace.json, ADR 0002) the project layer is the
-// workspace's docs/memory.md, which its CLAUDE.md imports — not a context repo's memory.md.
+// The project layer is the workspace's docs/memory.md (a root holding .claude/workspace.json,
+// ADR 0002), which its CLAUDE.md imports. A context repo's memory.md is no longer a destination:
+// that route was retired (#60), and a root holding only context.json is refused, saying so.
 //
 // It never writes into a repo. `scan` is read-only; `mark` stamps one metadata key on a native
 // memory file so a promoted entry is not promoted twice. The skill does the promotion itself,
@@ -131,22 +132,21 @@ const readJson = (file) => {
   return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
 };
 
-// The workspace file is checked FIRST and at the root given only — no walk. The caller passes
-// what workspace.mjs resolved, so the walk has already happened once; a second one here could
-// only find a different answer. A malformed file is fatal rather than a reason to look for
-// context.json: workspace.mjs would have fallen back to a context repo and passed THAT root,
-// so arriving here with a broken workspace.json means the root came from somewhere else.
-const isWorkspace = existsSync(join(root, '.claude', 'workspace.json'));
-if (isWorkspace) {
-  try { readJson(join(root, '.claude', 'workspace.json')); }
-  catch (e) { die(`${join(root, '.claude', 'workspace.json')} is malformed — ${String(e?.message ?? e).split('\n')[0]}`); }
-} else {
-  try { readJson(join(root, 'context.json')); }
-  catch { die(`no .claude/workspace.json and no readable context.json at ${root} — neither a workspace nor a context repo`); }
+// The workspace file is checked at the root given only — no walk. The caller passes what
+// workspace.mjs resolved, so the walk has already happened once; a second one here could only
+// find a different answer. A malformed file is fatal: workspace.mjs resolves nothing from one,
+// so arriving here with it means the root came from somewhere else.
+const wsFile = join(root, '.claude', 'workspace.json');
+if (!existsSync(wsFile)) {
+  die(existsSync(join(root, 'context.json'))
+    ? `${root} holds context.json but no .claude/workspace.json — context repos are retired (ADR 0002, #60); promote into a workspace's docs/memory.md`
+    : `no .claude/workspace.json at ${root} — not a workspace root (node scripts/workspace.mjs finds it)`);
 }
+try { readJson(wsFile); }
+catch (e) { die(`${wsFile} is malformed — ${String(e?.message ?? e).split('\n')[0]}`); }
 
 // Where a promoted project fact lands, relative to root.
-const MEMORY = isWorkspace ? 'docs/memory.md' : 'memory.md';
+const MEMORY = 'docs/memory.md';
 
 const stores = [];
 {
@@ -198,14 +198,14 @@ const suggest = (e) => {
     // is not this repo's subject, and no repo the session can write to is the personal layer.
     return 'personal — NOT promotable from here (a session writes only to its own repo). It belongs in the personal layer the user-level ~/.claude/CLAUDE.md imports; leave it in native memory until it is moved there by hand.';
   }
-  const home = isWorkspace ? `the workspace's ${MEMORY}` : `the project context repo ${MEMORY}`;
+  const home = `the workspace's ${MEMORY}`;
   if (e.type === 'reference') return `reference — ${home}, or leave local if it is a laptop path`;
   return `project — ${home}, unless it is a code convention (that repo's CLAUDE.md) or machine-local (leave)`;
 };
 
 const data = {
   root,
-  layer: isWorkspace ? 'workspace' : 'context-repo',
+  layer: 'workspace',
   memory: MEMORY,
   today,
   mode: 'project (this working directory only)',
@@ -231,7 +231,7 @@ if (flags.has('json')) {
       console.log(`            ${e.file}`);
       console.log();
     }
-    console.log(`  Nothing has been changed. Promote by hand into ${isWorkspace ? 'THIS workspace' : 'THIS repo'}, then stamp each`);
+    console.log(`  Nothing has been changed. Promote by hand into THIS workspace, then stamp each`);
     console.log('  source with:  memory-triage.mjs mark [file] --to "[where]"');
   }
 }

@@ -9,12 +9,12 @@
 #
 #     winget install --id Casey.Just
 #
-# Recipes name a context repo as <owner>/<repo>, matching the ~/.context/<owner>/<repo> clone
-# layout that context-repo.sh creates. Run them from anywhere inside this checkout.
+# Recipes name a workspace by its directory (the one holding .claude/workspace.json). Run them
+# from anywhere inside this checkout.
 #
-#     just connector-check your-user/thesis-context
-#     just connector-add   your-user/thesis-context github
-#     just connector       your-user/thesis-context
+#     just connector-check ~/gh-orgs/corson94/thesis
+#     just connector-add   ~/gh-orgs/corson94/thesis github
+#     just connector       ~/gh-orgs/corson94/thesis
 
 # Windows needs an explicit shell, and both obvious choices are wrong. just's default is `sh`,
 # which a plain PowerShell session cannot find: the Windows PATH carries `C:\Program Files\Git\cmd`
@@ -30,19 +30,18 @@
 set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
 
 scripts  := justfile_directory() + "/plugins/context-kit-core/scripts"
-contexts := env_var_or_default("USERPROFILE", env_var_or_default("HOME", "")) + "/.context"
 
 # List the recipes.
 default:
     @just --list
 
-# Report which of a context repo's declared connections exist on this machine. Changes nothing.
-connector-check repo:
-    node "{{scripts}}/mcp/setup-connectors.mjs" --check --context "{{contexts}}/{{repo}}"
+# Report which of a workspace's declared connections exist on this machine. Changes nothing.
+connector-check workspace:
+    node "{{scripts}}/mcp/setup-connectors.mjs" --check --context "{{workspace}}"
 
-# Declare a provider (github / notion / slack) in that repo's context.json connections block.
-connector-add repo provider:
-    node "{{scripts}}/mcp/setup-connectors.mjs" --add {{provider}} --context "{{contexts}}/{{repo}}"
+# Declare a provider (github / notion / slack) in that workspace.json's connections block.
+connector-add workspace provider:
+    node "{{scripts}}/mcp/setup-connectors.mjs" --add {{provider}} --context "{{workspace}}"
 
 # `connector` reads each credential from a hidden prompt — precisely so it never passes through
 # a conversation or a shell history — so it needs a real terminal and cannot be driven by an
@@ -54,5 +53,5 @@ connector-add repo provider:
 # one to a single line.
 
 # Provision every declared-but-missing connection. Needs a real terminal (hidden token prompt).
-connector repo:
-    node "{{scripts}}/mcp/setup-connectors.mjs" --context "{{contexts}}/{{repo}}"
+connector workspace:
+    node "{{scripts}}/mcp/setup-connectors.mjs" --context "{{workspace}}"

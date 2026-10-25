@@ -11,21 +11,21 @@ Tokens are never written into the Claude config files. They go into the OS crede
 These scripts ship inside the context-kit plugin: `plugins/context-kit-core/scripts/mcp/`
 in the `c-energie/claude-tools` marketplace checkout.
 
-The usual route is project-driven — from a project whose context repo is configured:
+The usual route is project-driven, run from inside a workspace:
 
 ```bash
 node <marketplace>/plugins/context-kit-core/scripts/mcp/setup-connectors.mjs
 ```
 
-It reads the `connections` block in the project's `context.json` (proposing and writing one
-if the block is missing), compares that against what this machine actually has configured,
+It reads the `connections` block in the nearest `.claude/workspace.json` (proposing and
+writing one if the block is missing), compares that against what this machine actually has configured,
 and walks through provisioning whatever is absent. `--check` diagnoses without changing
 anything; `--add <provider>` declares a provider not yet in the block. The runtime is
 copied to `~/.mcp/` before use, so the paths written into the Claude configs survive a
 plugin update or marketplace re-sync.
 
 `setup.mjs` in the same directory is the freeform variant: it checks the machine and lets
-you add arbitrarily named connections with no `context.json` involved. Re-run either any
+you add arbitrarily named connections with no `workspace.json` involved. Re-run either any
 time; adding a connector that already exists replaces it.
 
 **Prerequisites**
@@ -91,7 +91,7 @@ use the binary or Docker unless you have a reason not to.
 
 | | |
 |---|---|
-| `setup-connectors.mjs` | provisions what the project's `context.json` declares; deploys the runtime to `~/.mcp/` |
+| `setup-connectors.mjs` | provisions what the workspace's `workspace.json` declares; deploys the runtime to `~/.mcp/` |
 | `setup.mjs` | machine checks and freeform guided setup |
 | `add-mcp-connector.mjs` | adds one connector; verifies the token before writing anything |
 | `mcp-launch.mjs` | reads the credential and starts the server; referenced from the configs |
@@ -110,10 +110,8 @@ config. Backups are left as `.bak-mcp`.
 - Server failures are logged to `%APPDATA%\Claude\logs\` (Windows) or
   `~/Library/Logs/Claude/` (macOS).
 - Set short expiries on the tokens. Rerunning the adder with the same name rotates cleanly.
-- On a laptop project whose context repo is configured, the session-start hook also writes a
-  `context-project.json` marker (contextRepo + connections) into the **context repo's** own
-  `.claude/` — attach that file to the Cowork project so sandbox sessions use the same
-  connections declared here.
+- For Cowork, upload the workspace's `.claude/workspace.json` to the project: the connection
+  gate finds it in the sandbox mount areas and applies the same `connections`.
 
 ## When this becomes unnecessary
 

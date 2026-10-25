@@ -12,19 +12,16 @@ threads and handoff items (which is `context-kit-core`'s). Folding it into eithe
 plugin knowledge of the other's layer.
 
 **Which Mind Palace, and which organisations, come from the project's own
-`state.notes` — in the workspace's `.claude/workspace.json`, or a legacy context repo's
-`context.json` — and there is no default.** See the invariants below; that is the one rule here
+`state.notes`, in the workspace's `.claude/workspace.json`, and there is no default.** See the invariants below; that is the one rule here
 that cannot be relaxed.
 
 **Which root.** `[checkout]`, when given, is used exactly as given. Omitted, it is found by
 `workspace.mjs`'s `resolveWorkspace()`, as context-notion has done since #53: the nearest
-`.claude/workspace.json` at or above the working directory, then the legacy `context-repo.sh`
-route. At a root, a `workspace.json` wins over a `context.json` beside it, and a malformed one is
-reported as `unconfigured` rather than passed over — falling through would read a different
-block because of a typo. The root's own repository ("is this target me", for thread parking and
-handoff draining) is `workspace.json`'s `repo` or `context.json`'s `contextRepo`, read by
-`loadConfig` from the file it loaded. Until #82 this plugin knew only `context.json`, so after #58
-moved the last real block into a workspace.json, every run reported `unresolved`.
+`.claude/workspace.json` at or above the working directory. A malformed one is reported as
+`unconfigured` rather than passed over. A context repo's `context.json` is never read (#60): a
+root holding only one is `unresolved`, saying context repos are retired. The root's own
+repository ("is this target me", for thread parking and handoff draining) is `workspace.json`'s
+`repo`, read by `loadConfig` from the file it loaded.
 
 ## Commands
 
@@ -67,8 +64,8 @@ block-scale edit that leaves every other key byte-identical (ADR 0002).
 
 ## Invariants (all load-bearing)
 
-- **There is no default configuration, and there never may be.** A workspace or context repo
-  with no `state.notes` is *unconfigured*. It must not fall back to another project's block: a fallback
+- **There is no default configuration, and there never may be.** A workspace with no
+  `state.notes` is *unconfigured*. It must not fall back to another project's block: a fallback
   is precisely how one org's notes end up proposed as issues in another org's repository. Same
   rule, same reason, as `state.diagrams.repo`.
 - **Four outcomes, and they stay four**: `configured`, `unconfigured`, `opted-out`, `unresolved`.
@@ -78,7 +75,7 @@ block-scale edit that leaves every other key byte-identical (ADR 0002).
   vocabulary is the existing one — `none`/`off`/`false`/`no`/`-`/`disabled`.
 - **There is deliberately NO topic map.** A topic resolves to a repository when its name equals a
   repository name **character for character** in one of the declared organisations, and to a
-  thread in the resolved workspace (or context repo) otherwise. No aliases, no prefix or suffix
+  thread in the resolved workspace otherwise. No aliases, no prefix or suffix
   matching, no fuzzy matching. A map can name a repository that no longer exists; an exact match cannot. The
   consequence is real and accepted: `claude` resolves to a *thread* because the repository is
   `claude-tools`, and the fix is renaming the Notion topic, not loosening the match.
@@ -158,17 +155,16 @@ block-scale edit that leaves every other key byte-identical (ADR 0002).
 - **A thread bound for another repository is PARKED, never written.** A thread file is a commit
   into that repository, and it goes through that project's own session — which is where
   `taxonomy.yml` validation lives. That boundary is what keeps the validation meaningful.
-- **The handoff queue lives at `.context/handoff/` in a workspace** (done items in
-  `.context/handoff/done/`), beside `.context/pending/`, and at `handoff/` only in a legacy context
-  repo until #60. ADR 0002 retired `handoff/` as a top-level folder and kept this outbox (amended
-  for #83), because shared-target output still needs somewhere to wait. `handoffRel()` picks the
-  path from the kind of root `loadConfig` read, and every printed line names it; a workspace's
-  top-level `handoff/` is not read. **No `context-doctor`/`context-status` backlog check** was
+- **The handoff queue lives at `.context/handoff/`** (done items in `.context/handoff/done/`),
+  beside `.context/pending/`. ADR 0002 retired `handoff/` as a top-level folder and kept this
+  outbox (amended for #83), because shared-target output still needs somewhere to wait; a
+  context repo's `handoff/` went with #60. `handoffRel()` is the one path, and every printed line
+  names it; a top-level `handoff/` is not read. **No `context-doctor`/`context-status` backlog check** was
   added for it: triage reports the backlog at the start of every run, including zero, and lists
   every shared item every run, so the backlog is already seen where it is acted on — and a check
   in core would give `context-kit-core` knowledge of this plugin's queue, the layering this
   plugin exists to avoid.
-- **The handoff queue means output bound for a context repo SOMEBODY ELSE OWNS**, and nothing else. You
+- **The handoff queue means output bound for a repository SOMEBODY ELSE OWNS**, and nothing else. You
   cannot hand off to yourself, so an item whose target this session can write is drained rather
   than parked. Personal targets drain automatically; SHARED ones are listed and left, which is
   where the gate belongs. Visibility is read from the same `organisations` flag the shortlist
@@ -220,8 +216,7 @@ in, or a summary gets triaged back into an issue. Change one, change the other.
 
 ## Copies
 
-`scripts/context-repo.sh`, `scripts/dates.mjs`, `scripts/bash-bin.mjs` and `scripts/workspace.mjs`
-are **deliberate copies** of the originals in `context-kit-core`: a skill can only reference
+`scripts/dates.mjs` and `scripts/workspace.mjs` are **deliberate copies** of the originals in `context-kit-core`: a skill can only reference
 `${CLAUDE_PLUGIN_ROOT}/scripts/...` inside its own plugin. Fix the original first, then copy,
 restoring only this copy's header banner. `check-plugin.mjs` compares below the banner and errors
 on drift.

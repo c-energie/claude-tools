@@ -7,12 +7,11 @@ entirely by the *project's* configuration, so one install serves every Notion-ba
 
 Install **alongside context-kit** (same marketplace). Nothing in this plugin names a specific
 database or person: all of that comes from the project's config — the workspace's
-`.claude/workspace.json`, or a legacy context repo's `context.json`.
+`.claude/workspace.json`.
 
 ## The contract: `state.notion`
 
-A project opts in by declaring, in its config (`.claude/workspace.json` in a workspace, a
-legacy context repo's `context.json` otherwise):
+A project opts in by declaring, in its workspace's `.claude/workspace.json`:
 
 ```json
 {
@@ -83,11 +82,11 @@ legacy context repo's `context.json` otherwise):
 
 The skills and scripts read it on one ladder (`lib.mjs`): an explicit
 `CONTEXT_CONFIG=/path/to/file.json` wins (no bash/git needed then); otherwise the nearest
-`.claude/workspace.json` at or above the working directory; otherwise the legacy context repo
-through `context-repo.sh`, until the last one is migrated. `"state": null` or a different
+`.claude/workspace.json` at or above the working directory (the context-repo route was deleted
+in #60). `"state": null` or a different
 backend → every skill here says so and stands down; structured items can still be queued.
 
-In a workspace `state.backend` and `state.notion` are this plugin's two keys of the file, and
+`state.backend` and `state.notion` are this plugin's two keys of the file, and
 `notion-discover` writes only those, through `notion-state.mjs` — every other `state.*` block
 and top-level key belongs to someone else and survives byte-identical.
 
@@ -95,15 +94,16 @@ and top-level key belongs to someone else and survives byte-identical.
 
 `layout.mjs` is the single table; skills and scripts ask it rather than typing a path.
 
-| | workspace | legacy context repo |
-| --- | --- | --- |
-| meetings (`synthesise-meeting`) | `docs/meetings/` | `meetings/` |
-| offline queue (`add-pending`, `process-pending`) | `.context/pending/` (+ `done/`) | `pending/` (+ `done/`) |
-| Notion mirror (`sync-notion-mirror`, read fallbacks) | `.context/notion/` | `notion/` |
-| house rules (`synthesise-meeting`) | `templates/`, `taxonomy.yml` at the root | the same |
+| | workspace |
+| --- | --- |
+| meetings (`synthesise-meeting`) | `docs/meetings/` |
+| offline queue (`add-pending`, `process-pending`) | `.context/pending/` (+ `done/`) |
+| Notion mirror (`sync-notion-mirror`, read fallbacks) | `.context/notion/` |
+| house rules (`synthesise-meeting`) | `templates/`, `taxonomy.yml` at the root |
 
-Which column applies is decided by `findWorkspace()` — a valid `.claude/workspace.json` at the
-root `workspace.mjs` printed — never by a folder or repo name.
+Whether a root is a workspace is decided by `findWorkspace()` — a valid `.claude/workspace.json`
+at the root `workspace.mjs` printed — never by a folder or repo name. The context-repo column
+(`meetings/`, `pending/`, `notion/`) went with #60.
 
 ## Skills
 
@@ -143,9 +143,7 @@ to `add-pending`.
 
 It is silent unless the ADR sits under a `.claude/workspace.json` (found by walking up from the
 ADR, so a member repo's `docs/adr/` counts) whose `state.notion` has a `decisionLog` in
-`databases` or `pageParents` — or `CONTEXT_CONFIG` pins such a config. A legacy context repo is
-**not** resolved (that can clone, and a file-write hook stays off the network), so those
-projects get no nudge. Once per ADR per session; every failure is silence and exit 0.
+`databases` or `pageParents` — or `CONTEXT_CONFIG` pins such a config. Once per ADR per session; every failure is silence and exit 0.
 
 Only `actions`, `openQuestions` and `decisionLog` are contract keys. The rest of the table
 works off whatever *other* database keys a project declares (`stakeholders`, `relatedProjects`,
@@ -156,7 +154,7 @@ which key is missing rather than hunting for a database by search.
 
 ```bash
 node scripts/triage.mjs rows.json --today 2026-08-01     # due-date bucketing (--watching, --by-owner)
-ROOT="$(node scripts/workspace.mjs --no-pull)"            # nearest workspace.json's root, else the context repo
+ROOT="$(node scripts/workspace.mjs)"                      # nearest workspace.json's root, or route=none
 node scripts/layout.mjs "$ROOT"                          # where that root keeps meetings, the queue, the mirror (--json)
 node scripts/pending-parse.mjs "$ROOT" --json            # parse/validate the queue; --drain results.json
 node scripts/mirror-render.mjs "$ROOT" export.json       # render the mirror (--dry-run, --today)
@@ -169,7 +167,7 @@ node ../context-kit-core/scripts/bump-version.mjs . patch
 ```
 
 `lib.mjs` holds the config load and the single definition of `bucket()` — what "overdue" /
-"due soon" mean. `context-repo.sh`, `workspace.mjs` and `json-block.mjs` are **copies of
+"due soon" mean. `dates.mjs`, `workspace.mjs` and `json-block.mjs` are **copies of
 context-kit-core's** (plugins cannot reach into each other's install directories) — keep them
 in step; `check-plugin.mjs` errors on drift. `layout.mjs`, `lib.mjs` and `pending-parse.mjs`
 originate here and are copied into context-slack.

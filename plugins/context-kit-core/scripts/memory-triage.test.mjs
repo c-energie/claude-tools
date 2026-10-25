@@ -1,5 +1,5 @@
-// Tests for memory-triage.mjs's choice of destination: a workspace's docs/memory.md, or — with
-// no workspace — the context repo's memory.md exactly as before. Node standard library only.
+// Tests for memory-triage.mjs's choice of destination: a workspace's docs/memory.md, the only
+// one since context repos were retired (#60). Node standard library only.
 //
 //   node --test plugins/context-kit-core/scripts/memory-triage.test.mjs
 //
@@ -58,25 +58,21 @@ test('a workspace root: project facts go to docs/memory.md, from a member too', 
   assert.match(out.candidates[0].suggestion, /the workspace's docs\/memory\.md/);
 });
 
-test('no workspace: the context repo memory.md, as before', { skip: !posix }, () => {
-  const home = scratch();
+test('a retired context repo is refused, naming the retirement', () => {
   const root = scratch();
   writeFileSync(join(root, 'context.json'), '{}');
-  const cwd = scratch();
-  store(home, cwd, 'project');
-
-  const out = JSON.parse(scan(home, root, cwd).stdout);
-  assert.equal(out.layer, 'context-repo');
-  assert.equal(out.memory, 'memory.md');
-  assert.match(out.candidates[0].suggestion, /the project context repo memory\.md/);
+  const r = scan(scratch(), root, scratch());
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /context repos are retired \(ADR 0002, #60\)/);
 });
 
-// #54: the cross-project mode is gone. A legacy repo that still declares `include` reads only
-// its own store, like any other, and a personal entry is a finding rather than a promotion.
-test('a context repo still declaring include: one store, and personal entries are not promotable', { skip: !posix }, () => {
+// #54: the cross-project mode is gone. A workspace that still declares `include` reads only its
+// own store, like any other, and a personal entry is a finding rather than a promotion.
+test('a workspace still declaring include: one store, and personal entries are not promotable', { skip: !posix }, () => {
   const home = scratch();
   const root = scratch();
-  writeFileSync(join(root, 'context.json'), JSON.stringify({ include: ['x/y'] }));
+  deep(root, '.claude');
+  writeFileSync(join(root, '.claude', 'workspace.json'), JSON.stringify({ schema: 1, include: ['x/y'] }));
   const cwd = scratch();
   store(home, cwd, 'user');
   store(home, scratch(), 'user');   // another directory's store, which must not be read
@@ -88,7 +84,7 @@ test('a context repo still declaring include: one store, and personal entries ar
   assert.match(out.candidates[0].suggestion, /^personal — NOT promotable from here/);
 });
 
-test('a malformed workspace.json is fatal, not a reason to look for context.json', { skip: !posix }, () => {
+test('a malformed workspace.json is fatal, not a reason to look for context.json', () => {
   const root = scratch();
   deep(root, '.claude');
   writeFileSync(join(root, '.claude', 'workspace.json'), '{ nope');
@@ -98,8 +94,9 @@ test('a malformed workspace.json is fatal, not a reason to look for context.json
   assert.match(r.stderr, /malformed/);
 });
 
-test('neither file: refused, naming both', { skip: !posix }, () => {
+test('no workspace.json: refused, saying it is not a workspace', () => {
   const r = scan(scratch(), scratch(), scratch());
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /neither a workspace nor a context repo/);
+  assert.match(r.stderr, /not a workspace/);
+  assert.doesNotMatch(r.stderr, /context repo/);
 });

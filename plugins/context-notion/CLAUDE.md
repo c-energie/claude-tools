@@ -4,7 +4,7 @@
 
 The **Notion middle layer** plugin (`context-notion`) in the c-energie three-layer context
 architecture: core = context-kit (repo machinery), middle = this (generic Notion skills),
-project = each workspace's `.claude/workspace.json` (or a legacy context repo's `context.json`). Nothing project-specific belongs here — no
+project = each workspace's `.claude/workspace.json`. Nothing project-specific belongs here — no
 database IDs, no names, no property schemas. If a skill needs one, it reads the project's
 `state.notion` block; the README defines that contract and is the file to update when the
 contract grows.
@@ -21,14 +21,14 @@ which is what lets Cowork install it. There is no marketplace.json here, and ver
 # no copy here. Run them from the marketplace root, naming this plugin's directory:
 node ../context-kit-core/scripts/check-plugin.mjs .          # lint; run before any commit
 node ../context-kit-core/scripts/bump-version.mjs . patch    # writes plugin.json only
-CONTEXT_CONFIG=path/to/context.json node scripts/triage.mjs rows.json --today 2026-08-01
+CONTEXT_CONFIG=path/to/workspace.json node scripts/triage.mjs rows.json --today 2026-08-01
 node scripts/pending-parse.mjs "$ROOT" --json
-CONTEXT_CONFIG=path/to/context.json node scripts/mirror-render.mjs "$ROOT" export.json --dry-run
+CONTEXT_CONFIG=path/to/workspace.json node scripts/mirror-render.mjs "$ROOT" export.json --dry-run
 ```
 
 `CONTEXT_CONFIG` pins the config for testing; without it `lib.mjs` reads the nearest
-`.claude/workspace.json` (via `scripts/workspace.mjs`), and only when there is none resolves the
-legacy context repo via `scripts/context-repo.sh` (which obeys `PROJECT_CONTEXT_REPO`).
+`.claude/workspace.json` (via `scripts/workspace.mjs`). There is no other rung: the context-repo
+route was deleted in #60.
 
 ```bash
 node --test scripts/layout.test.mjs                    # workspace layout, config ladder, queue, mirror, state write; offline
@@ -40,24 +40,23 @@ echo '{"session_id":"s","cwd":"/ws","tool_name":"Write","tool_input":{"file_path
 
 ## Invariants
 
-- **`scripts/context-repo.sh`, `scripts/dates.mjs`, `scripts/bash-bin.mjs`,
-  `scripts/workspace.mjs` and `scripts/json-block.mjs` are copies of context-kit-core's** —
+- **`scripts/dates.mjs`, `scripts/workspace.mjs` and `scripts/json-block.mjs` are copies of
+  context-kit-core's** —
   plugins cannot reference each other's `${CLAUDE_PLUGIN_ROOT}`, so these copies exist on
   purpose. A fix to any of them lands in context-kit-core first, then here. This plugin is the
   **origin** for `lib.mjs`, `pending-parse.mjs` and `layout.mjs`, which context-slack copies: fix
   those here first. `check-plugin.mjs` errors if any copy drifts, comparing below the header banner.
-- **Never spawn bare `bash`** — go through `bashBin()` from `scripts/bash-bin.mjs`. On Windows the
-  `bash` on PATH is WSL's `System32\bash.exe`, which has its own filesystem and `$HOME`: it exits
-  127 on a Windows path, and a caller reading only `status` blames the context repo for a bash
-  problem.
-- **Inside a workspace, this plugin's files live in the workspace layout (ADR 0002, #53), and
-  `layout.mjs` is the one table that says so**: meetings → `docs/meetings/`, the queue →
-  `.context/pending/` (+ `done/`), the mirror → `.context/notion/`; a legacy context repo keeps
-  `meetings/`, `pending/`, `notion/`. `templates/` and `taxonomy.yml` stay at the root in both.
-  The kind is `findWorkspace()`'s answer AT the root `workspace.mjs` printed, never a name. No
-  skill or script types one of those paths itself — a guess that picks the other layout commits
-  a queue entry where `process-pending` never reads, and nothing errors. Config follows the same
-  ladder: `CONTEXT_CONFIG`, then the nearest `workspace.json`, then the legacy route.
+- **Never spawn bare `bash`**; nothing here does since #60. On Windows the `bash` on PATH is
+  WSL's `System32\bash.exe`, which has its own filesystem and `$HOME` and exits 127 on a Windows
+  path; anything that needs bash again goes through context-kit-core's `bashBin()`, copied in.
+- **This plugin's files live in the workspace layout (ADR 0002, #53), and `layout.mjs` is the
+  one table that says so**: meetings → `docs/meetings/`, the queue → `.context/pending/`
+  (+ `done/`), the mirror → `.context/notion/`; `templates/` and `taxonomy.yml` stay at the root.
+  The context-repo layout (`meetings/`, `pending/`, `notion/` at the root) went with #60. `kind`
+  is `'workspace'` when `findWorkspace()` answers AT the root `workspace.mjs` printed, else null,
+  never a name; `mirror-render.mjs` refuses a null. No skill or script types one of those paths
+  itself — a wrong guess commits a queue entry where `process-pending` never reads, and nothing
+  errors. Config: `CONTEXT_CONFIG`, then the nearest `workspace.json`.
 - **This plugin writes exactly two keys of a config: `state.backend` and `state.notion`**, and
   only through `notion-state.mjs` (block-scale, via the json-block copy). `state` itself is
   shared — each `state.*` belongs to the plugin reading it — and in a workspace the other
@@ -72,8 +71,7 @@ echo '{"session_id":"s","cwd":"/ws","tool_name":"Write","tool_input":{"file_path
 - **Owners resolve from `state.notion.people`, never `notion-search`** — workspace guests are
   invisible to search and the failure is silent.
 - **An empty Notion result is never evidence of absence** (guests get zero rows, not errors).
-  Read skills fall back to the Notion mirror (`.context/notion/` in a workspace, `notion/`
-  in a legacy context repo) labelled with its `syncedOn`;
+  Read skills fall back to the Notion mirror (`.context/notion/`) labelled with its `syncedOn`;
   write skills fall back to `add-pending`.
 - **Follow `schemas` exactly, including odd property names** (trailing spaces exist — never
   trim). A date's wire shape depends on the tool — flattened `notion-create-pages` keys vs the
@@ -94,15 +92,14 @@ echo '{"session_id":"s","cwd":"/ws","tool_name":"Write","tool_input":{"file_path
   anything else** — it fires on every write in every session, so a non-ADR write costs one
   regex and the resolver is imported only after it. **Config is `CONTEXT_CONFIG`, else
   `findWorkspace()` walked up from the ADR**, never `lib.mjs` (it exits the process and writes
-  stderr) and never the legacy context-repo rung (`context-repo.sh` can clone; a file-write hook
-  stays off the network) — so a project still on a context repo gets no nudge, by choice.
+  stderr) — so no workspace above the ADR means no nudge, by choice.
   **Once per ADR per session**, recorded in the OS temp dir by `session_id`; a stale entry costs
   one missed nudge, which beats repeated injections after a decline. **Every failure is silence
   and exit 0.** It is Node so that it needs neither `jq` nor `bash` — a hook command string
-  cannot call `bashBin()`, so not needing bash is how this plugin keeps that invariant in a hook.
+  cannot pick Git Bash over WSL's, so not needing bash is how this plugin stays clear of it.
   The `if` filter on the handler was considered and left out: a Claude Code that does not know
   the key could drop the handler, and that failure is silent. Plugin hooks load at session
   start, so a live check needs a restart or `/hooks`; `adr-nudge.test.mjs` is the automated one.
-- **Skills that write to the workspace or context repo ask before committing/pushing**; `process-pending`
+- **Skills that write to the workspace ask before committing/pushing**; `process-pending`
   is `disable-model-invocation: true`.
 - Version in `plugin.json` only; no angle brackets in front-matter values; `*.sh` stay LF.

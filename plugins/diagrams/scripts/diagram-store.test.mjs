@@ -26,8 +26,10 @@ function repo({ file = null } = {}) {
   return { root, sub };
 }
 
-const noContext = () => ({ cfg: null, why: 'no context repo' });
+const noContext = () => ({ cfg: null, why: 'no workspace' });
+// A retired context repo's config (#60): kept only to prove it is no longer a rung.
 const context = (json) => () => ({ cfg: { path: '/ctx/context.json', json }, why: null });
+const workspace = (json) => () => ({ cfg: { path: '/ws/.claude/workspace.json', json }, why: null });
 const owner = (o) => () => o;
 
 const resolve = (opts) => resolveStore({
@@ -36,19 +38,19 @@ const resolve = (opts) => resolveStore({
 
 // ---------------------------------------------------------------- the ladder
 
-test('DIAGRAMS_STORE wins over a repo file and context.json', () => {
+test('DIAGRAMS_STORE wins over a repo file and workspace.json', () => {
   const { sub } = repo({ file: { repo: 'acme/from-file' } });
   const s = resolve({
     cwd: sub, env: { DIAGRAMS_STORE: 'acme/from-env' },
-    context: context({ state: { diagrams: { repo: 'acme/from-ctx' } } }),
+    context: workspace({ state: { diagrams: { repo: 'acme/from-ctx' } } }),
   });
   assert.equal(s.repo, 'acme/from-env');
   assert.equal(s.source, 'env');
 });
 
-test('.diagrams.json is found from a subdirectory and wins over context.json', () => {
+test('.diagrams.json is found from a subdirectory and wins over workspace.json', () => {
   const { sub, root } = repo({ file: { repo: 'acme/diagrams', project: 'Widget' } });
-  const s = resolve({ cwd: sub, context: context({ state: { diagrams: { repo: 'acme/other' } } }) });
+  const s = resolve({ cwd: sub, context: workspace({ state: { diagrams: { repo: 'acme/other' } } }) });
   assert.equal(s.repo, 'acme/diagrams');
   assert.equal(s.source, 'repo-file');
   assert.equal(s.configPath, join(root, REPO_FILE));
@@ -63,14 +65,12 @@ test('the walk stops at the first .git: an outer repo file never claims an inner
   assert.equal(findRepoFile(inner).root, inner);
 });
 
-test('context.json is used when nothing else names a store', () => {
+test('a context repo\'s context.json is not a rung any more (#60)', () => {
   const { sub } = repo();
-  const s = resolve({
+  assert.throws(() => resolve({
     cwd: sub,
     context: context({ project: 'Proj', contextRepo: 'acme/ctx', state: { diagrams: { repo: 'acme/diagrams' } } }),
-  });
-  assert.equal(s.source, 'context.json');
-  assert.equal(s.project, 'Proj');
+  }), /No diagram store is named/);
 });
 
 test('nothing named is an error listing all three places — never a default', () => {
@@ -84,9 +84,9 @@ test('nothing named is an error listing all three places — never a default', (
   });
 });
 
-test('a context.json without state.diagrams still errors', () => {
+test('a workspace.json without state.diagrams still errors', () => {
   const { sub } = repo();
-  assert.throws(() => resolve({ cwd: sub, context: context({ project: 'P', state: null }) }),
+  assert.throws(() => resolve({ cwd: sub, context: workspace({ name: 'P', state: null }) }),
     /No diagram store is named/);
 });
 
@@ -125,29 +125,14 @@ test('owner comparison ignores case', () => {
   assert.equal(resolve({ cwd: sub, owner: owner('acme') }).boundary, 'same-org');
 });
 
-test('with no origin, the context repo owner is the home', () => {
-  const { sub } = repo();
-  const ctx = context({ contextRepo: 'acme/ctx', state: { diagrams: { repo: 'other-org/diagrams' } } });
-  assert.throws(() => resolve({ cwd: sub, context: ctx }), /belongs to acme/);
-});
-
-test('the env route also falls back to the context repo owner', () => {
-  const { sub } = repo();
-  const ctx = context({ contextRepo: 'acme/ctx', state: null });
-  assert.throws(() => resolve({ cwd: sub, env: { DIAGRAMS_STORE: 'other-org/d' }, context: ctx }),
-    /belongs to acme/);
-});
-
-test('no origin and no context repo: unchecked, reported rather than refused', () => {
+test('no origin and no workspace: unchecked, reported rather than refused', () => {
   const { sub } = repo({ file: { repo: 'acme/diagrams' } });
   assert.equal(resolve({ cwd: sub }).boundary, 'unchecked');
 });
 
 // ---------------------------------------------------------------- the workspace (ADR 0002)
 
-const workspace = (json) => () => ({ cfg: { path: '/ws/.claude/workspace.json', json }, why: null });
-
-test('a workspace.json names the store like context.json, with its name as the project', () => {
+test('a workspace.json names the store, with its name as the project', () => {
   const { sub } = repo();
   const s = resolve({
     cwd: sub,
@@ -182,4 +167,19 @@ test('readConfigSoft finds the workspace.json above a member repo nested in it',
     assert.equal(cfg.path, file);
     assert.equal(cfg.json.state.diagrams.repo, 'acme/diagrams');
   } finally { if (saved !== undefined) process.env.CONTEXT_CONFIG = saved; }
+});
+
+test('readConfigSoft with no workspace above is null with the reason — no context repo is asked', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'diagrams-none-'));
+  const saved = { cfg: process.env.CONTEXT_CONFIG, repo: process.env.PROJECT_CONTEXT_REPO };
+  delete process.env.CONTEXT_CONFIG;
+  process.env.PROJECT_CONTEXT_REPO = 'acme/ctx';
+  try {
+    const { cfg, why } = readConfigSoft(dir);
+    assert.equal(cfg, null);
+    assert.match(why, /route=none/);
+  } finally {
+    if (saved.cfg !== undefined) process.env.CONTEXT_CONFIG = saved.cfg;
+    if (saved.repo === undefined) delete process.env.PROJECT_CONTEXT_REPO; else process.env.PROJECT_CONTEXT_REPO = saved.repo;
+  }
 });

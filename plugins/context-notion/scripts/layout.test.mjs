@@ -4,9 +4,10 @@
 //
 //   node --test plugins/context-notion/scripts/layout.test.mjs
 //
-// Offline by construction. The legacy route is exercised through CONTEXT_CONFIG, never through
-// context-repo.sh — PROJECT_CONTEXT_REPO is pinned to `none` in every child so nothing can clone,
-// and HOME points at an empty scratch directory so no machine's settings leak in.
+// Offline by construction: the resolver reads the filesystem only, and HOME points at an empty
+// scratch directory so no machine's settings leak in. The context-repo layout (context.json,
+// meetings/, pending/, notion/ at the root) was retired in #60; a retired context repo is kept as
+// a fixture to prove it gets the workspace layout or nothing, never its old paths.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,6 +41,7 @@ function workspace(state = ROSTER) {
   return root;
 }
 
+// A retired context repo, as it sat on disk before #60.
 function contextRepo() {
   const root = scratch();
   put(join(root, 'context.json'), `${JSON.stringify({ state: ROSTER })}\n`);
@@ -49,7 +51,7 @@ function contextRepo() {
 
 const run = (name, args, { cwd, env = {}, input } = {}) => spawnSync(process.execPath, [script(name), ...args], {
   cwd, input, encoding: 'utf8',
-  env: { ...process.env, HOME: scratch(), PROJECT_CONTEXT_REPO: 'none', CLAUDE_PROJECT_DIR: '', CONTEXT_CONFIG: '', ...env },
+  env: { ...process.env, HOME: scratch(), CLAUDE_PROJECT_DIR: '', CONTEXT_CONFIG: '', ...env },
 });
 
 const ACTION = '# Actions\n\n## Chase the supplier\n- owner: Sam\n- due: 2026-11-02\n';
@@ -63,29 +65,28 @@ test('layout: a workspace root gets docs/meetings, .context/pending and .context
   assert.equal(l.pending, join(root, '.context', 'pending'));
   assert.equal(l.done, join(root, '.context', 'pending', 'done'));
   assert.equal(l.mirror, join(root, '.context', 'notion'));
-  // House rules stay at the root in both layouts.
+  // House rules stay at the root.
   assert.equal(l.templates, join(root, 'templates'));
   assert.equal(l.taxonomy, join(root, 'taxonomy.yml'));
   assert.equal(l.rel.pending, '.context/pending');
 });
 
-test('layout: a context repo keeps meetings/, pending/ and notion/', () => {
+test('layout: a root that is not a workspace gets the workspace paths, and kind null', () => {
   const l = layout(contextRepo());
-  assert.equal(l.kind, 'context-repo');
+  assert.equal(l.kind, null);
   assert.deepEqual([l.rel.config, l.rel.meetings, l.rel.pending, l.rel.done, l.rel.mirror],
-    ['context.json', 'meetings', 'pending', 'pending/done', 'notion']);
+    ['.claude/workspace.json', 'docs/meetings', '.context/pending', '.context/pending/done', '.context/notion']);
 });
 
 test('layout: a workspace found only ABOVE the root does not make the root one', () => {
   const ws = workspace();
-  const clone = deep(ws, 'legacy-context');
-  assert.equal(layout(clone).kind, 'context-repo');
+  assert.equal(layout(deep(ws, 'old-clone')).kind, null);
 });
 
-test('layout: a malformed workspace.json at the root is a context repo, as the resolver falls back', () => {
+test('layout: a malformed workspace.json at the root is not a workspace', () => {
   const root = scratch();
   put(join(root, '.claude', 'workspace.json'), '{ not json');
-  assert.equal(layout(root).kind, 'context-repo');
+  assert.equal(layout(root).kind, null);
 });
 
 test('layout CLI: one key prints one absolute path', () => {
@@ -118,7 +119,7 @@ test('config ladder: CONTEXT_CONFIG still wins over a workspace', () => {
   assert.match(r.stderr, /declares no Notion backend/);
 });
 
-test('config ladder: a malformed workspace.json is named, then the legacy route is tried', () => {
+test('config ladder: a malformed workspace.json is named, and nothing else is tried', () => {
   const root = scratch();
   put(join(root, '.claude', 'workspace.json'), '{ not json');
   deep(root, 'pending');
@@ -138,7 +139,7 @@ test('queue: drain files entries under .context/pending/done in a workspace', ()
   assert.ok(existsSync(done));
   assert.match(readFileSync(done, 'utf8'), /Chase the supplier[\s\S]*notion: https:\/\/notion\.so\/x/);
   assert.doesNotMatch(readFileSync(join(root, '.context', 'pending', 'actions.md'), 'utf8'), /Chase the supplier/);
-  assert.ok(!existsSync(join(root, 'pending')), 'nothing may be written to the legacy pending/');
+  assert.ok(!existsSync(join(root, 'pending')), 'nothing may be written to the retired pending/');
 });
 
 test('queue: the Slack message names .context/pending/ in a workspace', () => {
@@ -149,12 +150,13 @@ test('queue: the Slack message names .context/pending/ in a workspace', () => {
   assert.match(r.stdout, /In the workspace → `\.context\/pending\/`/);
 });
 
-test('queue: a legacy context repo still reads and reports pending/', () => {
+test('queue: a retired context repo\'s root pending/ is not read', () => {
   const root = contextRepo();
   put(join(root, 'pending', 'actions.md'), ACTION);
   const r = run('pending-parse.mjs', [root, '--json'], { cwd: root, env: { CONTEXT_CONFIG: join(root, 'context.json') } });
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(JSON.parse(r.stdout).entries[0].file, 'pending/actions.md');
+  // Asked of the workspace path, which a context repo does not have — never of its old pending/.
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no \.context\/pending\/ directory/);
 });
 
 test('mirror: renders into .context/notion in a workspace, with no memory.md needed', () => {
@@ -168,15 +170,14 @@ test('mirror: renders into .context/notion in a workspace, with no memory.md nee
   assert.ok(!existsSync(join(root, 'notion')));
 });
 
-test('mirror: a legacy context repo is rendered byte-for-byte as before (notion/, pending/)', () => {
+test('mirror: a root that is not a workspace is refused, and nothing is written', () => {
   const root = contextRepo();
   const exp = put(join(scratch(), 'export.json'), JSON.stringify({ actions: [] }));
   const r = run('mirror-render.mjs', [root, exp, '--today', '2026-10-24'], { cwd: root, env: { CONTEXT_CONFIG: join(root, 'context.json') } });
-  assert.equal(r.status, 0, r.stderr);
-  const synced = JSON.parse(readFileSync(join(root, 'notion', '_synced.json'), 'utf8'));
-  assert.equal(synced.databases.actions.file, 'notion/actions.md');
-  assert.equal(synced.source, "Notion — see the project's context.json state.notion");
-  assert.match(readFileSync(join(root, 'notion', 'actions.md'), 'utf8'), /add an entry to pending\/\. -->/);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /not a workspace/);
+  assert.ok(!existsSync(join(root, 'notion')));
+  assert.ok(!existsSync(join(root, '.context')));
 });
 
 test('notion-state: writes state.backend and state.notion only, keeping every other key', () => {

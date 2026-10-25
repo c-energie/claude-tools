@@ -174,24 +174,18 @@ const COPIES = [
   // Notion-specific. dates.mjs is pure UTC calendar arithmetic with nothing Notion in it, and
   // core's own skills (save-thread, curate-context, update-plugin) call it, so core is its home;
   // it was mis-declared as context-notion's until 2026-08-10.
-  { file: 'scripts/context-repo.sh',   origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
   { file: 'scripts/dates.mjs',         origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
-  // bash-bin.mjs picks Git Bash over WSL's launcher on Windows — a platform fact with no
-  // backend in it, so core owns it. It is what context-repo.sh is spawned with, and so has to
-  // sit beside every copy of that script.
-  { file: 'scripts/bash-bin.mjs',      origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
-  // The workspace resolver (ADR 0002) and its bash twin. Core originates them — finding the
-  // workspace is generic — and they go wherever context-repo.sh goes, since both fall back to
-  // it and workspace.mjs runs it through bash-bin.mjs. No other plugin ships them yet; each
-  // consumer ticket copies them in, and from then on a copy that drifts is an error here.
+  // The workspace resolver (ADR 0002). Core originates it — finding the workspace is generic.
+  // Since #60 it is the whole route: no context-repo.sh fallback and nothing spawned, so neither
+  // context-repo.sh nor bash-bin.mjs is copied any more. Its bash twin workspace-root.sh is
+  // core-only (hooks), compared by workspace.test.mjs rather than here.
   { file: 'scripts/workspace.mjs',     origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
-  { file: 'scripts/workspace-root.sh', origin: 'context-kit-core', copies: ['context-notion', 'context-slack', 'diagrams', 'context-notes'] },
   // Notion-coupled, so context-notion is the origin: lib.mjs reads state.notion and resolves
   // people by notionUserId; pending-parse.mjs defines the queue format those rows land in.
   { file: 'scripts/lib.mjs',           origin: 'context-notion',   copies: ['context-slack'] },
   { file: 'scripts/pending-parse.mjs', origin: 'context-notion',   copies: ['context-slack'] },
-  // Where the queue, the mirror and the meetings folder live in a workspace vs a context repo
-  // (#53). Notion-coupled paths, so context-notion owns the table; notify-pending and the
+  // Where the queue, the mirror and the meetings folder live in a workspace (#53; one layout
+  // since #60). Notion-coupled paths, so context-notion owns the table; notify-pending and the
   // digest's mirror fallback read the same directories context-notion writes.
   { file: 'scripts/layout.mjs',        origin: 'context-notion',   copies: ['context-slack'] },
   // The block-scale JSON editor. Generic, so core owns it; context-notion's notion-state.mjs

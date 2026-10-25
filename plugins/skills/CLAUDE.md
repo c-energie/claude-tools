@@ -6,7 +6,7 @@
 2026-10-06. One skill so far: `author-setup-skill`, which scaffolds and audits interactive setup
 skills to the recipe in its `references/recipe.md`.
 
-Outside the context stack, like `devhub`: it reads no `context.json` and the skills it writes
+Outside the context stack, like `devhub`: it reads no `workspace.json` and the skills it writes
 live in any repo. A new authoring skill for another *kind* of skill belongs here; a skill that
 only edits this marketplace's plugins is `update-plugin`'s job, in context-kit-core.
 
@@ -61,4 +61,4 @@ only edits this marketplace's plugins is `update-plugin`'s job, in context-kit-c
 - **`--root` is required in a plugin-shipped script**: it sits in the plugin's install
   directory, so its location says nothing about the project, and defaulting to the cwd would
   write into wherever the agent happened to be.
-- No shared script copies: nothing here calls `context-repo.sh`, `dates.mjs` or `bash-bin.mjs`.
+- No shared script copies: nothing here calls `workspace.mjs` or `dates.mjs`.

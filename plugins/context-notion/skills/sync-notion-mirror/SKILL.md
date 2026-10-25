@@ -1,15 +1,15 @@
 ---
 name: sync-notion-mirror
-description: Refresh the read-only mirror of the project's Notion databases into its workspace (.context/notion/) or legacy context repo (notion/) so teammates without a working Notion connection can still read the actions, open questions, decision log and whatever else the project mirrors. Triggers like "sync the notion mirror", "refresh the notion export", "update the mirror", "how stale is the notion mirror".
+description: Refresh the read-only mirror of the project's Notion databases into its workspace (.context/notion/) so teammates without a working Notion connection can still read the actions, open questions, decision log and whatever else the project mirrors. Triggers like "sync the notion mirror", "refresh the notion export", "update the mirror", "how stale is the notion mirror".
 disable-model-invocation: true
 ---
 
 # Sync the Notion mirror
 
-Pulls the project's Notion databases and regenerates its mirror — `.context/notion/` in a
-workspace, `notion/` in a legacy context repo — the committed, read-only copy that teammates without the Notion connector can read. **Read
+Pulls the project's Notion databases and regenerates its mirror — `.context/notion/` in the
+workspace — the committed, read-only copy that teammates without the Notion connector can read. **Read
 `notion-config` first**; every ID, schema and person below comes from the project's
-config (`.claude/workspace.json`, or a legacy `context.json`).
+config (`.claude/workspace.json`).
 
 **Why this exists:** the Notion connector only works fully for a workspace **member**. A
 **guest**'s queries return empty results rather than errors, so their sessions see nothing at
@@ -26,11 +26,11 @@ that replaces good rows with an empty file.
 ## 1. Find the mirror
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 MIRROR="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" mirror)"
 ```
 
-`workspace.mjs` finds the nearest `.claude/workspace.json`, else the context repo (stderr names
+`workspace.mjs` finds the nearest `.claude/workspace.json` (stderr names
 the `route=`); `layout.mjs` names that root's mirror folder, and `mirror-render.mjs` writes into
 the same one by itself. Stop if either exits non-zero — say so rather than writing somewhere else. Today's date:
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs" today`.

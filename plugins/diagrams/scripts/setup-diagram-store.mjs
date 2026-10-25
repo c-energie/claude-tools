@@ -9,9 +9,9 @@
 //                                                 clone, or create PRIVATE, the store
 //   stamp        --dir D [--taxonomy]             house files + empty index.jsonl, committed locally
 //   push-store   --dir D                          push the store                       (outward)
-//   config       --target repo-file|context --repo O/R [--project N] [--cross-org]
-//   commit-config --target repo-file|context      commit only the config file, locally
-//   push-config  --target repo-file|context       push that one commit                 (outward)
+//   config       --target repo-file --repo O/R [--project N] [--cross-org]
+//   commit-config --target repo-file              commit only the config file, locally
+//   push-config  --target repo-file               push that one commit                 (outward)
 //   prove                                         where + save --dry-run + gallery, from 2 cwds
 //
 // Every step is safe to re-run: it reuses what is there and REFUSES (exit 2) rather than
@@ -27,7 +27,7 @@ import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  REPO_FILE, configOwner, findRepoFile, initStore, indexPath, isWorkspace, locateStore, originOwner, readConfigSoft,
+  REPO_FILE, configOwner, findRepoFile, initStore, indexPath, locateStore, originOwner, readConfigSoft,
   readTaxonomy, resolveStore,
 } from './diagram-store.mjs';
 
@@ -68,7 +68,7 @@ const expand = (p) => resolve(String(p).replace(/^~(?=$|[\\/])/, homedir()));
 const DRY = !!opts['dry-run'];
 const ROOT = expand(opts.root ?? process.cwd());
 if (!existsSync(ROOT) || !statSync(ROOT).isDirectory()) usage(`--root ${ROOT} is not a directory`);
-// The context resolver works from the cwd, so --root has to become it.
+// The workspace resolver works from the cwd, so --root has to become it.
 process.chdir(ROOT);
 
 // ---------------------------------------------------------------- helpers
@@ -142,35 +142,28 @@ function configTarget(target) {
     const rf = findRepoFile(ROOT);
     if (!rf.root) {
       throw new Refused(`${ROOT} is not inside a git repo, so it has no repo root for ${REPO_FILE}.\n`
-        + 'Use --target context, or run from inside the repo whose diagrams these are.');
+        + 'Run from inside the repo whose diagrams these are, or name the store in the workspace by hand.');
     }
     // Only the repo's own root: a walk that ended in some ancestor repo (a dotfiles repo in ~)
     // would write, commit and push the store into the wrong project.
     if (!samePath(rf.root, ROOT)) {
       throw new Refused(`${ROOT} is not a repo root — it sits inside ${rf.root}. `
-        + `Re-run with --root "${rf.root}" if that is the project, else use --target context.`);
+        + `Re-run with --root "${rf.root}" if that is the project, else name the store in the workspace by hand.`);
     }
     return { file: join(rf.root, REPO_FILE), repoDir: rf.root };
   }
+  // The context target edited a context repo's context.json whole; that route was retired with
+  // context repos (#60). A workspace.json has other owners' blocks (members, connections,
+  // state.notion) and must only ever be edited block by block, which this step does not do.
   if (target === 'context') {
-    const { cfg, why } = readConfigSoft(ROOT);
-    if (!cfg) {
-      throw new Refused(`no context repo (${why}).\nUse --target repo-file, or set one up first `
-        + 'with context-kit-core:context-setup.');
-    }
-    // The config step rewrites its target whole; a workspace.json has other owners' blocks
-    // (members, connections, state.notion) and must only ever be edited block by block.
-    if (/[\\/]\.claude[\\/]workspace\.json$/.test(cfg.path)) {
-      throw new Refused(`${cfg.path} is a workspace (ADR 0002), which this step cannot edit safely yet. `
-        + 'Add "state": { "diagrams": { "repo": "[owner]/[repo]" } } to it by hand with the user, '
-        + 'or use --target repo-file.');
-    }
-    return { file: resolve(cfg.path), repoDir: dirname(resolve(cfg.path)), cfg };
+    throw new Refused('--target context wrote a context repo\'s context.json, and context repos are retired (ADR 0002, #60). '
+      + 'In a workspace, add "state": { "diagrams": { "repo": "[owner]/[repo]" } } to .claude/workspace.json by hand '
+      + 'with the user, or use --target repo-file.');
   }
-  throw new Refused(`--target must be repo-file or context, got ${target}`);
+  throw new Refused(`--target must be repo-file, got ${target}`);
 }
 
-const SOURCE_OF = { 'repo-file': 'repo-file', context: 'context.json' };
+const SOURCE_OF = { 'repo-file': 'repo-file' };
 const COMMIT_MSG = 'Name the diagram store';
 
 // ---------------------------------------------------------------- steps
@@ -196,7 +189,7 @@ const steps = {
     say(`  root        ${ROOT}`);
     say(`  repo root   ${rf.root ?? '(not inside a git repo)'}${rf.root && !samePath(rf.root, ROOT) ? '   (ROOT is a subdirectory)' : ''}`);
     say(`  origin      ${owner ?? '(no GitHub origin)'}`);
-    say(`  context     ${cfg ? cfg.path : `(none: ${why})`}`);
+    say(`  workspace   ${cfg ? cfg.path : `(none: ${why})`}`);
     if (process.env.DIAGRAM_STORE_DIR) say(`  checkout dir DIAGRAM_STORE_DIR=${process.env.DIAGRAM_STORE_DIR}`);
     if (process.env.DIAGRAMS_STORE) {
       say(`  NOTE        DIAGRAMS_STORE=${process.env.DIAGRAMS_STORE} is set for this shell only; it overrides`);
@@ -221,13 +214,13 @@ const steps = {
         say('\nSTATE named-refused — fix the named config by hand with the user; a new setup would be refused.');
       }
     } else {
-      const home = owner ?? cfg?.json?.contextRepo?.split('/')[0];
+      const home = owner ?? configOwner(cfg);
       say('  store       none named');
       if (home) {
         const vis = probe('gh', ['repo', 'view', `${home}/diagrams`, '--json', 'visibility', '--jq', '.visibility']);
         say(`  suggestion  ${home}/diagrams  (${vis ? `exists on GitHub, ${vis.toLowerCase()} — adopt` : 'not on GitHub — fresh'}); confirm with the user`);
       }
-      say(`  target      ${cfg ? 'context repo found — ask: repo-file or context' : 'no context repo — repo-file'}`);
+      say(`  target      repo-file${cfg ? ` — or state.diagrams in ${cfg.path}, by hand with the user` : ''}`);
       say('\nSTATE unnamed — a new setup.');
     }
     if (bad) throw new Failed(`${bad} check(s) failed`);
@@ -338,15 +331,6 @@ const steps = {
 
     // A higher rung would shadow what this writes: refuse before writing, not after.
     if (process.env.DIAGRAMS_STORE) throw new Refused('DIAGRAMS_STORE is set and would override the config — unset it, then re-run.');
-    if (target === 'context') {
-      const rf = findRepoFile(ROOT);
-      if (rf.json) throw new Refused(`${rf.path} names ${rf.json.repo ?? '(nothing)'} and takes precedence over context.json — use --target repo-file, or remove it with the user.`);
-      // Edit the context repo only at its tip, or push-config is rejected as behind.
-      if (!DRY) probe('git', ['-C', repoDir, 'fetch', '-q']);
-      const behind = probe('git', ['-C', repoDir, 'rev-list', '--count', 'HEAD..@{u}']);
-      if (behind && behind !== '0') throw new Refused(`the context repo is ${behind} commit(s) behind — pull first: git -C "${repoDir}" pull --ff-only`);
-    }
-
     // The org boundary, refused here as well as on every resolve: setup is where the decision
     // is made, and --cross-org is the user saying so, recorded as crossOrg: true.
     const home = originOwner(ROOT) ?? configOwner(cfg ?? readConfigSoft(ROOT).cfg);

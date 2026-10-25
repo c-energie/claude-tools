@@ -1,15 +1,14 @@
 ---
 name: synthesise-meeting
-description: Synthesise a meeting into the project's meetings folder (docs/meetings/ in a workspace, meetings/ in a legacy context repo) from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases; can also run as a sweep to catch up every past meeting missing a summary, optionally bounded by a scope word such as today, yesterday, this week or last week. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session", "catch up any meetings missing a summary", "synthesise last week's meetings", "write up this week's meetings".
+description: Synthesise a meeting into the project's meetings folder (docs/meetings/ in the workspace) from its Notion page and its transcript, then log the core decisions, actions and open questions to the project's Notion databases; can also run as a sweep to catch up every past meeting missing a summary, optionally bounded by a scope word such as today, yesterday, this week or last week. Triggers like "synthesise the weekly sync", "write up the stakeholder meeting", "summarise Monday's working session", "catch up any meetings missing a summary", "synthesise last week's meetings", "write up this week's meetings".
 ---
 
 # Synthesise a meeting
 
-Turns a meeting into a writeup in the project's meetings folder — `docs/meetings/` in a
-workspace, `meetings/` in a legacy context repo — and logs its decisions / actions / open
+Turns a meeting into a writeup in the project's meetings folder — `docs/meetings/` in the
+workspace — and logs its decisions / actions / open
 questions to Notion. **Read `notion-config` first** — the meetings database, the roster and every
-property name come from the project's config (`.claude/workspace.json`, or a legacy
-`context.json`).
+property name come from the project's config (`.claude/workspace.json`).
 
 Needs the project's Notion connection, and its file-storage connector (Google Drive or
 equivalent) for meetings that were recorded. **Not every meeting is recorded, and that's normal**
@@ -209,14 +208,14 @@ The writeup can hold the finer detail; Notion should hold only the core items.
 ## 4. Write to the meetings folder
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT"     # meetings=, templates=, taxonomy=
 MEETINGS="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" meetings)"
 ```
 
-`workspace.mjs` finds the nearest `.claude/workspace.json`, else the context repo (stderr names
-the `route=`); `layout.mjs` says where that root keeps its meetings — `docs/meetings/` in a
-workspace, `meetings/` in a context repo. Use what it prints; never type either path yourself.
+`workspace.mjs` finds the nearest `.claude/workspace.json` (stderr names the `route=`);
+`layout.mjs` says where that root keeps its meetings — `docs/meetings/`. Use what it prints;
+never type the path yourself.
 Create the folder if it does not exist yet.
 
 Write `$MEETINGS/YYYY-MM-DD-[slug].md` (date = the meeting's date; slug = a short kebab of the
@@ -258,7 +257,7 @@ Front-matter rules:
   link back into Notion.
 - `transcript`: the view URL of the file found in step 2. Omit the key entirely rather than
   writing a placeholder. Raw transcripts stay in the file store — **never commit a `.vtt` to the
-  workspace or context repo** (they hold third-party personal data that must stay deletable, and they crowd out
+  workspace** (they hold third-party personal data that must stay deletable, and they crowd out
   synthesised notes in retrieval).
 - Do **not** add `last_updated` or `author` — git already knows.
 - **No angle brackets in any front-matter value**; use `[…]` or `{…}`.

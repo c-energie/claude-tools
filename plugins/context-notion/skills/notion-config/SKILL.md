@@ -1,42 +1,36 @@
 ---
 name: notion-config
-description: How the context-notion skills find and use a project's Notion configuration — the state.notion contract in workspace.json (or a legacy context.json), the workspace-guest gap, the property traps, and the fallback ladder. Background knowledge for every skill in this plugin; not a task to run.
+description: How the context-notion skills find and use a project's Notion configuration — the state.notion contract in workspace.json, the workspace-guest gap, the property traps, and the fallback ladder. Background knowledge for every skill in this plugin; not a task to run.
 user-invocable: false
 ---
 
 # The project's Notion configuration
 
 Every skill in this plugin is generic: which databases, which properties, which people all
-come from the **project's config**, at runtime — `.claude/workspace.json` in a workspace, or a
-legacy context repo's `context.json`. This skill is the one place that
-procedure lives.
+come from the **project's config**, at runtime — the workspace's `.claude/workspace.json`. This
+skill is the one place that procedure lives.
 
 ## 1. Resolve the config
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 CONFIG="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" config)"
 ```
 
 Read `$CONFIG`. The ladder, which `lib.mjs` follows for every script here:
 **`CONTEXT_CONFIG`** (an explicit path, for testing) wins; otherwise the **nearest
 `.claude/workspace.json`** at or above the working directory — from a member repo that is still
-the workspace's; otherwise the **legacy route**, `context-repo.sh` and that repo's
-`context.json`, until the last context repo is migrated. `workspace.mjs` prints which route
-answered on stderr (`route=workspace` / `route=context-repo`). A malformed nearest
-`workspace.json` is reported and goes to the legacy route — it never skips on to an outer
-workspace. In a workspace, `state.notion` and `state.backend` are this plugin's keys of the file
+the workspace's. There is no other rung: the context-repo route was deleted in #60.
+`workspace.mjs` prints which route answered on stderr (`route=workspace` / `route=none`). A
+malformed nearest `workspace.json` is reported and resolves nothing — it never skips on to an
+outer workspace. In a workspace, `state.notion` and `state.backend` are this plugin's keys of the file
 and nothing else is: other `state.*` blocks belong to the plugins that read them, `connections`
 to `setup-connectors`, the rest to `project-workspace`.
 
 (No shell — Cowork? If the uploaded folder holds a `.claude/workspace.json`, read it, then the
-copy in the repo its `repo` key names over the GitHub connector — that copy wins. Otherwise read
-`context.json` from the context repo over
-the GitHub MCP connector instead. Which repo: the `PROJECT_CONTEXT_REPO` env value in the
-project's `.claude/settings.json` if that file is visible, else a one-line `.context-repo` /
-`context-repo.txt` plain marker, or a `context-project.json` JSON marker whose `contextRepo` and `connections` keys name the repo AND the MCP connection per provider, in `.claude/`, the working folder, `/mnt/project/`, or `~/mnt/.projects/*/docs/` — that marker, attached to
-the Cowork project, is how a sandbox with no repo files and no env vars learns the name —
-if none is found, say no context repo is configured — never guess one.)
+copy in the repo its `repo` key names over the GitHub connector — that copy wins; see
+context-kit-core's `context-access`. If none was uploaded, say no workspace is configured —
+never guess one.)
 
 - `state.backend` must be `"notion"`. If it is missing, `null`, or something else: **say this
   project declares no Notion backend and stop.** Don't guess a database. Structured items can
@@ -99,8 +93,8 @@ return *empty* (zero rows, no error) and writes fail, also silently. Therefore:
 ## 4. Fallback ladder
 
 - **Reads:** if Notion returns empty or fails, fall back to the project's Notion mirror if it
-  has one — `.context/notion/` in a workspace, `notion/` in a legacy context repo; ask
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" mirror` rather than typing either —
+  has one — `.context/notion/` in the workspace; ask
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" mirror` rather than typing it —
   and **label the answer with its `syncedOn` date** (from `_synced.json` in that folder). The mirror is a snapshot: Notion wins over it. No mirror either →
   say the read couldn't be done, not "there are none".
 - **Writes:** if Notion can't be written, **don't retry and don't drop it — `add-pending`**

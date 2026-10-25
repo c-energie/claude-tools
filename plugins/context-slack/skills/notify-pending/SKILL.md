@@ -1,13 +1,13 @@
 ---
 name: notify-pending
-description: Tell whoever drains the project's pending queue, on Slack, that items are waiting in the pending queue (.context/pending/ in a workspace, pending/ in a legacy context repo) — the manual fallback for when the routine notification didn't cover it. Triggers like "tell them there's stuff pending", "nudge about the pending queue", "let the owner know I've queued some items".
+description: Tell whoever drains the project's pending queue, on Slack, that items are waiting in the pending queue (.context/pending/ in the workspace) — the manual fallback for when the routine notification didn't cover it. Triggers like "tell them there's stuff pending", "nudge about the pending queue", "let the owner know I've queued some items".
 disable-model-invocation: true
 ---
 
 # Notify that the pending queue has items
 
 Posts a short Slack message summarising what is waiting in the project's pending queue —
-`.context/pending/` in a workspace, `pending/` in a legacy context repo — for transfer into the project's backend. **Read `slack-config` first.**
+`.context/pending/` in the workspace — for transfer into the project's backend. **Read `slack-config` first.**
 
 **Routine notification is usually not this skill's job.** The repo holding the queue can carry a
 GitHub Action that posts on any push touching it, whoever pushed and however the entry was written —
@@ -28,12 +28,12 @@ moment the entry becomes visible. Check whether the repo has one before making t
 ## 1. Build the message — don't compose it by hand
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 PENDING="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" pending)"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/pending-parse.mjs" "$ROOT" --slack --added-by [first name]
 ```
 
-`workspace.mjs` finds the nearest `.claude/workspace.json`, else the context repo (stderr names
+`workspace.mjs` finds the nearest `.claude/workspace.json` (stderr names
 the `route=`); `layout.mjs` says where that root keeps the queue, and `pending-parse.mjs` reads
 the same folder by itself — these are copies of context-notion's, so both plugins agree on it.
 

@@ -1,7 +1,7 @@
 # skills
 
 Skills for writing skills. Install from the `c-energie` catalog: `skills@c-energie`. It needs
-nothing else — no context repo, no Notion, no Slack — and is useful in any repo that wants a
+nothing else — no workspace, no Notion, no Slack — and is useful in any repo that wants a
 skill of the kinds it knows.
 
 | Skill | What it does |

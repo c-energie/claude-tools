@@ -8,7 +8,7 @@ layer), `plugins/context-slack` (Slack delivery layer, added 2026-08-07), `plugi
 (the diagram store) and `plugins/devhub` (dev-hub manifest authoring) — the last two added
 2026-08-31 — and `plugins/skills` (skill authoring, added 2026-10-06), and `plugins/project-workspace`
 (document-workspace setup skills, moved here from `doc-workspace-template` on 2026-10-11). **Not every plugin here is part of the context stack**: `devhub` reads no
-`context.json` and serves any repo at all. The catalog is the org's tooling, not one system's. The root carries only
+`workspace.json` and serves any repo at all. The catalog is the org's tooling, not one system's. The root carries only
 `.claude-plugin/marketplace.json`, `.gitattributes`, an optional `justfile` and this file —
 every plugin file, script and invariant lives inside its plugin directory, each with its own
 `CLAUDE.md`.
@@ -24,11 +24,9 @@ stale `X@context-kit` in some repo's `enabledPlugins` is **silently ignored**, n
 it presents as a plugin that failed to load — `context-doctor` carries the retired name and
 flags it.
 
-`docs/context-root.md` is the canonical account of `~/.context`, the managed clone root for
-context repos on a laptop — the layers, why the tooling was moved out to `~/c-energie/`, and the
-whole resolution ladder. It lives here because that directory has no `.git` of its own: the
-`CLAUDE.md` sitting there is an unversioned stub carrying only the rules a session must not act
-without. Change one, change the other.
+Context repos and their clone root `~/.context` are retired (ADR 0002; the last route removed
+in #60, and `~/.context` archived and deleted on 2026-10-25). A project's context lives in its
+workspace, found by the nearest `.claude/workspace.json`.
 
 The `justfile` is convenience only: `just` is not installed by default and
 Cowork sandboxes cannot install it, so nothing may ever depend on a recipe, and a recipe that
@@ -53,15 +51,13 @@ surface a root-sourced plugin).
   it to source / category / tags; hand-verify it after edits (no root-level linter).
 - **Some scripts exist as deliberate copies** — a skill can only reference
   `${CLAUDE_PLUGIN_ROOT}/scripts/...` inside its **own** plugin, so anything a skill calls at
-  runtime must sit there. `context-repo.sh`, `dates.mjs` and `bash-bin.mjs` are in all three;
-  `workspace.mjs` (core's) is in context-notion, context-slack, diagrams and context-notes; `lib.mjs`, `pending-parse.mjs` and `layout.mjs` (context-notion's)
+  runtime must sit there. `dates.mjs` and `workspace.mjs` (core's) are in
+  the plugins that call them; `lib.mjs`, `pending-parse.mjs` and `layout.mjs` (context-notion's)
   are in context-notion and context-slack; `json-block.mjs` (core's) is in context-notion.
   `COPIES` in `check-plugin.mjs` is the full list. **Fix the original first, then
-  copy** — and the original is decided by *layer, not by who uses it most*: `context-repo.sh`,
-  `dates.mjs` and `bash-bin.mjs` originate in **context-kit-core**, because all three are generic
-  (dates.mjs is pure UTC arithmetic; bash-bin.mjs is a Windows platform fact — pick Git Bash, never
-  WSL's `System32\bash.exe`, which cannot see the paths or the `$HOME` these scripts assume; core's
-  own skills call both). `lib.mjs`, `pending-parse.mjs` and `layout.mjs` originate in
+  copy** — and the original is decided by *layer, not by who uses it most*: `dates.mjs` and the
+  workspace resolver originate in **context-kit-core**, because they are generic (dates.mjs is
+  pure UTC arithmetic; finding the nearest `.claude/workspace.json` knows no backend). `lib.mjs`, `pending-parse.mjs` and `layout.mjs` originate in
   **context-notion**, which is the only layer entitled to know about `state.notion`, Notion user
   IDs, the queue format and where the queue and the mirror live. `check-plugin.mjs` verifies this and errors on drift, comparing
   below each copy's header banner — the one part meant to differ. A tool that is *not* called by

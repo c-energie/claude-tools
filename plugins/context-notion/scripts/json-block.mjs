@@ -211,7 +211,7 @@ export function upsertBlock(raw, key, value, { width = 110 } = {}) {
 
   // Never hand back a file that stopped being valid JSON, or that says something other than what
   // the caller asked for. Cheap, and it turns every rendering bug into a refusal rather than a
-  // corrupted context repo.
+  // corrupted workspace file.
   let round;
   try { round = JSON.parse(stripBom(text)); }
   catch (e) { refuse(`the edit would not have parsed (${e.message}); nothing written`); }
@@ -232,7 +232,7 @@ export function upsertBlockInFile(file, key, value, { width = 110, write = true 
 
 // ---------------------------------------------------------------- CLI
 
-// A plan-by-default CLI, matching init-context.mjs: the default run writes nothing and shows what
+// A plan-by-default CLI: the default run writes nothing and shows what
 // it would do, and it takes an explicit --write to act. It is also how this file is verified —
 // this repo has no test runner, so externally visible CLI behaviour is the seam.
 function main(argv) {

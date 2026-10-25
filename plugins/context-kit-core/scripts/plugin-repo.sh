@@ -25,7 +25,6 @@
 #
 # Exit 1 (with a reason on stderr) if the repo can't be reached; the reason distinguishes
 # "needs authentication" from "offline".
-# Deliberately the same shape as context-repo.sh; keep the two in step.
 set -u
 
 PLUGIN_REMOTE="c-energie/claude-tools"
@@ -35,26 +34,12 @@ PLUGIN_REMOTE="c-energie/claude-tools"
 # has the old name in its origin. Recognise it rather than cloning a second copy beside it — the
 # legacy name is accepted for RESOLUTION only, never for cloning, so nothing new lands there.
 PLUGIN_REMOTE_LEGACY="c-energie/context-kit"
-# ~/<owner>/<repo> — the same owner/repo mirror of GitHub that context repos use, but rooted at
-# $HOME rather than at ~/.context, and that difference is the point. ~/.context is the managed
-# clone root for CONTEXT repos: data, one per project, cloned and pulled by the resolver at every
-# session start. This repo is a TOOL. Keeping a tool in the data root meant the path said nothing
-# about which kind of thing a directory held, so every walker over that tree needed a content test
-# and an opt-out marker to avoid loading the marketplace as somebody's context. Moving the tools
-# out (2026-08-31) does not retire those tests — content still decides what a directory IS — but
-# it stops the layout actively suggesting the wrong answer.
+# ~/<owner>/<repo>, a mirror of GitHub's layout rooted at $HOME: ~/c-energie/claude-tools, the
+# org workspace's member. The earlier clone paths under ~/.context went with that directory,
+# deleted on 2026-10-25 when context repos were retired (#60).
 #
 # Derived from PLUGIN_REMOTE rather than spelled out, so the two cannot drift.
 CLONE_DIR="${CONTEXT_KIT_PLUGIN_DIR:-$HOME/$PLUGIN_REMOTE}"
-# Every path this repo has been cloned to before, newest first. A clone at one of them is the
-# same repo and is used where it sits — re-cloning beside it is how one checkout silently goes
-# stale. Resolution only; nothing new is ever written to these.
-#   ~/.context/c-energie/claude-tools  after the rename, before the move out of the data root
-#   ~/.context/c-energie/context-kit   after 2026-08-11, before the rename
-#   ~/.context/context-kit             the original flat slug
-CLONE_DIRS_LEGACY="$HOME/.context/$PLUGIN_REMOTE
-$HOME/.context/$PLUGIN_REMOTE_LEGACY
-$HOME/.context/${PLUGIN_REMOTE_LEGACY#*/}"
 cwd="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 PULL=1; WRITABLE=0; PLUGIN=""
@@ -73,15 +58,15 @@ done
 
 # Cap the pull so a bad connection can't stall the caller. `timeout` is GNU coreutils —
 # present in Git Bash and on Linux, absent on stock macOS — so fall back to an unbounded
-# pull rather than failing where it isn't installed. Kept in step with context-repo.sh.
+# pull rather than failing where it isn't installed.
 PULL_TIMEOUT="${CONTEXT_GIT_TIMEOUT:-30}"
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || true)"
 
 # ---------------------------------------------------------------- credentials
-# Kept in step with context-repo.sh — see the long-form reasoning there. Short version: the
-# repo is private and every call runs GIT_TERMINAL_PROMPT=0, so an environment without a git
-# credential helper fails silently. Try plain first (a laptop is unaffected), and only retry
-# with a token when the failure was specifically authentication.
+# The repo is private and every call runs GIT_TERMINAL_PROMPT=0, so an environment without a
+# git credential helper fails silently. Try plain first (a laptop is unaffected), and only retry
+# with a token when the failure was specifically authentication; auth failures return at once,
+# so the retry cannot push a capped pull toward twice its budget.
 AUTH_RE='could not read Username|Authentication failed|Invalid username or password|terminal prompts disabled|403 Forbidden|Repository not found'
 ERR_TMP="${TMPDIR:-/tmp}/context-kit-git-$$.err"
 trap 'rm -f "$ERR_TMP"' EXIT
@@ -140,13 +125,6 @@ if is_plugin_repo "$cwd"; then
   ROOT="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")"
 elif [ -d "$CLONE_DIR/.git" ] && is_plugin_repo "$CLONE_DIR"; then
   ROOT="$CLONE_DIR"
-else
-  while IFS= read -r legacy; do
-    [ -n "$legacy" ] || continue
-    if [ -d "$legacy/.git" ] && is_plugin_repo "$legacy"; then ROOT="$legacy"; break; fi
-  done <<EOF
-$CLONE_DIRS_LEGACY
-EOF
 fi
 
 if [ -z "$ROOT" ]; then

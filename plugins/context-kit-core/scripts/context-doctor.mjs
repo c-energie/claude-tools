@@ -1,37 +1,38 @@
 #!/usr/bin/env node
-// Health check for a workspace or a context repo — the drift and misconfiguration that no
-// session ever reports, because every one of these failures is SILENT.
+// Health check for a workspace — the drift and misconfiguration that no session ever reports,
+// because every one of these failures is SILENT.
 //
 //   node context-doctor.mjs                             # the nearest workspace above the cwd
-//   node context-doctor.mjs <root>                      # report on that workspace or context checkout
-//   node context-doctor.mjs <root> --json               # machine-readable findings
-//   node context-doctor.mjs <root> --fix                # apply the derivable JSON fixes, in place
-//   node context-doctor.mjs <root> --today 2026-08-18   # pin dates so output can be compared
+//   node context-doctor.mjs <dir>                       # the nearest workspace at or above <dir>
+//   node context-doctor.mjs <dir> --json                # machine-readable findings
+//   node context-doctor.mjs <dir> --fix                 # apply the derivable JSON fixes, in place
+//   node context-doctor.mjs <dir> --today 2026-08-18    # pin dates so output can be compared
 //
-// WHAT IT MAY WRITE: keys in context.json and .claude/settings.json, and only where the
-// correct value is *derivable* from something else already in the repo. Never markdown, never
-// a value it would have to guess. That envelope is the whole safety property — a context repo
-// is hand-written prose that exists in exactly one copy, and a diagnostic has no business
-// rewriting it. Findings outside the envelope are reported with the fix spelled out instead.
+// WHAT IT MAY WRITE: keys in .claude/settings.json, and only where the correct value is
+// *derivable* from something else already in the repo. Never markdown, never a value it would
+// have to guess. That envelope is the whole safety property — a workspace's context is
+// hand-written prose that exists in exactly one copy, and a diagnostic has no business rewriting
+// it. Findings outside the envelope are reported with the fix spelled out instead. --fix never
+// writes workspace.json: every key in it has a writing owner (workspace.mjs's header), and the
+// doctor is not one of them.
 //
-// TWO KINDS OF ROOT (ADR 0002), told apart by workspace.mjs's rootKind() — a directory holding
-// context.json and no .claude/workspace.json is a legacy context repo and is checked exactly as
-// it always was; anything else resolves to the nearest workspace.json above it. In a workspace:
+// ONE KIND OF ROOT (ADR 0002): the nearest .claude/workspace.json, found by workspace.mjs's
+// rootKind(). The context-repo mode — a directory holding context.json, checked for its template
+// stamp, marker and contextRepo — was deleted with the rest of that route (#60). A directory that
+// is not a workspace is refused (exit 2), and one still holding a context.json is told context
+// repos are retired rather than "not found", so the fix it needs is named. In a workspace:
 //   - workspace.json itself: it parses, `schema` is 1, `repo` is owner/name, every `members[]`
 //     entry is on disk (or reported as not cloned), `connections` has a shape the gate can read;
 //   - the docs/ layout: docs/memory.md exists and the root CLAUDE.md imports it, and
-//     docs/threads/ gets the same front-matter and INDEX.md checks threads/ always had;
+//     docs/threads/ gets the front-matter and INDEX.md checks;
 //   - .context/pending/ is not stale;
 //   - VISIBILITY: a PUBLIC repo holding docs/meetings/ or .context/pending/ is a warning, since
 //     anyone who clones a workspace gets its context (ADR 0002). This is the one check that
 //     touches the network (`gh repo view`, capped at 15s), it runs only when one of those two
 //     directories exists, and a lookup that fails is a note saying it was NOT verified — never
 //     a silent pass.
-// The keys a workspace retired — template, the generated marker, PROJECT_CONTEXT_REPO — are
-// not checked there at all. --fix
-// never writes workspace.json: every key in it has a writing owner (workspace.mjs's header),
-// and the doctor is not one of them, so a workspace's only derivable fixes are the
-// .claude/settings.json ones it shares with a context repo.
+// The keys the workspace retired — template, the generated marker, include — are not checked.
+// PROJECT_CONTEXT_REPO left in .claude/settings.json is reported as dead configuration.
 //
 // Exit 0 = it ran (with or without findings). Exit 2 = it could NOT run. The caller must be
 // able to tell "nothing wrong" from "never looked" — a silent clean bill of health on a check
@@ -43,7 +44,7 @@ import { join, resolve, basename } from 'node:path';
 import { rootKind, SCHEMA, WORKSPACE_FILE } from './workspace.mjs';
 
 const OPTIONS = ['json', 'fix', 'today'];
-// In step with hooks/load-context.sh, scripts/context-repo.sh and scripts/link-context.mjs.
+// The one spelling of "off", in step with hooks/workspace-freshness.sh's is_optout().
 const OPTOUT = ['none', 'off', 'false', 'no', '-', 'disabled'];
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const PENDING_STALE_DAYS = 30;
@@ -71,13 +72,16 @@ for (const f of flags) if (!OPTIONS.includes(f)) die(`unknown option --${f} (use
 
 const start = resolve(positional[0] ?? process.cwd());
 if (!existsSync(start)) die(`no such directory: ${start}`);
-// No argument means "the workspace I am in". With one, a directory that is neither kind is still
-// checked as a context repo — which reports its missing context.json as the finding it always
-// was, rather than exiting as if nothing had been asked.
+// Not a workspace: nothing to check, so it cannot run. A context.json there is a project that
+// never migrated, and saying "not found" would send someone looking for a file that is present.
 const kind = rootKind(start);
-if (!kind && !positional[0]) die(`no ${WORKSPACE_FILE} at or above ${start} — pass the workspace or context checkout (node scripts/workspace.mjs --no-pull)`);
-const WS = kind?.kind === 'workspace';
-const ROOT = kind?.root ?? start;
+if (!kind) {
+  die(existsSync(join(start, 'context.json'))
+    ? `${start} holds context.json but no ${WORKSPACE_FILE} — context repos are retired (ADR 0002, #60); `
+      + 'this project needs a workspace (project-workspace:setup-project-workspace)'
+    : `no ${WORKSPACE_FILE} at or above ${start} — not a workspace (node scripts/workspace.mjs)`);
+}
+const ROOT = kind.root;
 
 const today = todayArg ?? new Date().toISOString().slice(0, 10);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) die(`--today needs YYYY-MM-DD, got ${todayArg}`);
@@ -121,9 +125,8 @@ const namesOf = (v) => {
   return [];
 };
 
-// The connections policy, wherever it lives — context.json in a context repo, workspace.json in a
-// workspace. One function, because the gate reads both with the same names() and a shape that
-// passes here in one file and fails in the other would be two rules for one policy.
+// The connections policy in workspace.json, read with the same names() the gate uses, so a shape
+// that passes here cannot fail there.
 const checkConnections = (conns) => {
   if (conns !== undefined
       && (typeof conns !== 'object' || conns === null || Array.isArray(conns))) {
@@ -185,7 +188,7 @@ const checkConnections = (conns) => {
   }
 };
 
-// Stale Notion date guidance, under whichever config holds state.notion.
+// Stale Notion date guidance under state.notion.
 const checkNotionDates = (conf) => {
   // context-notion's notion-discover used to stamp every date property's schema line with
   // "with is_datetime 0" — correct for the hosted notion-create-pages tool, and a 400 on every
@@ -222,78 +225,20 @@ const checkNotionDates = (conf) => {
   }
 };
 
-// ---------------------------------------------------------------- context.json
-
-const ctxFile = join(ROOT, 'context.json');
-let ctx = null;
-if (WS) {
-  // A workspace has no context.json to read — checked below, from workspace.json.
-} else if (!existsSync(ctxFile)) {
-  add('err', 'context.json', 'no context.json at the root — this directory is not a context repo');
-} else {
-  try {
-    const parsed = readJson(ctxFile);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      add('err', 'context.json', 'context.json is not a JSON object');
-    } else {
-      ctx = parsed;
-    }
-  } catch (e) {
-    add('err', 'context.json', `context.json is not valid JSON (${e.message}) — nothing else could be checked against it`);
-  }
-}
-
-if (ctx) {
-  if (!ctx.contextRepo) {
-    add('err', 'contextRepo', 'context.json has no "contextRepo" — the resolver cannot confirm what this checkout is');
-  } else if (!REPO_RE.test(String(ctx.contextRepo))) {
-    add('err', 'contextRepo', `"contextRepo": ${JSON.stringify(ctx.contextRepo)} is not an owner/repo name`);
-  }
-
-  // The stamp. Nothing in any plugin reads it, so it drifts unnoticed — report it, and compare
-  // against a template clone only if one is actually present. A version hard-coded in the
-  // plugin would itself be a fact that goes stale, which is the bug being reported.
-  const stamp = ctx.template?.version ?? null;
-  // Moved out of ~/.context with the marketplace on 2026-08-31 — see kitDir below for why.
-  const tmplDir = [
-    process.env.CONTEXT_TEMPLATE_DIR,
-    join(homedir(), 'c-energie', 'context-template'),
-    join(homedir(), '.context', 'c-energie', 'context-template'),
-  ].find((d) => d && existsSync(d)) ?? join(homedir(), 'c-energie', 'context-template');
-  let tmplVersion = null;
-  try { tmplVersion = readJson(join(tmplDir, 'context.json')).template?.version ?? null; } catch { /* reported below */ }
-
-  if (!ctx.template) {
-    add('warn', 'template', 'no "template" block — this repo records no lineage from c-energie/context-template. A repo that predates the template should say so deliberately rather than leave it blank.');
-  } else if (!stamp) {
-    add('warn', 'template', 'the "template" block has no version');
-  } else if (tmplVersion && stamp !== tmplVersion) {
-    add('warn', 'template', `stamped ${stamp}, template clone is at ${tmplVersion}. The stamp is decorative — nothing reads it — so check by hand which changes actually apply before touching anything.`);
-  } else if (!tmplVersion) {
-    add('note', 'template', `stamped ${stamp} — no template clone at ${tmplDir}, so it could not be compared`);
-  }
-
-  checkConnections(ctx.connections);
-
-  checkNotionDates(ctx);
-}
-
 // ---------------------------------------------------------------- workspace.json
 
 let ws = null;
-const wsReport = { file: null, members: [], visibility: null };
-if (WS) {
-  wsReport.file = kind.file;
-  if (kind.error) {
-    // Every route that reads this file — the resolver, the gate, save-thread — treats a malformed
-    // one as no workspace at all and goes to the context-repo fallback, so the workspace is
-    // silently not in force. Nothing below can be checked against a file that did not parse.
-    add('err', 'workspace.json',
-      `${kind.file} is malformed (${kind.error}) — every session here falls back to the context-repo `
-      + 'route as if there were no workspace, and nothing else in it could be checked');
-  } else {
-    ws = kind.config;
-  }
+const wsReport = { file: kind.file, members: [], visibility: null };
+if (kind.error) {
+  // Every route that reads this file — the resolver, the gate, save-thread — treats a malformed
+  // one as no workspace at all, so the workspace is silently not in force: no policy gated, no
+  // thread home. Nothing below can be checked against a file that did not parse.
+  add('err', 'workspace.json',
+    `${kind.file} is malformed (${kind.error}) — every session here runs as if there were no `
+    + 'workspace (the connection gate fails open, save-thread has nowhere to write), and nothing '
+    + 'else in it could be checked');
+} else {
+  ws = kind.config;
 }
 
 if (ws) {
@@ -372,19 +317,14 @@ if (ws) {
 
 // Which plugin ids actually exist. Without a marketplace this check cannot run, and saying so
 // is the point: an unverifiable id must never read as a verified one.
-// The TOOL repos live at ~/[owner]/[repo], outside ~/.context — that root is for context repos,
-// the data. Both moved on 2026-08-31, and the marketplace was renamed from context-kit to
-// claude-tools at the same time. Every earlier path is still tried: a clone at one of them is the
-// same repo, and giving up would turn every plugin id below into an unverifiable one, which
-// reads as "checked and fine" to anyone skimming the report.
+// The marketplace is cloned at ~/c-energie/claude-tools (CONTEXT_KIT_PLUGIN_DIR overrides). The
+// paths under ~/.context it once lived at are gone with that root (#60).
 const findRepo = (candidates, marker, fallback) =>
   candidates.find((d) => d && existsSync(join(d, marker))) ?? fallback;
 
 const kitDir = findRepo([
   process.env.CONTEXT_KIT_PLUGIN_DIR,
   join(homedir(), 'c-energie', 'claude-tools'),
-  join(homedir(), '.context', 'c-energie', 'claude-tools'),
-  join(homedir(), '.context', 'c-energie', 'context-kit'),
 ], join('.claude-plugin', 'marketplace.json'), join(homedir(), 'c-energie', 'claude-tools'));
 let known = null;
 try {
@@ -450,24 +390,21 @@ if (settings) {
     }
   }
 
-  // A repo whose own env block disagrees with its own context.json is a real trap: a session
-  // opened IN the context repo resolves by env first, so it wins over the file beside it.
-  const envRepo = settings.env?.PROJECT_CONTEXT_REPO;
-  if (ctx?.contextRepo && envRepo
-      && !OPTOUT.includes(String(envRepo).trim().toLowerCase())
-      && envRepo !== ctx.contextRepo) {
-    add('err', 'settings',
-      `.claude/settings.json sets PROJECT_CONTEXT_REPO=${envRepo} but context.json says ${ctx.contextRepo} — env wins, so a session here loads the other repo`,
-      { file: setFile, kind: 'align-env-repo', to: ctx.contextRepo });
+  // Dead configuration since #60: nothing resolves a context repo any more. Harmless to every
+  // route, but it reads as if it did something, so it is named — and not removed, since deleting
+  // a key from an env block is an edit to a file whose other keys the doctor cannot judge.
+  for (const key of ['PROJECT_CONTEXT_REPO', 'PROJECT_CONTEXT_THREADS']) {
+    if (settings.env?.[key] === undefined) continue;
+    add('warn', 'settings',
+      `.claude/settings.json sets ${key}, but context repos are retired (ADR 0002, #60) and nothing reads it — remove it from the env block`);
   }
 }
 
 // ---------------------------------------------------------------- machine-wide autoload
 // CONTEXT_KIT_AUTOLOAD=off in the user-level ~/.claude/settings.json makes the SessionStart hook
 // exit silently in every project on this machine. That is a legitimate setting, so it is a note
-// and not a defect — but it is reported because "why didn't my context load?" is the question
-// this script exists to answer, and an off flag otherwise looks EXACTLY like a plugin that
-// failed to load: no payload, no banner, no warning, everything else healthy.
+// and not a defect — but it is reported because a silenced "workspace is behind" warning looks
+// EXACTLY like an up-to-date workspace: no line, everything else healthy.
 //
 // Read from the environment first and the file second, because those can disagree and the
 // difference matters: Claude Code exports the user-level `env` block into every hook, so the
@@ -487,40 +424,18 @@ if (isOff(autoloadEnv) || isOff(autoloadFile)) {
     ? `CONTEXT_KIT_AUTOLOAD=${autoloadEnv} is set in this session's environment`
     : `${userSettings} sets CONTEXT_KIT_AUTOLOAD=${autoloadFile} (it takes effect at the next session start)`;
   add('note', 'autoload',
-    `${where} — the SessionStart hook loads nothing in ANY project on this machine, including one that names a context repo. Deliberate, not a broken plugin: refresh-context still loads. Remove the value, or set it to "on", to restore automatic loading.`);
-}
-
-// The canonical generated marker, per the core invariant: one committable file per context
-// repo, and the file a Cowork session gets attached. Retired in a workspace, where the
-// workspace.json the resolver walks to is the whole answer.
-const markerFile = join(ROOT, '.claude', 'context-project.json');
-if (WS) {
-  // nothing to check
-} else if (!existsSync(markerFile)) {
-  add('warn', 'marker', 'no .claude/context-project.json — a Cowork session has nothing to attach. Any laptop session that resolves this repo generates it; commit it once it appears.');
-} else {
-  try {
-    const marker = readJson(markerFile);
-    if (ctx?.contextRepo && marker.contextRepo && marker.contextRepo !== ctx.contextRepo) {
-      add('err', 'marker', `.claude/context-project.json names ${marker.contextRepo} but context.json says ${ctx.contextRepo}`);
-    }
-  } catch (e) {
-    add('err', 'marker', `.claude/context-project.json is not valid JSON (${e.message})`);
-  }
+    `${where} — the SessionStart hook's workspace freshness check is silenced in EVERY project on this machine, so a workspace behind its origin is never warned about. Deliberate, not a broken plugin. Remove the value, or set it to "on", to restore it.`);
 }
 
 // ---------------------------------------------------------------- content layout
 
-// Where each piece lives, by kind of root (ADR 0002's layout for a workspace). Every check below
-// is written once against these, so a workspace and a context repo are held to the same rules.
-const MEMORY_REL = WS ? 'docs/memory.md' : 'memory.md';
-const THREADS_REL = WS ? 'docs/threads' : 'threads';
-const PENDING_REL = WS ? '.context/pending' : 'pending';
+// Where each piece lives — ADR 0002's layout.
+const MEMORY_REL = 'docs/memory.md';
+const THREADS_REL = 'docs/threads';
+const PENDING_REL = '.context/pending';
 
 if (!existsSync(join(ROOT, MEMORY_REL))) {
-  add(WS ? 'warn' : 'err', 'memory', WS
-    ? `no ${MEMORY_REL} — the workspace has no durable memory for its CLAUDE.md to import`
-    : 'no memory.md — the session-start hook has nothing to inject');
+  add('warn', 'memory', `no ${MEMORY_REL} — the workspace has no durable memory for its CLAUDE.md to import`);
 } else {
   const mem = readFileSync(join(ROOT, MEMORY_REL), 'utf8');
   const reviewed = mem.match(/_Last reviewed:\s*(\d{4}-\d{2}-\d{2})/);
@@ -553,11 +468,11 @@ const importedByUserClaudeMd = (memoryPath) => {
     norm(p.replace(/[.,;:]+$/, '')) === want);
 };
 
-// In a workspace NOTHING injects memory: the session-start hook loads nothing there, and
+// NOTHING injects memory: the session-start hook loads nothing, and
 // docs/memory.md reaches a session only through `@docs/memory.md` in the root CLAUDE.md, or the
 // user-level import above. Drop the import and the file is still there, still curated, and never
 // read — no error anywhere.
-if (WS && existsSync(join(ROOT, MEMORY_REL))) {
+if (existsSync(join(ROOT, MEMORY_REL))) {
   const claudeMd = join(ROOT, 'CLAUDE.md');
   if (!existsSync(claudeMd)) {
     add('warn', 'memory', `no CLAUDE.md at the workspace root — nothing imports ${MEMORY_REL}, so no session loads it`);
@@ -574,13 +489,11 @@ try {
     .sort();
 } catch { /* no threads directory */ }
 
-if (threads === null) {
-  // A workspace that has never saved a thread has no docs/threads/ yet, and save-thread makes it.
-  if (!WS) add('note', 'threads', 'no threads/ directory');
-} else {
+// A workspace that has never saved a thread has no docs/threads/ yet, and save-thread makes it.
+if (threads !== null) {
   for (const f of threads) {
     if (!/^\d{4}-\d{2}-\d{2}-/.test(f)) {
-      add('warn', 'threads', `${THREADS_REL}/${f} is not named YYYY-MM-DD-topic.md — ${WS ? 'thread-index.mjs' : 'the hook'} lists threads by filename sort, so it lands in the wrong place`);
+      add('warn', 'threads', `${THREADS_REL}/${f} is not named YYYY-MM-DD-topic.md — thread-index.mjs lists threads by filename sort, so it lands in the wrong place`);
     }
     // The silent-drop rule, checked where it actually bites. An angle bracket in a
     // front-matter value makes the ingester read a tag and discard the field: no error, no
@@ -599,22 +512,20 @@ if (threads === null) {
     }
   }
 
-  // An index that is merely out of date reads exactly like a complete one. In a workspace the
-  // index is the ONLY route to the threads — CLAUDE.md points at it and no hook lists them — and
+  // An index that is merely out of date reads exactly like a complete one. The index is the ONLY
+  // route to the threads — CLAUDE.md points at it and no hook lists them — and
   // save-thread regenerates it on every save, so any thread without one is a finding.
   const indexRel = `${THREADS_REL}/INDEX.md`;
   const indexFile = join(ROOT, indexRel);
   if (!existsSync(indexFile)) {
-    if (WS && threads.length) {
+    if (threads.length) {
       add('warn', 'index', `${threads.length} thread(s) and no ${indexRel} — the workspace's CLAUDE.md points at the index, so these are invisible to a session. Build it with thread-index.mjs --dir ${THREADS_REL}.`);
-    } else if (!WS && threads.length > 6) {
-      add('warn', 'index', `${threads.length} threads and no threads/INDEX.md — the hook injects only the newest 6, so the rest are invisible at session start. Build it with thread-index.mjs.`);
     }
   } else {
     const index = readFileSync(indexFile, 'utf8');
     const missing = threads.filter((f) => !index.includes(f));
     if (missing.length) {
-      add('warn', 'index', `${indexRel} does not mention ${missing.length} thread(s): ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''} — rebuild with thread-index.mjs${WS ? ` --dir ${THREADS_REL}` : ''}`);
+      add('warn', 'index', `${indexRel} does not mention ${missing.length} thread(s): ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ', …' : ''} — rebuild with thread-index.mjs --dir ${THREADS_REL}`);
     }
     if (/\bTODO:/.test(index)) {
       add('warn', 'index', `${indexRel} still carries a TODO: placeholder from an unfinished curation`);
@@ -652,13 +563,6 @@ if (flags.has('fix')) {
       // The key token only, quotes included — the value and every byte of layout survive.
       next = replaceOnce(text, new RegExp(`"${escapeRe(f.fix.from)}"`, 'g'), `"${f.fix.to}"`);
       what = `enabledPlugins "${f.fix.from}" to "${f.fix.to}"`;
-    } else if (f.fix.kind === 'align-env-repo') {
-      next = replaceOnce(
-        text,
-        /("PROJECT_CONTEXT_REPO"\s*:\s*)"[^"]*"/g,
-        `$1${JSON.stringify(f.fix.to)}`,
-      );
-      what = `PROJECT_CONTEXT_REPO to "${f.fix.to}"`;
     }
 
     if (next === null) {
@@ -682,14 +586,13 @@ if (flags.has('fix')) {
 const fixable = findings.filter((f) => f.fix).length;
 
 if (flags.has('json')) {
-  // `mode` first, so a consumer can tell which set of checks ran before reading any finding;
-  // `workspace` is null for a context repo rather than absent, for the same reason.
+  // `mode` is always 'workspace' now; kept so a consumer written against both modes still reads.
   console.log(JSON.stringify({
-    root: ROOT, mode: WS ? 'workspace' : 'context-repo', today, findings,
-    workspace: WS ? wsReport : null, applied, refused, fixable,
+    root: ROOT, mode: 'workspace', today, findings,
+    workspace: wsReport, applied, refused, fixable,
   }, null, 2));
 } else {
-  console.log(`context-doctor — ${ROOT}  (${WS ? 'workspace' : 'context repo'}, ${today})`);
+  console.log(`context-doctor — ${ROOT}  (workspace, ${today})`);
   if (!findings.length) console.log('  ok    nothing to report');
   const order = { err: 0, warn: 1, note: 2 };
   for (const f of [...findings].sort((a, b) => order[a.level] - order[b.level])) {

@@ -4,7 +4,7 @@ Authoring skills for [dev-hub](https://github.com/c-energie/dev-hub) — the hub
 cloned repo's committed `devhub.toml` as buttons, in that repo's drawer or on the hub's Project
 tab.
 
-Install from the `c-energie` catalog: `devhub@c-energie`. It needs nothing else — no context repo,
+Install from the `c-energie` catalog: `devhub@c-energie`. It needs nothing else — no workspace,
 no Notion, no Slack. It is useful in **any** repo that wants a button in the hub, which is why it
 is its own plugin rather than a skill inside the context stack.
 

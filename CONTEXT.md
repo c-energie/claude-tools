@@ -46,10 +46,12 @@ it has not been classified as `working`.
 
 ## context repo
 
-The per-project (or per-person) repository holding a project's durable context — `memory.md`,
-`glossary.md`, `threads/`, and the `context.json` that declares what the repo is and what it
-connects to. Resolved by the session it belongs to, never guessed. On a laptop, the managed
-clones live under `~/.context/[owner]/[repo]`; `docs/context-root.md` is the canonical account.
+**Retired** (ADR 0002; the last route removed in #60, 2026-10-25). A separate per-project
+repository that once held a project's durable context (`memory.md`, `glossary.md`, `threads/`,
+`context.json`), cloned under `~/.context`. That context now lives in the project's
+[project workspace](#project-workspace): `docs/memory.md`, `GLOSSARY.md`, `docs/threads/`, and
+`.claude/workspace.json` in place of `context.json`. Use the term only for the history.
+_Avoid_: for anything current
 
 ## marketplace / catalog / plugin
 

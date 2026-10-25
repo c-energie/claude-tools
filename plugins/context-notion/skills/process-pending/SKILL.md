@@ -1,13 +1,13 @@
 ---
 name: process-pending
-description: Transfer the project's pending queue (.context/pending/ in a workspace, pending/ in a legacy context repo) into the project's Notion databases — actions, decisions, open questions and more written by people without a Notion connection — then file what was transferred under its done/ folder. Triggers like "process the pending queue", "transfer the pending items to notion", "what's waiting in pending", "drain the inbox".
+description: Transfer the project's pending queue (.context/pending/ in the workspace) into the project's Notion databases — actions, decisions, open questions and more written by people without a Notion connection — then file what was transferred under its done/ folder. Triggers like "process the pending queue", "transfer the pending items to notion", "what's waiting in pending", "drain the inbox".
 disable-model-invocation: true
 ---
 
 # Process the pending queue into Notion
 
-Drains the project's **pending queue** — `.context/pending/` in a workspace, `pending/` in a
-legacy context repo — into the project's Notion databases, then files the processed entries
+Drains the project's **pending queue** — `.context/pending/` in the workspace — into the
+project's Notion databases, then files the processed entries
 under its `done/`. **Read `notion-config` first.**
 
 > **Writes live Notion rows and rewrites shared files — run only when asked.** Excluded from
@@ -21,12 +21,12 @@ exactly as it is — a drained queue with nothing in Notion loses the entries ou
 ## 1. Read the queue
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --writable)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 PENDING="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" pending)"
 node "${CLAUDE_PLUGIN_ROOT}/scripts/pending-parse.mjs" "$ROOT" --json
 ```
 
-`workspace.mjs` finds the nearest `.claude/workspace.json`, else the context repo; the scripts
+`workspace.mjs` finds the nearest `.claude/workspace.json`; the scripts
 pick the queue's directory under that root themselves (`layout.mjs`), so pass `$ROOT`, not
 `$PENDING`, to them.
 
@@ -46,7 +46,7 @@ The config's `databases` + `schemas` decide where each entry type can go: `actio
 `actions`, `decision` → `decisionLog`, `open-question` → `openQuestions`; `stakeholder` /
 `project` only if the project defines databases for them. **An entry whose type has no
 database in this project is held back**, reported as such — the fix is a line in
-the config (`.claude/workspace.json`, or a legacy `context.json`), not a guessed destination.
+the config (`.claude/workspace.json`), not a guessed destination.
 
 For stakeholders/projects (the two that collide): query the target for existing names first,
 including acronyms/aliases, and propose updating rather than duplicating.
@@ -72,7 +72,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/pending-parse.mjs" "$ROOT" --drain results.j
 ```
 
 `results.json` = `[{"file": ".context/pending/actions.md", "line": 20, "notionUrl": "https://…"}]`
-(`pending/actions.md` in a legacy context repo) — `file` and `line` exactly as step 1 reported
+— `file` and `line` exactly as step 1 reported
 them, **only entries actually created**. The script moves each to
 `done/YYYY-MM-DD-processed.md` under the queue, with its URL. If it reports a line mismatch, someone
 pushed underneath you: re-run step 1, drain with fresh numbers. Never hand-edit the queue

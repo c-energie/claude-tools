@@ -13,7 +13,7 @@ Work through the list in order. For each item: say what it's for, and **offer to
 (invoke the named skill); skip on the user's say-so. Get the date from
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs" today`.
 
-Several items write outside Notion — the shared context repo — and are `disable-model-invocation:
+Several items write outside Notion — the shared workspace repo — and are `disable-model-invocation:
 true`, so they never fire on their own. Offering them here, and the user saying yes, is exactly
 how they are meant to run.
 
@@ -23,20 +23,20 @@ than reporting a full run.
 
 ## The weekly list
 
-0. **`refresh-context`** (context-kit-core) — re-pull the context repo before anything else. Items
+0. **`refresh-context`** (context-kit-core) — re-pull the workspace before anything else. Items
    1 and 8 read and write that checkout, and a session left open (or one whose start-of-session
    load warned it was stale) works from a copy that predates whatever was pushed this week. Cheap,
    read-only, and it says in a line if nothing changed. *Always run this, first.*
-0b. **`context-status`** (context-kit-core) — count what has built up across the context ladder:
+0b. **`context-status`** (context-kit-core) — count what has built up in the workspace:
    curation lag, thread outcomes never logged, the pending queue, native memory. It writes nothing, and it is what makes the judgement calls below evidence-based
    rather than a feeling — item 10 especially, which otherwise gets skipped every week until the
    week it is a big job. Numbered `0b` rather than inserted as `1` so the cross-references in the
    items below keep pointing at what they mean. *Always run this, second.*
-1. **`process-pending`** — transfer what was queued in the project's pending queue (`.context/pending/` in a workspace, `pending/` in a legacy context repo) into
+1. **`process-pending`** — transfer what was queued in the project's pending queue (`.context/pending/`) into
    Notion. **First, deliberately:** workspace guests write to the queue instead of to Notion, so
    anything they logged this week is invisible to items 2–4 until this has run. Skip only if the
    queue is empty (the skill says so in a line). *Always run this.*
-1b. **the `handoff/` drain** (`triage-notes`, context-notes) — items bound for a context repo
+1b. **the `.context/handoff/` drain** (`triage-notes`, context-notes) — items bound for a workspace
    SOMEBODY ELSE OWNS. A triage run drains the personal ones automatically and lists the shared
    ones, but only when a triage run happens; this is the cadence that catches them when one
    does not. The shared items are exactly the ones nobody drains by accident, because acting on
@@ -58,8 +58,8 @@ than reporting a full run.
    it a scope word** so the sweep matches when you are running this: `this week` at the end of a
    week, `last week` at the start of the next one. A scope is a hard window, so if the run
    straddles a weekend, check both rather than assuming one covered it.
-8. **`sync-notion-mirror`** — refresh the read-only copy of the Notion databases (`.context/notion/`
-   in a workspace, `notion/` in a legacy context repo). **Run it after items 1–7**, since it is a snapshot of whatever they left
+8. **`sync-notion-mirror`** — refresh the read-only copy of the Notion databases (`.context/notion/`).
+   **Run it after items 1–7**, since it is a snapshot of whatever they left
    behind. This is the only way teammates without the Notion connector see any of the week's
    changes, so a skipped week leaves them reading stale rows. *Always run this.*
 9. **`person-slack-digest`** (context-slack) — post the per-person "who's got what" summary to the

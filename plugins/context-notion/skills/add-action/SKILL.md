@@ -1,6 +1,6 @@
 ---
 name: add-action
-description: Add one or more action items to the project's Notion actions database (which database comes from the project's config, workspace.json or a legacy context.json). Use when a task/action with an owner (and optional due date) needs tracking — triggers like "add an action", "log these action items", "capture these to-dos".
+description: Add one or more action items to the project's Notion actions database (which database comes from the project's workspace.json). Use when a task/action with an owner (and optional due date) needs tracking — triggers like "add an action", "log these action items", "capture these to-dos".
 ---
 
 # Add an action

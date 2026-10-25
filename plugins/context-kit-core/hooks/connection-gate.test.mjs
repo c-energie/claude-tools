@@ -7,8 +7,8 @@
 // The seam is the hook itself: a PreToolUse payload on stdin, a pinned environment, and an
 // assertion on what comes back — a deny on stdout, or silence with (or without) a reason on
 // stderr. That is the whole of what a session does with this script. HOME is a scratch dir
-// because the legacy route reads ~/.context and globs $HOME/mnt for markers; a test inheriting
-// the real HOME would pass or fail by what the machine running it has cloned. Nothing here
+// because the Cowork route searches $HOME/mnt; a test inheriting the real HOME would pass or fail
+// by what the machine running it holds. Nothing here
 // touches the network: the gate never does, and setup-connectors is run non-interactively, which
 // stops it before anything is provisioned.
 
@@ -46,7 +46,8 @@ const member = (root, name = 'member') => {
   deep(dir, '.git');
   return dir;
 };
-// A legacy context checkout holding a context.json, for the no-workspace route.
+// A retired context checkout holding a context.json — the route deleted in #60, kept as a fixture
+// to prove nothing reads it any more.
 const legacy = (home, connections) => {
   const clone = deep(home, 'clone');
   writeFileSync(join(clone, 'context.json'),
@@ -84,7 +85,7 @@ test('a member nested inside a workspace is gated by the workspace connections',
   assert.match(other.stdout, /workspace\.json/, 'the deny must name the file to change');
 });
 
-test('the workspace beats a legacy repo the member still declares', () => {
+test('a context repo the member still declares changes nothing in a workspace', () => {
   const home = scratch();
   const clone = legacy(home, { github: 'github-legacy' });
   const root = workspace(deep(home, 'ws'), { schema: 1, name: 'acme', connections: { github: 'github-acme' } });
@@ -100,14 +101,6 @@ test('absent connections in a workspace denies nothing, and says why', () => {
   const r = gate({ cwd: member(root), home, tool: 'mcp__github-anything__x' });
   assert.equal(r.denied, false);
   assert.match(r.stderr, /declares no connections/);
-});
-
-test('absent connections in a workspace does not fall through to a legacy policy', () => {
-  const home = scratch();
-  const clone = legacy(home, {});
-  const root = workspace(deep(home, 'ws'), { schema: 1, name: 'acme' });
-  const env = { PROJECT_CONTEXT_REPO: REPO, PROJECT_CONTEXT_DIR: clone };
-  assert.equal(gate({ cwd: member(root), home, env, tool: 'mcp__github-anything__x' }).denied, false);
 });
 
 test('connections: {} in a workspace denies every provider connector', () => {
@@ -153,13 +146,13 @@ test('a malformed workspace.json is not skipped past to an outer workspace', () 
   assert.equal(gate({ cwd: member(inner), home, tool: 'mcp__github-anything__x' }).denied, false);
 });
 
-test('a malformed workspace.json falls back to the legacy route, as the resolver does', () => {
+test('a malformed workspace.json fails open even with a context repo configured', () => {
   const home = scratch();
   const clone = legacy(home, { github: 'github-legacy' });
   const root = workspace(deep(home, 'ws'), 'not json');
   const env = { PROJECT_CONTEXT_REPO: REPO, PROJECT_CONTEXT_DIR: clone };
   const r = gate({ cwd: member(root), home, env, tool: 'mcp__github-other__x' });
-  assert.equal(r.denied, true);
+  assert.equal(r.denied, false);
   assert.match(r.stderr, /malformed/);
 });
 
@@ -173,32 +166,27 @@ test('connections that is not an object fails open rather than denying everythin
   }
 });
 
-// ---------------------------------------------------------------- the gate: legacy route, unchanged
+// ---------------------------------------------------------------- the gate: no workspace
+// The context-repo route is gone (#60): a context.json policy, a marker and an opt-out are all
+// configured below, and none of them is read.
 
-test('with no workspace, the context.json policy still applies', () => {
+test('with no workspace, a context repo\'s context.json policy is not read', () => {
   const home = scratch();
   const clone = legacy(home, { github: 'github-legacy' });
   const cwd = deep(home, 'project');
   const env = { PROJECT_CONTEXT_REPO: REPO, PROJECT_CONTEXT_DIR: clone };
-  assert.equal(gate({ cwd, home, env, tool: 'mcp__github-legacy__x' }).denied, false);
-  assert.equal(gate({ cwd, home, env, tool: 'mcp__github-other__x' }).denied, true);
+  const r = gate({ cwd, home, env, tool: 'mcp__github-other__x' });
+  assert.equal(r.denied, false);
+  assert.match(r.stderr, /no connections policy found/);
 });
 
-test('with no workspace, the marker mirror still applies', () => {
+test('with no workspace, a context-project.json marker is not read', () => {
   const home = scratch();
   const cwd = deep(home, 'project');
   deep(cwd, '.claude');
   writeFileSync(join(cwd, '.claude', 'context-project.json'),
     JSON.stringify({ contextRepo: REPO, connections: { notion: 'notion-acme' } }));
-  assert.equal(gate({ cwd, home, tool: 'mcp__notion-acme__x' }).denied, false);
-  assert.equal(gate({ cwd, home, tool: 'mcp__notion-other__x' }).denied, true);
-});
-
-test('with no workspace, an opted-out project is allowed and says so', () => {
-  const home = scratch();
-  const r = gate({ cwd: deep(home, 'project'), home, env: { PROJECT_CONTEXT_REPO: 'none' }, tool: 'mcp__github-x__y' });
-  assert.equal(r.denied, false);
-  assert.match(r.stderr, /opts out/);
+  assert.equal(gate({ cwd, home, tool: 'mcp__notion-other__x' }).denied, false);
 });
 
 test('with nothing configured at all, the gate fails open with a reason', () => {
@@ -412,12 +400,12 @@ test('setup-connectors refuses a malformed nearest workspace.json rather than ed
   assert.equal(existsSync(join(clone, 'context.json.bak-connections')), false);
 });
 
-test('setup-connectors --context still accepts an explicit context.json', () => {
+test('setup-connectors --context refuses a context.json, saying context repos are retired', () => {
   const base = scratch();
   const home = deep(base, 'home');
   const clone = legacy(home, {});
   const root = workspace(deep(base, 'ws'), { schema: 1, name: 'acme', connections: { github: 'x' } });
   const r = setup({ cwd: root, home, args: ['--check', '--context', join(clone, 'context.json')] });
-  assert.match(r.stdout, /context: .*context\.json/);
-  assert.match(r.stdout, /deliberately/);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /context repos are retired/);
 });

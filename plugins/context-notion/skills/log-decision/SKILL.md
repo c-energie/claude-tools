@@ -1,6 +1,6 @@
 ---
 name: log-decision
-description: Log a key decision to the project's Notion decision-log database (which database comes from the project's config, workspace.json or a legacy context.json). Use whenever a decision is reached that should be recorded — triggers like "log that to the decision log", "record this decision", "add a decision".
+description: Log a key decision to the project's Notion decision-log database (which database comes from the project's workspace.json). Use whenever a decision is reached that should be recorded — triggers like "log that to the decision log", "record this decision", "add a decision".
 ---
 
 # Log a decision

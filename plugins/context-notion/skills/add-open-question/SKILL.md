@@ -1,6 +1,6 @@
 ---
 name: add-open-question
-description: Add one or more open questions to the project's Notion open-questions database (which database comes from the project's config, workspace.json or a legacy context.json). Use when an unresolved question or uncertainty should be tracked — triggers like "add an open question", "log these open questions", "capture what's unresolved".
+description: Add one or more open questions to the project's Notion open-questions database (which database comes from the project's workspace.json). Use when an unresolved question or uncertainty should be tracked — triggers like "add an open question", "log these open questions", "capture what's unresolved".
 ---
 
 # Add an open question

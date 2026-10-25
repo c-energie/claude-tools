@@ -1,19 +1,17 @@
-// Which bash to spawn — the question every script that shells out to context-repo.sh has to
-// answer on Windows, and the one they each answered by spawning bare `bash`.
+// Which bash to spawn from a .mjs on Windows — never bare `bash`.
 //
 // On Windows `bash` on PATH is normally C:\Windows\System32\bash.exe: the WSL launcher. It is
 // a real executable, so spawn reports no error — but WSL has its own filesystem and its own
 // $HOME, so a Windows path arrives as an unfindable name and the script exits 127 with
 //
-//     /bin/bash: C:/Users/…/context-repo.sh: No such file or directory
+//     /bin/bash: C:/Users/…/some-script.sh: No such file or directory
 //
 // A caller that only inspects `error` reads that as a clean run; one that inspects `status`
-// blames the context repo for not resolving and refuses to write a setting that was correct.
-// Neither names the real cause, which is why the choice lives in one place instead of four.
+// blames whatever the script was asked about. Git Bash is the only bash that shares the
+// filesystem and $HOME these scripts assume.
 //
-// Git Bash is the only bash that shares the filesystem and $HOME these scripts assume — the
-// resolver clones into ~/.context and prints the path back for Node to read, which only works
-// if both processes mean the same ~.
+// Nothing in core imports this since the context-repo resolver it was written for was deleted
+// (#60); it stays as the one place the choice is made, for the next .mjs that spawns bash.
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';

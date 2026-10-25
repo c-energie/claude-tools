@@ -1,5 +1,6 @@
 // Tests for context-doctor.mjs and context-status.mjs in a workspace (ADR 0002, #52), and that a
-// legacy context repo is still checked as before. Node standard library only, no network.
+// retired context repo is refused rather than checked (#60). Node standard library only, no
+// network.
 //
 //   node --test plugins/context-kit-core/scripts/context-doctor.test.mjs
 //
@@ -7,7 +8,8 @@
 // the doctor reports) nor their native memory leaks into a result. The one network call the
 // doctor makes — `gh repo view`, for visibility — is answered by a fake `gh` put first on PATH,
 // so the public-repo warning is tested without a token or a repo. POSIX only: the fake is a
-// shell script, and os.homedir() follows HOME only there.
+// shell script, and os.homedir() follows HOME only there. The refusals run everywhere: they exit
+// before HOME or gh is consulted.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -177,7 +179,25 @@ test('retired keys are not checked in a workspace', { skip: !posix }, () => {
   const root = healthy();
   editWs(root, (c) => ({ ...c, include: ['not a repo'], teaching: { x: {} }, template: {} }));
   put(root, 'handoff/2026-01-01-old.md', '---\nkind: issue\n---\n');
+  // A context.json and a marker left in a workspace by its migration are not read either.
+  put(root, 'context.json', JSON.stringify({ contextRepo: 'acme/context', template: { version: '1' } }));
+  put(root, '.claude/context-project.json', JSON.stringify({ contextRepo: 'acme/other' }));
   assert.deepEqual(doctor(root).findings, []);
+  assert.equal(run(DOCTOR, [root, '--include']).status, 2, '--include is an unknown option now');
+});
+
+// #60: PROJECT_CONTEXT_REPO named a context repo; nothing reads it any more, so a settings file
+// still carrying it is dead configuration worth one line, never a fix the doctor guesses at.
+test('a workspace whose settings still set PROJECT_CONTEXT_REPO is told nothing reads it', { skip: !posix }, () => {
+  const root = healthy();
+  put(root, '.claude/settings.json', JSON.stringify({ env: { PROJECT_CONTEXT_REPO: 'acme/context' } }));
+  const out = doctor(root, {}, '--fix');
+  // note:plugins too: with a settings file present and no marketplace under the scratch HOME,
+  // the plugin ids are reported as not verified.
+  const settingsFindings = out.findings.filter((f) => f.check === 'settings');
+  assert.deepEqual(settingsFindings.map((f) => f.level), ['warn']);
+  assert.match(settingsFindings[0].message, /PROJECT_CONTEXT_REPO.*nothing reads it/);
+  assert.deepEqual(out.applied, []);
 });
 
 test('--fix never writes workspace.json', { skip: !posix }, () => {
@@ -189,38 +209,34 @@ test('--fix never writes workspace.json', { skip: !posix }, () => {
   assert.equal(readFileSync(join(root, '.claude', 'workspace.json'), 'utf8'), before);
 });
 
-test('a legacy context repo is still checked as before', { skip: !posix }, () => {
+// #60: the context-repo mode is gone. A directory holding only context.json is not a workspace,
+// and the doctor says it cannot run there — and why — rather than checking it the old way.
+test('a retired context repo is refused, exit 2, naming the retirement', () => {
   const root = scratch();
   put(root, 'context.json', JSON.stringify({ contextRepo: 'acme/context', template: { version: '1' } }));
   put(root, 'memory.md', '# Memory\n');
-  const out = doctor(root);
-  assert.equal(out.mode, 'context-repo');
-  assert.equal(out.workspace, null);
-  assert.ok(checks(out).includes('warn:marker'), checks(out));
+  const r = run(DOCTOR, [root, '--json']);
+  assert.equal(r.status, 2);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /context repos are retired \(ADR 0002, #60\)/);
 });
 
-// #54: the checks for the cross-project layer are gone, not merely skipped in a workspace. A
-// legacy repo still carrying that data is judged on everything else, and gets no finding for it.
-test('a legacy context repo still carrying retired keys gets no finding for them', { skip: !posix }, () => {
+test('a directory that is not a workspace is refused, exit 2, with or without an argument', () => {
   const root = scratch();
-  put(root, 'context.json', JSON.stringify({
-    contextRepo: 'acme/context', template: { version: '1' },
-    include: ['not a repo'], teaching: { x: {} }, assistants: { editor: {} }, supervisors: { editor: {} },
-  }));
-  put(root, 'memory.md', '# Memory\n');
-  put(root, 'handoff/2026-01-01-old.md', '---\nkind: issue\n---\n');
-  const out = doctor(root);
-  assert.equal(out.mode, 'context-repo');
-  assert.deepEqual(checks(out).filter((c) => /include|teaching|handoff/.test(c)), []);
-  assert.equal(out.includes, undefined, 'no includes report in --json');
-  assert.equal(run(DOCTOR, [root, '--include']).status, 2, '--include is an unknown option now');
+  for (const r of [run(DOCTOR, [root]), run(DOCTOR, [], { cwd: root })]) {
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /no \.claude[\\/]workspace\.json at or above/);
+    assert.doesNotMatch(r.stderr, /context repo/);
+  }
 });
 
-test('a context repo is a root of its own, even below a workspace', { skip: !posix }, () => {
+test('a context.json below a workspace is judged as part of that workspace', { skip: !posix }, () => {
   const root = healthy();
   const ctx = join(root, 'ctx');
   put(ctx, 'context.json', JSON.stringify({ contextRepo: 'acme/context' }));
-  assert.equal(doctor(ctx).mode, 'context-repo');
+  const out = doctor(ctx);
+  assert.equal(out.mode, 'workspace');
+  assert.equal(out.root, root);
 });
 
 // ---------------------------------------------------------------- context-status
@@ -253,31 +269,17 @@ test('status in a workspace: retired queues are not applicable, and the all-clea
   assert.equal(status(root, '--role', 'software-dev').status, 2, '--role is an unknown option');
 });
 
-test('status on a legacy context repo is unchanged', { skip: !posix }, () => {
+test('status on a retired context repo is refused, exit 2, naming the retirement', () => {
   const root = scratch();
   put(root, 'context.json', JSON.stringify({ contextRepo: 'acme/context' }));
   put(root, 'threads/2026-10-01-a-thread.md', THREAD);
-  put(root, 'pending/2026-10-20-entry.md', 'queued\n');
-  const out = JSON.parse(status(root).stdout);
-  assert.equal(out.kind, 'project context repo');
-  assert.equal(out.queues.reconcile.carrying, 1);
-  assert.equal(out.queues.pending.count, 1);
+  const r = status(root);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /context repos are retired \(ADR 0002, #60\)/);
 });
 
-// #54: with the cross-project queues gone, a legacy repo that still declares supervisors is an
-// ordinary project repo, counts only its own queues, and can be told every queue is clear.
-test('status on a legacy repo still declaring retired keys: only the surviving queues', { skip: !posix }, () => {
-  const root = scratch();
-  put(root, 'context.json', JSON.stringify({
-    contextRepo: 'acme/context', include: ['acme/other'], supervisors: { editor: {} }, assistants: { editor: {} },
-  }));
-  put(root, 'handoff/2026-01-01-old.md', '---\nproject: acme/other\n---\n');
-  const r = status(root);
-  assert.equal(r.status, 0, r.stderr);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.kind, 'project context repo');
-  assert.deepEqual(Object.keys(out.queues), ['threads', 'reconcile', 'pending', 'memory']);
-  assert.equal(out.declared, undefined);
-  assert.deepEqual(out.actions, []);
-  assert.match(run(STATUS, [root, '--no-memory', '--today', '2026-10-24']).stdout, /every queue is clear/);
+test('status outside any workspace is refused, exit 2', () => {
+  const r = status(scratch());
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no \.claude[\\/]workspace\.json at or above/);
 });

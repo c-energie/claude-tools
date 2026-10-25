@@ -20,9 +20,9 @@ Slack tools are missing, build the message, show it, and say plainly that it was
 **If Notion can't be reached** — the queries fail, or return nothing because the user is a
 workspace guest — **build the digest from the project's Notion mirror instead**
 (`actions.json`, `open-questions.json`, and whatever else the project mirrors) — `.context/notion/`
-in a workspace, `notion/` in a legacy context repo; take the folder from
+in the workspace; take the folder from
 `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" "$ROOT" mirror` (`$ROOT` as `slack-config` §1
-resolves it) rather than typing either. It is read-only
+resolves it) rather than typing it. It is read-only
 work, so it still produces a real digest — but **say in the message that it came from the mirror
 and give its `syncedOn` date**, because recipients will otherwise read it as this morning's state.
 Watch items are excluded from the mirror, so the 👀 bucket will be empty: say so rather than
@@ -67,7 +67,7 @@ relationships, adds an **Unassigned** section, and drops empty buckets and empty
 standard Markdown — what the Slack send tools expect, *not* Slack mrkdwn. Messages are separated by
 a `---MESSAGE---` line; post each separately.
 
-`--title` puts the project's name in the header (take it from the config's `name`, or a legacy `context.json`'s); omit it and the
+`--title` puts the project's name in the header (take it from the config's `name`); omit it and the
 header is just "who's got what". `--today YYYY-MM-DD` only to reproduce a past run.
 
 **Your judgement, not the script's:** whether a bucket needs a human sentence of context, whether

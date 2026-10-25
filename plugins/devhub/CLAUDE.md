@@ -8,9 +8,9 @@ and `devhub-catalogue`, which declares that repo in a followed `catalogue.toml` 
 clone it and render those features anywhere at all. A repo needs the second before the first does
 anything visible.
 
-It is deliberately **outside the context stack**. It reads no `context.json`, needs no context
-repo, and is useful in any repo at all — a docs repo with two static features has as much use for
-it as a context repo does. Filing it under `context-kit-core` because both are "tooling" would put
+It is deliberately **outside the context stack**. It reads no `workspace.json`, needs no
+workspace, and is useful in any repo at all — a docs repo with two static features has as much use
+for it as a workspace does. Filing it under `context-kit-core` because both are "tooling" would put
 a fact about dev-hub's manifest format in the layer whose whole rule is that it knows nothing but
 generic context machinery.
 
@@ -50,7 +50,7 @@ Do not confuse the two commands in either skill's prose. So:
   `catalogue-schema.md` are long and only one of them matters for any given job. Keep each
   SKILL.md the judgement, and its references the lookup.
 - **No scripts, and no copies.** This plugin calls no `${CLAUDE_PLUGIN_ROOT}/scripts/…`, so it
-  needs none of the shared copies (`context-repo.sh`, `dates.mjs`, `bash-bin.mjs`) that the context
+  needs none of the shared copies (`dates.mjs`, `workspace.mjs`) that the context
   plugins carry, and `check-plugin.mjs`'s drift rule has nothing to bind here. `devhub-catalogue`
   orchestrates `devhub` + `git` directly, the same style as `devhub-feature` — adding a script that
   duplicates something either CLI already does is the thing to avoid.

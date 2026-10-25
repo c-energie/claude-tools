@@ -44,7 +44,6 @@ Today's date: `node "${CLAUDE_PLUGIN_ROOT}/scripts/dates.mjs" today`.
 If `scripts/plugin-repo.sh` is missing from the installed plugin (packaging is only documented to
 ship `skills/`, `commands/`, `agents/` and `hooks/`), fall back to
 `git clone https://github.com/c-energie/claude-tools.git ~/c-energie/claude-tools` and work there.
-(Not under `~/.context` — that root is for context repos, the data; this is a tool.)
 
 ## 2. Decide which plugin the change belongs to
 
@@ -64,24 +63,24 @@ with it for the same trigger phrases. `--json` gives the same data machine-reada
 
 A hand-written roster in this file is the thing to avoid: it listed two plugins for the whole time
 `context-slack` had been shipping, and a resolver fix following it would have left that plugin's
-copy of `context-repo.sh` behind.
+copy of the resolver behind.
 
 **Then place the change by layer.** This is the judgement the marketplace layout adds, and getting
 it wrong is how the layering rots. The rule is *which facts a change is allowed to know*:
 
-- **`context-kit-core`** — generic context machinery with no backend: loading, refreshing and
-  writing *a* project's context repo, the resolvers, the session-start hook, connector setup.
+- **`context-kit-core`** — generic context machinery with no backend: finding, refreshing and
+  writing *a* project's workspace, the resolvers, the session-start hook, connector setup.
   Nothing here may name a project, a workspace, or a database.
 - **`context-notion`** — the Notion middle layer: skills driven entirely by each project's
-  `context.json` (`state.notion`). Database IDs, property schemas and rosters live in the
-  **project's context repo**, never in the plugin.
+  `workspace.json` (`state.notion`). Database IDs, property schemas and rosters live in the
+  **project's workspace**, never in the plugin.
 - **`context-slack`** — the Slack delivery layer: skills driven by `connections.slack`,
   `defaults.slackChannel` and the roster's `slackMemberId`. No channel, member ID or workspace
   name in the plugin. **Everything here is `disable-model-invocation: true`, without exception** —
   a Slack message is visible the instant it lands and cannot be recalled, so a new skill that
   posts inherits that blanket block rather than a per-skill judgement.
 - **Neither** — anything specific to one project or one workspace belongs in that project's own
-  context repo, not in a plugin. Say so rather than filing it under the closest plugin.
+  workspace, not in a plugin. Say so rather than filing it under the closest plugin.
 
 If the roster shows a plugin this list does not describe, the same test still decides it: name the
 facts the change needs, and put it in the layer allowed to know them.
@@ -109,7 +108,7 @@ not suggestions. Each plugin has its own `CLAUDE.md` stating its invariants; rea
 ### Where things belong
 
 - **Nothing project-specific in a plugin.** Database IDs, people and workspace names come from the
-  project's `context.json` at runtime; the plugin only knows the *keys*. A hard-coded ID is the
+  project's `workspace.json` at runtime; the plugin only knows the *keys*. A hard-coded ID is the
   bug this whole layering exists to prevent.
 - **Anything that must come out identically every time** (date maths, due-date buckets, mirror
   rendering, index rebuilds) belongs in a `scripts/*.mjs`, not in prose. Scripts are
@@ -120,14 +119,14 @@ not suggestions. Each plugin has its own `CLAUDE.md` stating its invariants; rea
   **its own** plugin: plugins cannot reach into each other's install directories.
 - **Some scripts are deliberate copies, and `check-plugin.mjs` enforces it.** A skill can only
   reference `${CLAUDE_PLUGIN_ROOT}/scripts/...` in its *own* plugin, so anything a skill calls at
-  runtime is duplicated: `context-repo.sh` and `dates.mjs` in all three, `lib.mjs`,
-  `pending-parse.mjs` and `layout.mjs` in context-notion and context-slack, `workspace.mjs` from
-  core into both of those, and `json-block.mjs` from core into context-notion. The full list, with
-  each origin, is `COPIES` in `check-plugin.mjs`. Fix the **origin** first, then copy it
+  runtime is duplicated: `dates.mjs`, `workspace.mjs` and `workspace-root.sh` from core into the
+  plugins that call them, `lib.mjs`, `pending-parse.mjs` and `layout.mjs` in context-notion and
+  context-slack, and `json-block.mjs` from core into context-notion. The full list, with each
+  origin, is `COPIES` in `check-plugin.mjs`. Fix the **origin** first, then copy it
   over the others, keeping only each copy's header banner. The linter compares below that banner
   and errors on any other difference, naming the direction to copy.
 
-  The origin is decided by **layer, not by who uses it most**: `context-repo.sh` and `dates.mjs`
+  The origin is decided by **layer, not by who uses it most**: `workspace.mjs` and `dates.mjs`
   originate in **context-kit-core** because both are generic — a script with no backend in it
   belongs to core even when Notion skills are its heaviest callers. `lib.mjs`,
   `pending-parse.mjs` and `layout.mjs` originate in **context-notion**, the only layer entitled to
@@ -152,10 +151,10 @@ not suggestions. Each plugin has its own `CLAUDE.md` stating its invariants; rea
 
 A hook runs on **every session** where the plugin is enabled. It must never prompt, never hang,
 and never block: `exit 0` on every path, `GIT_TERMINAL_PROMPT=0` on any git call, and degrade to
-a short "unavailable" message rather than an error. `load-context.sh` carries an inline duplicate
-of `scripts/context-repo.sh` as a fallback for the case where packaging drops `scripts/` — if you
-change the resolver, change both, and keep the opt-out sentinel list in step across all four
-places that know it.
+a short "unavailable" message rather than an error. `workspace-freshness.sh` asks
+`scripts/workspace-root.sh` whether the session is in a workspace, and says nothing when
+packaging drops `scripts/`; keep the `CONTEXT_KIT_AUTOLOAD` opt-out vocabulary in step with
+`OPTOUT` in `scripts/context-doctor.mjs`, which reports the switch.
 
 ## 4. Check before you bump
 

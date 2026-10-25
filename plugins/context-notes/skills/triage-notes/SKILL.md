@@ -10,7 +10,7 @@ Reads the notes captured in this project's Notion **Mind Palace**, works out whe
 belongs, and — once a person has approved the batch — writes it there.
 
 `disable-model-invocation: true`: it writes outside the session, into Notion, GitHub and the
-project's workspace (or, for a project not yet moved, its context repo). It runs when a person
+project's workspace. It runs when a person
 types it and at no other time.
 
 **At this stage the skill can load and report a configuration, and nothing else.** Reading notes,
@@ -20,14 +20,13 @@ status: `c-energie/claude-tools#10`.
 ## 1. Resolve the workspace
 
 ```bash
-ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs" --no-pull)"
+ROOT="$(node "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.mjs")"
 ```
 
 The nearest `.claude/workspace.json` at or above the session (ADR 0002) — so from a member repo
-it is the workspace root — and only when there is none, the legacy context repo through
-`context-repo.sh`. stderr names the route that answered. A **malformed** nearest
+it is the workspace root. stderr names the route that answered. A **malformed** nearest
 `workspace.json` is reported there and is never skipped to an outer workspace: if you see that
-line, say so, because the configuration below then comes from the fallback, not the workspace.
+line, say so, because nothing below can then be configured.
 Every later command takes `"$ROOT"`; omitting it makes the script resolve the same way itself.
 
 ## 2. Load the configuration
@@ -42,9 +41,9 @@ the fixes are different and one of them is "do nothing":
 | status | what is true | what to do |
 | --- | --- | --- |
 | `configured` | A `state.notes` block that validates. | Carry on. |
-| `unconfigured` | The workspace (or context repo) has no `state.notes`, or it does not validate, or the file does not parse. | Say so loudly, name the file the script names — `.claude/workspace.json` in a workspace, `context.json` in a context repo — and list every fault it reported. |
+| `unconfigured` | The workspace has no `state.notes`, or it does not validate, or the file does not parse. | Say so loudly, name the file the script names (`.claude/workspace.json`), and list every fault it reported. |
 | `opted-out` | `state.notes` is `none` (or `off`/`false`/`no`/`-`/`disabled`). | **Stop, quietly.** That is a decision. Do not offer to write a block. |
-| `unresolved` | No workspace and no context repo resolved at all. | Ask them to run from inside the project's workspace. Only a project not yet moved to a workspace is linked with `context-setup`. Do not edit any config file — nothing is reading it. |
+| `unresolved` | No workspace resolved at all (a retired context repo counts as none, and the script says so). | Ask them to run from inside the project's workspace; a folder becomes one through project-workspace's `setup-project-workspace`. Do not edit any config file — nothing is reading it. |
 
 **There is no default and you must not invent one.** Do not read another project's `state.notes`,
 do not infer a Mind Palace from a Notion search, and do not carry a configuration over from an
@@ -83,7 +82,7 @@ no topic map to maintain and no fuzzy matching, so nothing can drift from the re
 actually exist. Three consequences to report rather than paper over:
 
 - **`thread` is a normal outcome, not a failure.** A topic with no repository of that exact name
-  belongs in the workspace's threads (the context repo's, outside a workspace).
+  belongs in the workspace's threads.
 - **A near-miss is not a hit.** `claude` does not become `claude-tools`. The script names the
   near-miss when it differs only by case; the fix is renaming the Notion topic, never loosening
   the match here.
@@ -320,8 +319,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" threads "$ROOT" --batch ev
 ```
 
 The script assembles the material and checks the boundaries; **you call `save-thread`**. It
-decides the directory — `docs/threads/` in a workspace, `threads/` in a context repo — so nothing
-here names one. `taxonomy.yml` is read from `$ROOT` in both.
+decides the directory — `docs/threads/` — so nothing here names one. `taxonomy.yml` is read from
+`$ROOT`.
 
 **Several notes may be one thread.** The batch is flat across topics precisely so three bullets
 under three topics can be recognised as one piece of reasoning — set the same `thread` key on each
@@ -338,7 +337,7 @@ the results. Do not invent a tag inline to get a note routed.
 is that, with a rolling summary maintained for free.
 
 **A thread bound for another repository is parked, never written.** "Another" means not the
-root's own — `workspace.json`'s `repo` in a workspace, `context.json`'s `contextRepo` otherwise.
+root's own: `workspace.json`'s `repo`.
 A thread file is a commit into that repository, and it goes through that project's own session
 — which is where `taxonomy.yml` validation lives. It becomes a handoff item (§12); report it with
 the target named, so the user knows something is waiting.
@@ -359,15 +358,14 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" handoff "$ROOT"
 **Run this at the start, before selection**, so carried-over work and newly proposed work are
 approved together in one table.
 
-**Where the queue lives.** In a workspace, **`.context/handoff/`**, beside `.context/pending/`,
-with done items in `.context/handoff/done/`. In a legacy context repo, `handoff/` and
-`handoff/done/`, until that fallback is deleted. ADR 0002 retired `handoff/` as a top-level folder
+**Where the queue lives.** **`.context/handoff/`**, beside `.context/pending/`, with done items in
+`.context/handoff/done/`. ADR 0002 retired `handoff/` as a top-level folder
 and kept this outbox, because nothing is ever written into a shared org from the personal layer
 and shared-target output needs somewhere to wait. The script picks the path from the root it
-loaded and names it in every line it prints — use the path it prints, never a remembered one. In
-a workspace, a top-level `handoff/` is **not** read.
+loaded and names it in every line it prints — use the path it prints, never a remembered one. A
+top-level `handoff/` is **not** read.
 
-The queue means **output bound for a context repo somebody else owns**. That is the whole of it.
+The queue means **output bound for a repository somebody else owns**. That is the whole of it.
 You cannot hand off to yourself, so an item whose target this session can write is drained rather
 than parked — parking one would gate the user on their own approval.
 
