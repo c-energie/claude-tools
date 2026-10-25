@@ -288,7 +288,8 @@ node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting prom
   `init-context`'s second-brain bootstrap, and both session launchers. Nothing reads their keys
   any more, so a legacy context repo that still carries them loads exactly as one that never did,
   and no check or queue reports them — `load-context.test.mjs` and `context-doctor.test.mjs` hold
-  that line. Two deliberate leftovers: `thread-index.mjs` still *parses* the old
+  that line. triage-notes' own outbox is not core's and survives, at `.context/handoff/` in a
+  workspace (ADR 0002, amended for #83) — context-notes reads it, core still does not. Two deliberate leftovers: `thread-index.mjs` still *parses* the old
   `assistant:`/`supervisor:` index segment (it no longer writes it), so rebuilding an index written
   before the retirement keeps its hand-written gists; and the README's "Retired by ADR 0002" table
   names each feature once, with what replaces it (`/mattpocock-skills:teach` in `teaching/[slug]/`

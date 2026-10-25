@@ -361,7 +361,7 @@ that still carries their keys or folders loads exactly as before; the data is si
 
 | Removed | Instead |
 | --- | --- |
-| `include` (cross-project loads) and the `handoff/` outbox | one workspace is the home; the personal layer is imported by the user-level `~/.claude/CLAUDE.md` |
+| `include` (cross-project loads) and the top-level `handoff/` folder | one workspace is the home; the personal layer is imported by the user-level `~/.claude/CLAUDE.md`. triage-notes (context-notes) keeps its own shared-target outbox, at `.context/handoff/` in a workspace (ADR 0002, amended for #83) |
 | assistants, roles, supervisors and lessons (`assistant`, `assistant-lesson`, `assistant-contract`, `supervisor-sweep`, `supervisor-distil`, `assistants.mjs`) | nothing — they were never used |
 | `teach-workspace` and `teaching-workspace.mjs` | run **`/mattpocock-skills:teach`** in `teaching/[slug]/` inside a workspace — the directory project-workspace's `.gitignore` already keeps |
 | `init-context`'s second-brain bootstrap and `assets/second-brain/` | the personal layer is a workspace of its own, migrated by hand |
