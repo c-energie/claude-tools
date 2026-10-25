@@ -12,13 +12,25 @@ threads and handoff items (which is `context-kit-core`'s). Folding it into eithe
 plugin knowledge of the other's layer.
 
 **Which Mind Palace, and which organisations, come from the project's own
-`context.json` — `state.notes` — and there is no default.** See the invariants below; that is the
-one rule here that cannot be relaxed.
+`state.notes` — in the workspace's `.claude/workspace.json`, or a legacy context repo's
+`context.json` — and there is no default.** See the invariants below; that is the one rule here
+that cannot be relaxed.
+
+**Which root.** `[checkout]`, when given, is used exactly as given. Omitted, it is found by
+`workspace.mjs`'s `resolveWorkspace()`, as context-notion has done since #53: the nearest
+`.claude/workspace.json` at or above the working directory, then the legacy `context-repo.sh`
+route. At a root, a `workspace.json` wins over a `context.json` beside it, and a malformed one is
+reported as `unconfigured` rather than passed over — falling through would read a different
+block because of a typo. The root's own repository ("is this target me", for thread parking and
+handoff draining) is `workspace.json`'s `repo` or `context.json`'s `contextRepo`, read by
+`loadConfig` from the file it loaded. Until #82 this plugin knew only `context.json`, so after #58
+moved the last real block into a workspace.json, every run reported `unresolved`.
 
 ## Commands
 
 ```bash
 node scripts/triage-notes.mjs config "$ROOT"                       # load + validate, offline
+node scripts/triage-notes.mjs config                               # ...resolving the root itself
 node scripts/triage-notes.mjs config "$ROOT" --json
 node scripts/triage-notes.mjs resolve "$ROOT" --repos repos.json --topics "dev-hub,IP"
 node scripts/triage-notes.mjs select  --pages pages.json                # new notes per topic, offline
@@ -48,23 +60,26 @@ node ../context-kit-core/scripts/check-plugin.mjs .                # before any 
 
 `_`-prefixed keys anywhere in it are comments and are skipped, not rejected — the convention
 `_stakeholdersNote` and `_slackChannelsNote` already set in the same file. The first real block
-lives in `net-flex/context`, and it is worth reading before changing anything here.
+lived in `net-flex/context`; since #58 the live one is in `corson94/workspace-gh`'s
+`.claude/workspace.json`, and it is worth reading before changing anything here. In a workspace,
+`state.notes` is this plugin's own key — written by hand today, and by any future writer only as a
+block-scale edit that leaves every other key byte-identical (ADR 0002).
 
 ## Invariants (all load-bearing)
 
-- **There is no default configuration, and there never may be.** A context repo with no
-  `state.notes` is *unconfigured*. It must not fall back to another project's block: a fallback
+- **There is no default configuration, and there never may be.** A workspace or context repo
+  with no `state.notes` is *unconfigured*. It must not fall back to another project's block: a fallback
   is precisely how one org's notes end up proposed as issues in another org's repository. Same
   rule, same reason, as `state.diagrams.repo`.
 - **Four outcomes, and they stay four**: `configured`, `unconfigured`, `opted-out`, `unresolved`.
   A caller distinguishes them by `status` and never by parsing a message. Conflating opt-out with
   unconfigured gets an opt-out "helpfully" fixed by someone configuring it; conflating unresolved
-  with unconfigured sends someone to edit a `context.json` that nothing is reading. The opt-out
+  with unconfigured sends someone to edit a config file that nothing is reading. The opt-out
   vocabulary is the existing one — `none`/`off`/`false`/`no`/`-`/`disabled`.
 - **There is deliberately NO topic map.** A topic resolves to a repository when its name equals a
   repository name **character for character** in one of the declared organisations, and to a
-  thread in the resolved context repo otherwise. No aliases, no prefix or suffix matching, no
-  fuzzy matching. A map can name a repository that no longer exists; an exact match cannot. The
+  thread in the resolved workspace (or context repo) otherwise. No aliases, no prefix or suffix
+  matching, no fuzzy matching. A map can name a repository that no longer exists; an exact match cannot. The
   consequence is real and accepted: `claude` resolves to a *thread* because the repository is
   `claude-tools`, and the fix is renaming the Notion topic, not loosening the match.
 - **Three resolution outcomes, all valid**: `repo`, `thread`, and `ambiguous`. `ambiguous` — a
@@ -140,7 +155,7 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
 - **A tag not in `taxonomy.yml` shortlists; it is never invented inline.** An alias resolves to
   its canonical tag, because rejecting one would orphan the rename aliases exist to allow. Adding
   a tag is a pull request, and that friction is the point.
-- **A thread bound for another context repo is PARKED, never written.** A thread file is a commit
+- **A thread bound for another repository is PARKED, never written.** A thread file is a commit
   into that repository, and it goes through that project's own session — which is where
   `taxonomy.yml` validation lives. That boundary is what keeps the validation meaningful.
 - **`handoff/` means output bound for a context repo SOMEBODY ELSE OWNS**, and nothing else. You
@@ -169,7 +184,7 @@ lives in `net-flex/context`, and it is worth reading before changing anything he
   places: the Notion property description, the `state.notes` block, and the skill. **Do not
   normalise them to match the date-only properties beside them.**
 - **Naming a Mind Palace is not the same as being able to see it.** An MCP connection exists
-  because of the host registry and the repo's own MCP scope, not because a `context.json` names
+  because of the host registry and the repo's own MCP scope, not because a config file names
   an id. A palace the session's connector cannot reach must be reported as a **connector**
   problem and the run stopped — an empty read is indistinguishable from an empty palace, and
   presenting it as "nothing to do" is the one failure that silently loses work.
@@ -195,8 +210,8 @@ in, or a summary gets triaged back into an issue. Change one, change the other.
 
 ## Copies
 
-`scripts/context-repo.sh`, `scripts/dates.mjs` and `scripts/bash-bin.mjs` are **deliberate
-copies** of the originals in `context-kit-core`: a skill can only reference
+`scripts/context-repo.sh`, `scripts/dates.mjs`, `scripts/bash-bin.mjs` and `scripts/workspace.mjs`
+are **deliberate copies** of the originals in `context-kit-core`: a skill can only reference
 `${CLAUDE_PLUGIN_ROOT}/scripts/...` inside its own plugin. Fix the original first, then copy,
 restoring only this copy's header banner. `check-plugin.mjs` compares below the banner and errors
 on drift.
