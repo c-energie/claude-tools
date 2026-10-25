@@ -8,19 +8,21 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
-  loadConfig, validate, palaceIds, resolveTopic, resolveTopics, sensitiveHits,
+  loadConfig, resolveRoot, validate, palaceIds, resolveTopic, resolveTopics, sensitiveHits,
   OPTOUT, REPOS_STALE_HOURS,
   collectNotes, selectNotes, sweep, parseNotionDatetime,
   evaluateBatch, renderTable, renderShortlist, renderPlan, shortlistTriggers, DESTINATIONS,
   issueBody, planIssue, planIssues, applyReachability, destinationRepos, TITLE_MAX,
   planNotionRow, planNotionRows, provenance, NOTION_DESTINATIONS,
   parseTaxonomy, checkTags, planThread, planThreads, THREAD_STATUSES,
-  parseHandoffItem, classifyHandoff, readHandoffQueue, renderCarriedOver, HANDOFF_KINDS,
+  parseHandoffItem, classifyHandoff, readHandoffQueue, renderCarriedOver, HANDOFF_KINDS, handoffRel,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -61,7 +63,7 @@ const repoList = (gatheredAt) => ({ gatheredAt, repos: REPOS });
 
 let tmp;
 const repoWith = (state) => {
-  tmp ??= mkdtempSync(join(tmpdir(), 'triage-notes-'));
+  tmp ??= realpathSync(mkdtempSync(join(tmpdir(), 'triage-notes-')));
   const dir = mkdtempSync(join(tmp, 'repo-'));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'context.json'),
@@ -113,7 +115,130 @@ test('every opt-out spelling is recognised, and none of them is an error', () =>
 test('no context repo is unresolved, not unconfigured — the fixes are different', () => {
   const r = loadConfig(null);
   assert.equal(r.status, 'unresolved');
-  assert.match(r.fix, /context-setup|init-context/);
+  assert.match(r.fix, /context-setup/);
+  // init-context is retired (ADR 0002); the first place to look is now the workspace.
+  assert.doesNotMatch(r.fix, /init-context/);
+  assert.match(r.fix, /workspace\.json/);
+});
+
+// ---------------------------------------------------------------- workspace roots (#82)
+//
+// Since #58 the only real state.notes lives in a workspace.json, so these are the live path and
+// the context.json tests above are the legacy one. Both must keep working while the fallback
+// lasts (ADR 0002's transition).
+
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'triage-notes.mjs');
+
+// A workspace root with one nested member clone, the shape ~/gh-orgs has. `raw` writes the file
+// verbatim, for the malformed case.
+const workspaceWith = (state, { raw = null, parent = null } = {}) => {
+  tmp ??= realpathSync(mkdtempSync(join(tmpdir(), 'triage-notes-')));
+  const dir = mkdtempSync(join(parent ?? tmp, 'ws-'));
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+  mkdirSync(join(dir, 'member', '.git'), { recursive: true });
+  writeFileSync(join(dir, '.claude', 'workspace.json'), raw ?? JSON.stringify({
+    schema: 1, name: 'Test', repo: 'c-energie/workspace-test',
+    members: [{ dir: 'member', repo: 'c-energie/member', kind: 'code' }], state,
+  }, null, 2));
+  return dir;
+};
+
+// The CLI with no [checkout], from `cwd`. CLAUDE_PROJECT_DIR is dropped because the resolver
+// prefers it over the working directory, and an inherited one would test the wrong place.
+const runConfig = (cwd) => {
+  const env = { ...process.env };
+  delete env.CLAUDE_PROJECT_DIR;
+  return spawnSync(process.execPath, [SCRIPT, 'config', '--json'], { cwd, env, encoding: 'utf8' });
+};
+
+test('a workspace root reads state.notes from .claude/workspace.json', () => {
+  const ws = workspaceWith({ notes: NOTES });
+  const r = loadConfig(ws);
+  assert.equal(r.status, 'configured');
+  assert.equal(r.kind, 'workspace');
+  assert.equal(r.file, join(ws, '.claude', 'workspace.json'));
+  assert.equal(r.notes.organisations.length, 2);
+});
+
+test('in a workspace, "is this target me" is workspace.json\'s repo, not a contextRepo', () => {
+  const r = loadConfig(workspaceWith({ notes: NOTES }));
+  assert.equal(r.repo, 'c-energie/workspace-test');
+});
+
+test('a legacy context repo loads exactly as before, with contextRepo as its own repo', () => {
+  const dir = repoWith({ notes: NOTES });
+  const r = loadConfig(dir);
+  assert.equal(r.status, 'configured');
+  assert.equal(r.kind, 'context-repo');
+  assert.equal(r.file, join(dir, 'context.json'));
+  assert.equal(r.repo, 'acme-co/context');
+});
+
+test('the four outcomes are the same four in a workspace', () => {
+  assert.equal(loadConfig(workspaceWith({ notes: NOTES })).status, 'configured');
+  assert.equal(loadConfig(workspaceWith({ notion: {} })).status, 'unconfigured');
+  assert.equal(loadConfig(workspaceWith({ notes: 'off' })).status, 'opted-out');
+  const unconfigured = loadConfig(workspaceWith({}));
+  assert.match(unconfigured.says, /workspace\.json/);
+  assert.match(unconfigured.fix, /no default/i);
+});
+
+test('a workspace.json at the root wins over a context.json beside it', () => {
+  const ws = workspaceWith({ notes: 'none' });
+  writeFileSync(join(ws, 'context.json'), JSON.stringify({ contextRepo: 'acme-co/context', state: { notes: NOTES } }));
+  const r = loadConfig(ws);
+  assert.equal(r.status, 'opted-out');
+  assert.equal(r.kind, 'workspace');
+});
+
+test('a malformed workspace.json is reported, never passed over for the context.json beside it', () => {
+  const ws = workspaceWith(null, { raw: '{ "schema": 1, ' });
+  writeFileSync(join(ws, 'context.json'), JSON.stringify({ contextRepo: 'acme-co/context', state: { notes: NOTES } }));
+  const r = loadConfig(ws);
+  assert.equal(r.status, 'unconfigured');
+  assert.equal(r.file, join(ws, '.claude', 'workspace.json'));
+  assert.match(r.errors[0], /workspace\.json is not valid JSON/);
+  // A JSON array parses, but has no state for a block to live in.
+  assert.equal(loadConfig(workspaceWith(null, { raw: '[]' })).status, 'unconfigured');
+});
+
+test('a directory that is neither a workspace root nor a context repo is unresolved', () => {
+  tmp ??= realpathSync(mkdtempSync(join(tmpdir(), 'triage-notes-')));
+  const r = loadConfig(mkdtempSync(join(tmp, 'bare-')));
+  assert.equal(r.status, 'unresolved');
+  assert.match(r.says, /workspace\.json/);
+});
+
+test('resolveRoot uses a given [checkout] as given, and finds the workspace from a member when omitted', () => {
+  const ws = workspaceWith({ notes: NOTES });
+  assert.deepEqual(resolveRoot(join(ws, 'member')), { root: join(ws, 'member'), route: 'given', messages: [] });
+  const r = resolveRoot(null, { cwd: join(ws, 'member'), fallback: false });
+  assert.equal(r.route, 'workspace');
+  assert.equal(r.root, ws);
+});
+
+test('a malformed nearest workspace.json is not skipped to the outer one', () => {
+  const outer = workspaceWith({ notes: NOTES });
+  const inner = workspaceWith(null, { raw: 'not json', parent: outer });
+  // fallback: false so the test never runs context-repo.sh; what matters is that the outer
+  // workspace, whose block is valid, is NOT what answers.
+  const r = resolveRoot(null, { cwd: join(inner, 'member'), fallback: false });
+  assert.equal(r.root, null);
+  assert.ok(r.messages.some((m) => m.includes(join(inner, '.claude', 'workspace.json')) && /malformed/.test(m)),
+    r.messages.join('\n'));
+});
+
+test('config with no [checkout] reports configured from the workspace root and from a member', () => {
+  const ws = workspaceWith({ notes: NOTES });
+  for (const cwd of [ws, join(ws, 'member')]) {
+    const p = runConfig(cwd);
+    assert.equal(p.status, 0, p.stderr);
+    const out = JSON.parse(p.stdout);
+    assert.equal(out.status, 'configured');
+    assert.equal(out.file, join(ws, '.claude', 'workspace.json'));
+    // The route is named on stderr: "which home did this load?" must have an answer.
+    assert.match(p.stderr, /route=workspace/);
+  }
 });
 
 // ---------------------------------------------------------------- validation
@@ -1384,4 +1509,71 @@ test('re-running over a half-drained queue produces no duplicate work', () => {
   assert.deepEqual(second.drain.map((i) => i.title), ['two'],
     'only the item whose write did not succeed comes round again');
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------- where the queue lives (#83)
+//
+// ADR 0002 retired handoff/ as a top-level folder but kept this outbox at .context/handoff/ in a
+// workspace. A workspace read at handoff/ would say "no queue" over a real backlog, which is the
+// silent backlog the queue exists to surface — so the CLI is run against both kinds of root.
+
+const putItem = (root, rel, name, fm) => {
+  const dir = join(root, ...rel.split('/'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, name), item(fm));
+};
+
+const runHandoff = (root, ...extra) => {
+  const env = { ...process.env };
+  delete env.CLAUDE_PROJECT_DIR;
+  return spawnSync(process.execPath, [SCRIPT, 'handoff', root, ...extra], { env, encoding: 'utf8' });
+};
+
+test('handoffRel: .context/handoff in a workspace, handoff in a legacy context repo', () => {
+  assert.deepEqual(handoffRel('workspace'), { dir: '.context/handoff', done: '.context/handoff/done' });
+  assert.deepEqual(handoffRel('context-repo'), { dir: 'handoff', done: 'handoff/done' });
+});
+
+test('in a workspace the queue is read from .context/handoff/, and a top-level handoff/ is ignored', () => {
+  const ws = workspaceWith({ notes: NOTES });
+  putItem(ws, '.context/handoff', '2026-10-25-mine.md', { title: 'mine', project: 'c-energie/dev-hub', kind: 'action' });
+  putItem(ws, '.context/handoff', '2026-10-25-theirs.md', { title: 'theirs', project: 'acme-co/context', kind: 'issue', repo: 'acme-co/website' });
+  // A retired top-level folder is not read: one queue, at one path, per kind of root.
+  putItem(ws, 'handoff', '2026-10-01-stale.md', { title: 'stale', project: 'c-energie/dev-hub', kind: 'action' });
+
+  const r = runHandoff(ws, '--json');
+  assert.equal(r.status, 0, r.stderr);
+  const q = JSON.parse(r.stdout);
+  assert.equal(q.rel, '.context/handoff');
+  assert.equal(q.total, 2);
+  assert.deepEqual(q.drain.map((i) => i.title), ['mine']);
+  assert.deepEqual(q.list.map((i) => i.title), ['theirs'], 'a shared target is listed and left');
+});
+
+test('in a workspace every printed path names .context/handoff/', () => {
+  const ws = workspaceWith({ notes: NOTES });
+  putItem(ws, '.context/handoff', '2026-10-25-mine.md', { title: 'mine', project: 'c-energie/dev-hub', kind: 'action' });
+  const r = runHandoff(ws);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /drained from \.context\/handoff\/ at the start/);
+  assert.match(r.stdout, /\.context\/handoff\/ backlog: 1 item\(s\)/);
+  assert.match(r.stdout, /git mv` each into \.context\/handoff\/done\//);
+  assert.doesNotMatch(r.stdout, /(^|[\s(])handoff\//m, 'no message may send the model to the retired folder');
+});
+
+test('a workspace with no .context/handoff/ reports a zero backlog naming that path', () => {
+  const r = runHandoff(workspaceWith({ notes: NOTES }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /handoff backlog: 0 item\(s\)/);
+  assert.match(r.stdout, /no \.context\/handoff\/ directory/);
+});
+
+test('a legacy context repo still reads handoff/ until the fallback goes (#60)', () => {
+  const dir = repoWith({ notes: NOTES });
+  putItem(dir, 'handoff', '2026-10-25-mine.md', { title: 'mine', project: 'c-energie/dev-hub', kind: 'action' });
+  const r = runHandoff(dir, '--json');
+  assert.equal(r.status, 0, r.stderr);
+  const q = JSON.parse(r.stdout);
+  assert.equal(q.rel, 'handoff');
+  assert.deepEqual(q.drain.map((i) => i.title), ['mine']);
 });

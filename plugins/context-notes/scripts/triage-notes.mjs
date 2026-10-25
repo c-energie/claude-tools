@@ -7,26 +7,35 @@
 //   node triage-notes.mjs resolve "$ROOT" --repos repos.json   # ...and route topics against it
 //   node triage-notes.mjs resolve "$ROOT" --repos repos.json --topics "dev-hub,IP,claude"
 //
-// Reads `state.notes` from a context repo's context.json. Contacts nothing, reads no note, and
-// writes nothing: every destination belongs to a later issue. Exit 0 = it ran, 1 = it refused
-// (unconfigured / opted out / unresolved), 2 = it could not run at all.
+// Reads `state.notes` from the workspace's `.claude/workspace.json` (ADR 0002), or from a
+// legacy context repo's context.json. Contacts nothing, reads no note, and writes nothing:
+// every destination belongs to a later issue. Exit 0 = it ran, 1 = it refused (unconfigured /
+// opted out / unresolved), 2 = it could not run at all.
 //
-// THERE IS NO DEFAULT CONFIGURATION, and that is the load-bearing decision. A context repo
-// without `state.notes` is UNCONFIGURED, and must never fall back to another project's block —
+// WHICH ROOT. `[checkout]` is used exactly as given when it is passed. Omitted, it is found the
+// way every other plugin finds it since #53 — workspace.mjs's resolveWorkspace(): the nearest
+// `.claude/workspace.json` at or above the working directory first, and only then the legacy
+// context-repo.sh route. Before #82 this script knew only the second, so inside a workspace it
+// reported `unresolved` — and once #58 moved the last real `state.notes` into a workspace.json,
+// note triage was broken everywhere. A malformed nearest workspace.json is reported on stderr
+// and never skipped past to an outer one: that is the resolver's rule, inherited, not restated.
+//
+// THERE IS NO DEFAULT CONFIGURATION, and that is the load-bearing decision. A workspace or context
+// repo without `state.notes` is UNCONFIGURED, and must never fall back to another project's block —
 // a fallback is exactly how one org's notes end up proposed as issues in another org's
 // repository. For the same reason the four outcomes below stay four, never three:
 //
 //   configured    — a `state.notes` block that validates
-//   unconfigured  — a context repo with no block. Says so loudly and names the file.
+//   unconfigured  — a workspace or context repo with no block. Says so loudly and names the file.
 //   opted-out     — `notes` set to the opt-out sentinel. Exits silently; a repo that will never
 //                   triage notes must not nag, and "helpfully" configuring an opt-out undoes a
 //                   decision somebody made.
-//   unresolved    — no context repo at all. Go and link the repo; editing a context.json that
-//                   nothing is reading is wasted work.
+//   unresolved    — no workspace and no context repo at all. Go and find the right one; editing
+//                   a config file that nothing is reading is wasted work.
 //
 // THERE IS DELIBERATELY NO TOPIC MAP. A topic resolves to a repository when its name equals a
 // repository name CHARACTER FOR CHARACTER in one of the declared organisations, and to a thread
-// in the resolved context repo otherwise. A map can name a repository that no longer exists; an
+// in the resolved workspace (or context repo) otherwise. A map can name a repository that no longer exists; an
 // exact match cannot. No aliases, no prefix or suffix matching, no fuzzy matching: `claude` does
 // not become `claude-tools`, and a near-miss is never a hit.
 //
@@ -36,7 +45,8 @@
 // list was stale" stay distinguishable.
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { resolveWorkspace, WORKSPACE_FILE } from './workspace.mjs';
 
 // In step with hooks/load-context.sh, context-repo.sh and context-kit-core's link-context.mjs.
 export const OPTOUT = ['none', 'off', 'false', 'no', '-', 'disabled'];
@@ -60,63 +70,97 @@ const readJson = (file) => {
 };
 
 /**
- * Load and validate `state.notes` from a context repo.
+ * Which root `[checkout]` means. Passed: used exactly as given — the skill already resolved it,
+ * and re-walking from it would let an explicit path be silently replaced by some outer one.
+ * Omitted: resolveWorkspace(), so this script and every other plugin agree on which home a
+ * session is in. `--no-pull` because a config read must never wait on the network.
+ *
+ * @returns {{root:string|null, route:'given'|'workspace'|'context-repo'|null, messages:string[]}}
+ * `messages` are the resolver's stderr lines; the CLI relays them, because "which home did this
+ * load?" is the first question anyone debugging a wrong configuration asks.
+ */
+export function resolveRoot(given, opts = {}) {
+  if (given) return { root: resolve(given), route: 'given', messages: [] };
+  const r = resolveWorkspace({ args: ['--no-pull'], ...opts });
+  return { root: r.root, route: r.route, messages: r.messages };
+}
+
+/**
+ * Load and validate `state.notes` from a root: `.claude/workspace.json` when the root holds one,
+ * else `context.json`.
  *
  * @returns {{status:'configured'|'unconfigured'|'opted-out'|'unresolved', notes?:object,
- *            errors:string[], file:string|null, says:string, fix:string}}
+ *            errors:string[], file:string|null, kind?:'workspace'|'context-repo',
+ *            repo?:string|null, says:string, fix:string}}
  *
  * The four statuses are the result, not the wording: a caller distinguishes them by `status`
- * and never by parsing a message.
+ * and never by parsing a message. They are the same four in both kinds of root.
+ *
+ * A workspace.json AT the root wins over a context.json beside it — the same precedence as
+ * rootKind() in workspace.mjs — and a malformed one is reported as such, never passed over for
+ * the context.json: falling through would read a different project's block because of a typo.
+ *
+ * `repo` is the root's own repository — workspace.json's `repo`, context.json's `contextRepo` —
+ * which is what "is this target me" compares against (thread routing, handoff draining). Read
+ * here once, from the file actually loaded, so no command can take it from the other file.
  */
 export function loadConfig(root) {
   if (!root) {
     return {
       status: 'unresolved', errors: [], file: null,
-      says: 'No context repo resolved for this session, so there is no configuration to read.',
-      fix: 'Link this project to its context repo with context-setup, or create one with init-context. Do not edit a context.json until you know which one is being read.',
+      says: 'No workspace (no .claude/workspace.json at or above here) and no context repo resolved for this session, so there is no configuration to read.',
+      fix: 'Run from inside the project\'s workspace — the directory whose .claude/workspace.json carries state.notes, or any member below it. Only a project not yet moved to a workspace is linked to a context repo with context-setup. Do not edit any config file until you know which one is being read.',
     };
   }
-  const file = join(root, 'context.json');
+  const wsFile = join(root, WORKSPACE_FILE);
+  const kind = existsSync(wsFile) ? 'workspace' : 'context-repo';
+  const file = kind === 'workspace' ? wsFile : join(root, 'context.json');
+  const name = kind === 'workspace' ? 'workspace.json' : 'context.json';
   if (!existsSync(file)) {
     return {
-      status: 'unresolved', errors: [], file,
-      says: `A checkout resolved at ${root}, but it has no context.json — it is not a context repo.`,
-      fix: 'Run context-doctor against it.',
+      status: 'unresolved', errors: [], file: null,
+      says: `A checkout resolved at ${root}, but it has neither ${WORKSPACE_FILE} nor context.json — it is not a workspace root or a context repo.`,
+      fix: 'Pass the workspace root (or omit [checkout] and let the nearest .claude/workspace.json be found), or run context-doctor against it.',
     };
   }
 
   let ctx;
-  try { ctx = readJson(file); }
-  catch (e) {
-    return { status: 'unconfigured', errors: [`context.json is not valid JSON (${e.message})`], file,
+  try {
+    ctx = readJson(file);
+    // An array or a bare string parses, but has no state for a block to live in.
+    if (ctx === null || typeof ctx !== 'object' || Array.isArray(ctx)) throw new Error('top level is not a JSON object');
+  } catch (e) {
+    return { status: 'unconfigured', errors: [`${name} is not valid JSON (${e.message})`], file, kind,
       says: `${file} does not parse, so nothing could be read from it.`,
       fix: 'Fix the JSON, then re-run.' };
   }
+  const repo = (kind === 'workspace' ? ctx.repo : ctx.contextRepo) ?? null;
+  const where = kind === 'workspace' ? 'workspace' : 'repo';
 
   const state = ctx.state;
   const raw = state && typeof state === 'object' && !Array.isArray(state) ? state.notes : undefined;
 
   // The opt-out sentinel, spelled the same way it is everywhere else. Silent by design.
   if (typeof raw === 'string' && OPTOUT.includes(raw.trim().toLowerCase())) {
-    return { status: 'opted-out', errors: [], file,
-      says: `This repo has opted out of note triage (state.notes is "${raw}").`,
+    return { status: 'opted-out', errors: [], file, kind, repo,
+      says: `This ${where} has opted out of note triage (state.notes is "${raw}").`,
       fix: 'Nothing to do. That is a decision, not a gap — do not "fix" it by writing a block.' };
   }
 
   if (raw === undefined || raw === null) {
-    return { status: 'unconfigured', errors: [], file,
-      says: `${file} has no state.notes block, so this repo is not configured for note triage.`,
+    return { status: 'unconfigured', errors: [], file, kind, repo,
+      says: `${file} has no state.notes block, so this ${where} is not configured for note triage.`,
       fix: `Add a "notes" block under "state" in ${file}: a mindPalace (dataSource + database), an ordered organisations list of {owner, visibility}, and sensitiveTerms. There is no default and none will be inferred — falling back to another project's block is how one org's notes end up as issues in another org's repository.` };
   }
 
   const errors = validate(raw);
   if (errors.length) {
-    return { status: 'unconfigured', errors, file,
+    return { status: 'unconfigured', errors, file, kind, repo,
       says: `${file} has a state.notes block, but it does not validate.`,
       fix: 'Fix each fault named above. Each names the key it is about, so a bad organisation entry is caught here rather than surfacing three steps later as a mysterious thread routing.' };
   }
 
-  return { status: 'configured', notes: raw, errors: [], file,
+  return { status: 'configured', notes: raw, errors: [], file, kind, repo,
     says: `Configured from ${file}.`, fix: '' };
 }
 
@@ -677,9 +721,9 @@ export function planIssue(row, { projects = {}, unreachable = [], bodyFile = nul
   if (!row.target) return { ok: false, reason: 'no repository could be named — no issue is opened on a guess', shortlist: true };
 
   // Shared destinations are NEVER written directly from a personal session. They shortlist, or
-  // park in handoff/ with kind: issue once that contract lands.
+  // park in the handoff outbox (.context/handoff/ in a workspace) with kind: issue.
   if (row.visibility === 'shared') {
-    return { ok: false, reason: `${row.target} is in an organisation flagged shared — another person sees it first, so this shortlists or goes to handoff/ rather than being written`, shortlist: true };
+    return { ok: false, reason: `${row.target} is in an organisation flagged shared — another person sees it first, so this shortlists or goes to the handoff outbox (.context/handoff/ in a workspace) rather than being written`, shortlist: true };
   }
 
   if (unreachable.includes(row.target)) {
@@ -934,14 +978,14 @@ export function planThread(thread, { taxonomy, resolvedRepo, singletonExempt = f
   const rows = thread.rows ?? [];
   if (!rows.length) return { ok: false, reason: 'no contributing notes' };
 
-  // A thread file is a COMMIT into a context repo, and the rule that keeps taxonomy validation
+  // A thread file is a COMMIT into a workspace or context repo, and the rule that keeps taxonomy validation
   // meaningful is that such a commit goes through the owning project's own session. So a thread
   // bound elsewhere is parked, never written — this session does not commit to that repository.
   const target = thread.targetRepo ?? resolvedRepo ?? null;
   if (target && resolvedRepo && target !== resolvedRepo) {
     return {
       park: true, target, title: thread.title,
-      reason: `this thread is bound for ${target}, not the resolved repo ${resolvedRepo}. A thread file is a commit into that repository, and it goes through that project's own session — which is where taxonomy.yml validation lives. Parked in handoff/ instead.`,
+      reason: `this thread is bound for ${target}, not the resolved repo ${resolvedRepo}. A thread file is a commit into that repository, and it goes through that project's own session — which is where taxonomy.yml validation lives. Parked in the handoff outbox (.context/handoff/ in a workspace) instead.`,
       rowIds: rows.map((r) => r.id),
     };
   }
@@ -952,7 +996,9 @@ export function planThread(thread, { taxonomy, resolvedRepo, singletonExempt = f
   }
 
   // Singletons are exempt from front matter entirely, as taxonomy.yml already defines. Everything
-  // in threads/ is NOT exempt, so this is the narrow case rather than an escape hatch.
+  // in the thread directory — docs/threads/ in a workspace, threads/ in a context repo, and
+  // save-thread's to choose, never this script's — is NOT exempt, so this is the narrow case
+  // rather than an escape hatch.
   const tagCheck = singletonExempt ? { ok: [], missing: [] } : checkTags(thread.topics, taxonomy);
   if (tagCheck.missing.length) {
     return {
@@ -1017,7 +1063,7 @@ export function planThreads(batch, { taxonomy, resolvedRepo } = {}) {
 
 // ---------------------------------------------------------------- the handoff queue
 //
-// `handoff/` means OUTPUT BOUND FOR A CONTEXT REPO SOMEBODY ELSE OWNS. That is the whole of it,
+// The handoff queue means OUTPUT BOUND FOR A CONTEXT REPO SOMEBODY ELSE OWNS. That is the whole of it,
 // in one sentence, and it is narrower than what the folder started as: you cannot hand off to
 // yourself, so once a session can write its own personal targets directly, parking one would gate
 // a person on their own approval.
@@ -1028,6 +1074,22 @@ export function planThreads(batch, { taxonomy, resolvedRepo } = {}) {
 // targets drain automatically, shared ones are listed and left, and EVERYTHING drained appears in
 // the approval table under a carried-over section — which is rendered even when it is empty,
 // because "the queue is empty" should be something seen rather than assumed.
+
+/**
+ * Where the queue lives, by kind of root, as a `/`-separated path relative to it — the same form
+ * every message prints, so what the script says and where the model moves things agree.
+ *
+ * A WORKSPACE keeps it at `.context/handoff/`, beside `.context/pending/`: ADR 0002 retired
+ * `handoff/` as a top-level folder (amended for #83) but kept this outbox, because the rule it
+ * protects — nothing is ever written into a shared org from the personal layer — still needs
+ * somewhere to park shared-target output. A LEGACY CONTEXT REPO keeps `handoff/` until #60
+ * deletes the fallback. Reading `handoff/` in a workspace instead would report "no queue" over a
+ * real backlog, which is exactly the silent backlog this queue exists to surface.
+ */
+export function handoffRel(kind) {
+  const dir = kind === 'workspace' ? '.context/handoff' : 'handoff';
+  return { dir, done: `${dir}/done` };
+}
 
 // Additive. `issue` is new — triage's majority destination previously had no way to be queued at
 // all. The four earlier kinds are unchanged, so items already sitting in a queue keep parsing.
@@ -1117,16 +1179,21 @@ export function classifyHandoff(item, { organisations = [], selfRepo = null, unr
   return { ...item, action: 'drain', visibility: org.visibility, reason: `${item.project} is personal, so this drains automatically rather than gating you on your own approval` };
 }
 
-/** Read and classify a whole queue directory. */
+/**
+ * Read and classify a whole queue directory. `opts.rel` is the queue's path as printed — from
+ * handoffRel() — and travels with the result, so the rendering names the folder that was actually
+ * read rather than one assumed for it.
+ */
 export function readHandoffQueue(dir, opts = {}) {
+  const rel = opts.rel ?? handoffRel('context-repo').dir;
   let files = [];
   try {
     files = readdirSync(dir).filter((f) => f.endsWith('.md') && !['README.md', 'INDEX.md'].includes(f)).sort();
-  } catch { return { applicable: false, total: 0, drain: [], list: [] }; }
+  } catch { return { applicable: false, rel, total: 0, drain: [], list: [] }; }
 
   const items = files.map((f) => classifyHandoff(parseHandoffItem(readFileSync(join(dir, f), 'utf8'), f), opts));
   return {
-    applicable: true,
+    applicable: true, rel,
     total: items.length,
     drain: items.filter((i) => i.action === 'drain'),
     list: items.filter((i) => i.action === 'list'),
@@ -1141,12 +1208,13 @@ export function readHandoffQueue(dir, opts = {}) {
  */
 export function renderCarriedOver(queue, { drained = null } = {}) {
   const lines = [];
+  const rel = queue.rel ?? handoffRel('context-repo').dir;
   if (!queue.applicable) {
-    lines.push('  carried over (0) — this repo has no handoff/ queue.');
+    lines.push(`  carried over (0) — this repo has no ${rel}/ queue.`);
     return lines.join('\n');
   }
   const done = drained ?? queue.drain;
-  lines.push(`  carried over (${done.length}) — drained from handoff/ at the start of this run:`);
+  lines.push(`  carried over (${done.length}) — drained from ${rel}/ at the start of this run:`);
   if (!done.length) lines.push('    (nothing) — the queue held no item bound for a repo this session owns.');
   for (const i of done) {
     lines.push(`    ${i.kind.padEnd(13)} ${i.title}`);
@@ -1158,7 +1226,7 @@ export function renderCarriedOver(queue, { drained = null } = {}) {
     for (const i of queue.list) lines.push(`    ${i.title}\n      ${i.reason}`);
   }
   lines.push('');
-  lines.push(`  handoff/ backlog: ${queue.total} item(s). An item moves to handoff/done/ ONLY after its`);
+  lines.push(`  ${rel}/ backlog: ${queue.total} item(s). An item moves to ${rel}/done/ ONLY after its`);
   lines.push('  write succeeds — a failure leaves it exactly where it was, is named in the summary,');
   lines.push('  and the run continues. A half-drained queue is recovered by re-running.');
   return lines.join('\n');
@@ -1189,7 +1257,7 @@ function main(argv) {
     if (a.startsWith('--')) { if (!a.includes('=') && VALUED.includes(a.slice(2))) i++; continue; }
     positional.push(a);
   }
-  const [cmd, root] = positional;
+  const [cmd, given] = positional;
   const asJson = flags.has('json');
 
   if (!cmd) {
@@ -1204,6 +1272,16 @@ function main(argv) {
     process.exit(2);
   }
 
+  // `select` reads only the pages it is handed, so it resolves nothing: with no [checkout] the
+  // resolver's fallback may run context-repo.sh, and a step that needs no config must not pay
+  // for — or be refused by — finding one.
+  let root = null;
+  if (cmd !== 'select') {
+    const r = resolveRoot(given);
+    // context-repo.sh's own lines already name their source; the rest are the resolver's.
+    for (const m of r.messages) console.error(m.startsWith('context-repo.sh: ') ? m : `workspace.mjs: ${m}`);
+    root = r.root;
+  }
   const cfg = loadConfig(root);
 
   if (cmd === 'config') {
@@ -1221,7 +1299,7 @@ function main(argv) {
         for (const o of cfg.notes.organisations) console.log(`    ${o.owner.padEnd(14)} ${o.visibility}`);
         console.log(`  Sensitive terms: ${cfg.notes.sensitiveTerms.length}`);
         // A configured block is not a working connector. An MCP connection exists because of the
-        // host registry and this repo's own MCP scope, not because a context.json names an id —
+        // host registry and this repo's own MCP scope, not because a config file names an id —
         // and an empty read from a palace the connector cannot see is indistinguishable from an
         // empty palace, which is the one failure that silently reports "nothing to do".
         console.log(`\n  Naming a Mind Palace is not the same as being able to see it. If the`);
@@ -1250,7 +1328,7 @@ function main(argv) {
     if (!topicsArg) die('resolve needs --topics "a,b,c" — the Mind Palace topic names. Reading them from Notion belongs to a later issue.');
     const topics = topicsArg.split(',').map((t) => t.trim()).filter(Boolean);
 
-    const ctxRepo = readJson(cfg.file).contextRepo ?? null;
+    const ctxRepo = cfg.repo;
     const now = flagValue(argv, 'now') ?? new Date().toISOString();
     const out = resolveTopics(topics, repoList, cfg.notes, { contextRepo: ctxRepo, now });
 
@@ -1263,7 +1341,7 @@ function main(argv) {
     for (const t of out.topics) {
       const where = t.outcome === 'repo' ? `${t.repo}  (${t.visibility})`
         : t.outcome === 'ambiguous' ? `AMBIGUOUS — ${t.candidates.map((c) => `${c.repo} (${c.visibility})`).join(' and ')}`
-        : `thread in ${t.thread ?? 'the resolved context repo'}`;
+        : `thread in ${t.thread ?? (cfg.repo ?? 'the resolved workspace')}`;
       console.log(`  ${t.topic.padEnd(w)}  ${t.outcome.padEnd(9)}  ${where}`);
       if (t.outcome === 'ambiguous') console.log(`  ${' '.repeat(w)}  resolves to NEITHER: the organisations differ in visibility, so picking one would cross that boundary on a guess. Shortlist it.`);
       if (t.caseOnly?.length) console.log(`  ${' '.repeat(w)}  ! differs only by case from ${t.caseOnly.join(', ')} — matching is exact, so this is NOT a match. Rename the topic if it was meant to be one.`);
@@ -1334,7 +1412,7 @@ function main(argv) {
     if (reposFile) {
       if (!existsSync(reposFile)) die(`no such repository list: ${reposFile}`);
       const repoList = readJson(reposFile);
-      const ctxRepo = readJson(cfg.file).contextRepo ?? null;
+      const ctxRepo = cfg.repo;
       const topics = [...new Set(rows.map((r) => r.topic))];
       resolutions = resolveTopics(topics, repoList, cfg.notes,
         { contextRepo: ctxRepo, now: flagValue(argv, 'now') ?? new Date().toISOString() }).topics;
@@ -1457,7 +1535,7 @@ function main(argv) {
     console.log(`triage-notes — ${out.writes.length} Notion row(s), ${out.queued.length} queued, ${out.refused.length} refused`);
     if (!connectorAvailable) {
       console.log(`\n  THE NOTION CONNECTOR IS UNAVAILABLE. Nothing is dropped: each row below is queued`);
-      console.log(`  with context-notion:add-pending into the context repo's pending/ folder.`);
+      console.log(`  with context-notion:add-pending into the project's pending queue.`);
     }
     for (const p of [...out.writes, ...out.queued]) {
       console.log(`\n    row ${p.id} (${p.topic}) -> ${p.skill}${p.queuedAs ? `  [queued as ${p.queuedAs}]` : ''}`);
@@ -1496,11 +1574,13 @@ function main(argv) {
     if (!batch.table) die(`${batchFile} does not look like an evaluated batch (no "table")`);
 
     // The taxonomy of the RESOLVED repo. A tag is checked against the vocabulary of the repo the
-    // thread would land in, never against some other project's.
+    // thread would land in, never against some other project's. It sits at the root in a
+    // workspace and a context repo alike — house rules stay where they were, as context-notion's
+    // layout.mjs records — so only the thread directory moved, and that is save-thread's.
     const taxFile = join(root, 'taxonomy.yml');
     if (!existsSync(taxFile)) die(`no taxonomy.yml in ${root} — a thread's topics: must come from a controlled vocabulary, and there is none here to check against`);
     const taxonomy = parseTaxonomy(readFileSync(taxFile, 'utf8'));
-    const resolvedRepo = readJson(cfg.file).contextRepo ?? null;
+    const resolvedRepo = cfg.repo;
 
     const out = planThreads(batch, { taxonomy, resolvedRepo });
     if (asJson) { console.log(JSON.stringify({ ...out, taxonomyTags: taxonomy.topics.size }, null, 2)); return; }
@@ -1535,9 +1615,15 @@ function main(argv) {
     if (cfg.status !== 'configured') {
       console.error(`triage-notes — ${cfg.status}`); console.error(`  ${cfg.says}`); process.exit(1);
     }
-    const selfRepo = readJson(cfg.file).contextRepo ?? null;
+    // workspace.json's `repo` in a workspace, context.json's `contextRepo` otherwise — loadConfig
+    // read it from the file it loaded, so "is this target me" asks about the right repository.
+    const selfRepo = cfg.repo;
     const unreachableArg = flagValue(argv, 'unreachable');
-    const queue = readHandoffQueue(join(root, 'handoff'), {
+    // .context/handoff/ in a workspace, handoff/ in a legacy context repo — by the kind of file
+    // loadConfig actually read, the same way it took selfRepo, so the two cannot disagree.
+    const rel = handoffRel(cfg.kind);
+    const queue = readHandoffQueue(join(root, ...rel.dir.split('/')), {
+      rel: rel.dir,
       organisations: cfg.notes.organisations,
       selfRepo,
       unreachable: unreachableArg ? unreachableArg.split(',').map((s) => s.trim()).filter(Boolean) : [],
@@ -1548,12 +1634,12 @@ function main(argv) {
     // Reported at the START of every run, INCLUDING ZERO, so an empty queue is a thing that was
     // seen rather than assumed.
     console.log(`triage-notes — handoff backlog: ${queue.total} item(s)`);
-    if (!queue.applicable) { console.log('  (this repo has no handoff/ directory)'); return; }
+    if (!queue.applicable) { console.log(`  (this ${cfg.kind === 'workspace' ? 'workspace' : 'repo'} has no ${rel.dir}/ directory)`); return; }
     console.log('');
     console.log(renderCarriedOver(queue));
     if (queue.drain.length) {
       console.log('\n  Drain these BEFORE selection, so carried-over work and newly proposed work are');
-      console.log('  approved together in one table. Then `git mv` each into handoff/done/ — only');
+      console.log(`  approved together in one table. Then \`git mv\` each into ${rel.done}/ — only`);
       console.log('  after its write succeeded.');
     }
     return;

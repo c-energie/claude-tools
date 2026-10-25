@@ -109,10 +109,12 @@ debugging the plugin itself without editing a plugin file.
   restrictive than the machine, never less: a project's `none` still wins over a global on, and
   nothing overrides a global off. To get context in one project on an off machine, flip the flag or
   run `refresh-context`.
-- **`refresh-context` still loads** (`load-context.sh --refresh`) — the flag governs the automatic
-  path, and going quiet on an explicit request would be the kind of silent lie this hook avoids.
-  Deliberately unlike the project-level `none`, which answers `--refresh` with "nothing to
-  refresh": there is no repo there, whereas here there is one and it is merely not automatic.
+- **`refresh-context` still loads** — it pulls and re-reads the memory and thread index itself,
+  never through this hook, so the flag cannot reach it; and `load-context.sh --refresh` is exempt
+  too. The flag governs the automatic path, and going quiet on an explicit request would be the
+  kind of silent lie this hook avoids. Deliberately unlike the project-level `none`, which answers
+  `--refresh` with "nothing to refresh": there is no repo there, whereas here there is one and it
+  is merely not automatic.
 - **The `PreToolUse` connection gate is unaffected** — it resolves `connections` itself and must not
   be switchable off by a convenience setting.
 - **Never do this with a user-level `PROJECT_CONTEXT_REPO: "none"` instead.** Both resolvers read
@@ -182,9 +184,9 @@ layouts vary (marker candidates cover all known ones, with a bounded find as bac
 | `context-setup` | First-run wiring and diagnosis: how this project names its repo, is it reachable, load it now |
 | `context-doctor` | Health-check an already-linked repo for the drift that never announces itself; fixes derivable config keys only |
 | `context-status` | What is outstanding: curation lag, thread outcomes never logged, the pending queue, native memory — and the skill that clears each |
-| `refresh-context` | Re-pull the project's context repo mid-session and report what changed |
+| `refresh-context` | Pull the workspace (else the context repo) mid-session, re-read its memory and thread index, and report what changed — never runs the loader |
 | `save-thread` | 🔒 Write up the current work as a thread — a workspace's `docs/threads/`, else `threads/` — and push (never self-triggers) |
-| `curate-context` | 🔒 Keep the repo lean: promote, condense, archive, rebuild `threads/INDEX.md` |
+| `curate-context` | 🔒 Keep the context lean: promote, condense, archive, rebuild the index — a workspace's `docs/threads/INDEX.md`, else `threads/INDEX.md` |
 | `setup-connectors` | Provision the MCP connections a project's `context.json` declares |
 | `memory-triage` | 🔒 Drain Claude's own per-directory memory into the right layer — project, repo or local |
 | `context-access` | _(hidden)_ The GitHub-API route sandboxes use, and the rules that stop an API write truncating a file |
@@ -286,7 +288,8 @@ The flag covers **threads only**. `.claude/memory.md` keeps working in a shared 
 a promoted, durable account of how a codebase works is exactly what someone cloning the tool
 should read first, where a dated session narrative is not.
 
-**`curate-context` curates exactly one layer: whichever the session is standing in.** A sweep
+**`curate-context` curates exactly one layer.** In a workspace that is the root's `docs/threads/`
+(ADR 0002), from the root or any member. Outside one, it is whichever the session is standing in. A sweep
 across a project's code repos was considered and rejected. The context repo does not know which
 code repos belong to it, since the link runs child to parent only; there is no way to resolve a
 code repo's name to a checkout on an arbitrary machine; and judging whether a thread has settled
@@ -358,7 +361,7 @@ that still carries their keys or folders loads exactly as before; the data is si
 
 | Removed | Instead |
 | --- | --- |
-| `include` (cross-project loads) and the `handoff/` outbox | one workspace is the home; the personal layer is imported by the user-level `~/.claude/CLAUDE.md` |
+| `include` (cross-project loads) and the top-level `handoff/` folder | one workspace is the home; the personal layer is imported by the user-level `~/.claude/CLAUDE.md`. triage-notes (context-notes) keeps its own shared-target outbox, at `.context/handoff/` in a workspace (ADR 0002, amended for #83) |
 | assistants, roles, supervisors and lessons (`assistant`, `assistant-lesson`, `assistant-contract`, `supervisor-sweep`, `supervisor-distil`, `assistants.mjs`) | nothing — they were never used |
 | `teach-workspace` and `teaching-workspace.mjs` | run **`/mattpocock-skills:teach`** in `teaching/[slug]/` inside a workspace — the directory project-workspace's `.gitignore` already keeps |
 | `init-context`'s second-brain bootstrap and `assets/second-brain/` | the personal layer is a workspace of its own, migrated by hand |
