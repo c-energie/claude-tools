@@ -35,7 +35,8 @@ compared.
   side: a writer and a reader agreeing only by convention stop agreeing the first time the record
   changes, and the symptom is a gallery quietly missing rows while still rendering.
 - **No default store, ever.** The store is named by `DIAGRAMS_STORE`, else the repo's
-  `.diagrams.json`, else `context.json` `state.diagrams.repo` (`locateStore`); none is an
+  `.diagrams.json`, else `state.diagrams.repo` in the nearest `.claude/workspace.json` or the
+  context repo's `context.json` (`locateStore`); none is an
   **error listing all three** — never a fallback, never "the store that exists on this machine",
   never inferred from the origin owner (the error may *suggest* it). The ladder made context-kit
   optional (2026-10-15); it added no default. The stores are a
@@ -81,7 +82,7 @@ compared.
   not an XML parse: the input is a file Claude just wrote, a dependency-free script cannot parse
   HTML properly anyway, and a missed label costs one search hit while a thrown parser costs the
   whole save.
-- **`context-repo.sh`, `dates.mjs` and `bash-bin.mjs` are copies of context-kit-core's** — a
+- **`context-repo.sh`, `dates.mjs`, `bash-bin.mjs` and `workspace.mjs` are copies of context-kit-core's** — a
   skill can only reference `${CLAUDE_PLUGIN_ROOT}/scripts/…` inside its own plugin. Fix the
   original in **context-kit-core** first, then copy. `check-plugin.mjs` errors on drift.
 - **Never spawn bare `bash` from a `.mjs`** — always `bashBin()`. See core's CLAUDE.md for why.

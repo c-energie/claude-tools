@@ -13,7 +13,7 @@ default, and the org-boundary check. This skill ends with the store named on one
 cloned:
 
 ```
-<project repo>/.diagrams.json   { "repo": "acme-co/diagrams" }     ← or context.json state.diagrams
+<project repo>/.diagrams.json   { "repo": "acme-co/diagrams" }     ← or context.json state.diagrams (a workspace.json: by hand, for now)
 ~/acme-co/diagrams/             the store checkout (private repo)
 |-- README.md  .gitattributes  .gitignore
 |-- index.jsonl                 empty, append-only

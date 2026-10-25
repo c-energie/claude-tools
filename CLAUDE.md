@@ -54,7 +54,7 @@ surface a root-sourced plugin).
 - **Some scripts exist as deliberate copies** — a skill can only reference
   `${CLAUDE_PLUGIN_ROOT}/scripts/...` inside its **own** plugin, so anything a skill calls at
   runtime must sit there. `context-repo.sh`, `dates.mjs` and `bash-bin.mjs` are in all three;
-  `workspace.mjs` (core's) and `lib.mjs`, `pending-parse.mjs` and `layout.mjs` (context-notion's)
+  `workspace.mjs` (core's) is in context-notion, context-slack and diagrams; `lib.mjs`, `pending-parse.mjs` and `layout.mjs` (context-notion's)
   are in context-notion and context-slack; `json-block.mjs` (core's) is in context-notion.
   `COPIES` in `check-plugin.mjs` is the full list. **Fix the original first, then
   copy** — and the original is decided by *layer, not by who uses it most*: `context-repo.sh`,

@@ -23,9 +23,10 @@ org-boundary result. The store is named in the first of:
 |---|---|---|
 | 1 | `DIAGRAMS_STORE=owner/repo` (with `DIAGRAMS_CROSS_ORG=1` to declare a cross-org store) | no |
 | 2 | `.diagrams.json` at the root of the repo being worked in | no |
-| 3 | the project's `context.json`, `state.diagrams` | yes — a context repo |
+| 3 | the nearest `.claude/workspace.json` (ADR 0002), else the context repo's `context.json` — `state.diagrams` | a workspace or a context repo |
 
-The context.json rung is found via `context-repo.sh`, or `CONTEXT_CONFIG` when you already hold
+Rung 3 is found by `workspace.mjs`'s walk up from the project directory (so a member repo nested in a
+workspace names the workspace's store), falling back to `context-repo.sh`; `CONTEXT_CONFIG` pins it when you already hold
 the path. `.diagrams.json` and `state.diagrams` take the same block:
 
 ```json

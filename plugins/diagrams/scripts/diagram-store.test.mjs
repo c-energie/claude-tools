@@ -12,7 +12,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveStore, findRepoFile, REPO_FILE } from './diagram-store.mjs';
+import { resolveStore, findRepoFile, readConfigSoft, REPO_FILE } from './diagram-store.mjs';
 
 // ---------------------------------------------------------------- fixtures
 
@@ -141,4 +141,45 @@ test('the env route also falls back to the context repo owner', () => {
 test('no origin and no context repo: unchecked, reported rather than refused', () => {
   const { sub } = repo({ file: { repo: 'acme/diagrams' } });
   assert.equal(resolve({ cwd: sub }).boundary, 'unchecked');
+});
+
+// ---------------------------------------------------------------- the workspace (ADR 0002)
+
+const workspace = (json) => () => ({ cfg: { path: '/ws/.claude/workspace.json', json }, why: null });
+
+test('a workspace.json names the store like context.json, with its name as the project', () => {
+  const { sub } = repo();
+  const s = resolve({
+    cwd: sub,
+    context: workspace({ schema: 1, name: 'ws', repo: 'acme/ws', state: { diagrams: { repo: 'acme/diagrams' } } }),
+  });
+  assert.equal(s.repo, 'acme/diagrams');
+  assert.equal(s.source, 'workspace.json');
+  assert.equal(s.configPath, '/ws/.claude/workspace.json');
+  assert.equal(s.project, 'ws');
+});
+
+test('with no origin, the workspace repo owner is the home', () => {
+  const { sub } = repo();
+  const ws = workspace({ schema: 1, name: 'ws', repo: 'acme/ws', state: { diagrams: { repo: 'other-org/diagrams' } } });
+  assert.throws(() => resolve({ cwd: sub, context: ws }), /belongs to acme/);
+  const env = { DIAGRAMS_STORE: 'other-org/d' };
+  assert.throws(() => resolve({ cwd: sub, env, context: workspace({ schema: 1, repo: 'acme/ws' }) }), /belongs to acme/);
+});
+
+test('readConfigSoft finds the workspace.json above a member repo nested in it', () => {
+  const ws = mkdtempSync(join(tmpdir(), 'diagrams-ws-'));
+  mkdirSync(join(ws, '.claude'));
+  const file = join(ws, '.claude', 'workspace.json');
+  writeFileSync(file, JSON.stringify({ schema: 1, name: 'ws', state: { diagrams: { repo: 'acme/diagrams' } } }));
+  const member = join(ws, 'member', 'src');
+  mkdirSync(member, { recursive: true });
+  mkdirSync(join(ws, 'member', '.git'));
+  const saved = process.env.CONTEXT_CONFIG;
+  delete process.env.CONTEXT_CONFIG;
+  try {
+    const { cfg } = readConfigSoft(member);
+    assert.equal(cfg.path, file);
+    assert.equal(cfg.json.state.diagrams.repo, 'acme/diagrams');
+  } finally { if (saved !== undefined) process.env.CONTEXT_CONFIG = saved; }
 });

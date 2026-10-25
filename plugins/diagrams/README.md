@@ -30,7 +30,7 @@ First match wins:
 |---|---|---|
 | 1 | `DIAGRAMS_STORE=owner/repo` (with `DIAGRAMS_CROSS_ORG=1` to declare a cross-org store) | no |
 | 2 | `.diagrams.json` at the root of the repo being worked in | no |
-| 3 | the project's `context.json`, `state.diagrams` | yes — a context repo |
+| 3 | the nearest `.claude/workspace.json` (ADR 0002), else the context repo's `context.json` — `state.diagrams` | a workspace or a context repo |
 
 `.diagrams.json` and `state.diagrams` take the same block:
 
