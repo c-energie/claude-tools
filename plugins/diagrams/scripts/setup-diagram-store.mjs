@@ -27,7 +27,7 @@ import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  REPO_FILE, findRepoFile, initStore, indexPath, locateStore, originOwner, readConfigSoft,
+  REPO_FILE, configOwner, findRepoFile, initStore, indexPath, isWorkspace, locateStore, originOwner, readConfigSoft,
   readTaxonomy, resolveStore,
 } from './diagram-store.mjs';
 
@@ -153,10 +153,17 @@ function configTarget(target) {
     return { file: join(rf.root, REPO_FILE), repoDir: rf.root };
   }
   if (target === 'context') {
-    const { cfg, why } = readConfigSoft();
+    const { cfg, why } = readConfigSoft(ROOT);
     if (!cfg) {
       throw new Refused(`no context repo (${why}).\nUse --target repo-file, or set one up first `
         + 'with context-kit-core:context-setup.');
+    }
+    // The config step rewrites its target whole; a workspace.json has other owners' blocks
+    // (members, connections, state.notion) and must only ever be edited block by block.
+    if (/[\\/]\.claude[\\/]workspace\.json$/.test(cfg.path)) {
+      throw new Refused(`${cfg.path} is a workspace (ADR 0002), which this step cannot edit safely yet. `
+        + 'Add "state": { "diagrams": { "repo": "[owner]/[repo]" } } to it by hand with the user, '
+        + 'or use --target repo-file.');
     }
     return { file: resolve(cfg.path), repoDir: dirname(resolve(cfg.path)), cfg };
   }
@@ -185,7 +192,7 @@ const steps = {
     let rf;
     try { rf = findRepoFile(ROOT); } catch (e) { throw new Failed(`${REPO_FILE} near ${ROOT} is not valid JSON (${e.message})`); }
     const owner = originOwner(ROOT);
-    const { cfg, why } = readConfigSoft();
+    const { cfg, why } = readConfigSoft(ROOT);
     say(`  root        ${ROOT}`);
     say(`  repo root   ${rf.root ?? '(not inside a git repo)'}${rf.root && !samePath(rf.root, ROOT) ? '   (ROOT is a subdirectory)' : ''}`);
     say(`  origin      ${owner ?? '(no GitHub origin)'}`);
@@ -342,7 +349,7 @@ const steps = {
 
     // The org boundary, refused here as well as on every resolve: setup is where the decision
     // is made, and --cross-org is the user saying so, recorded as crossOrg: true.
-    const home = originOwner(ROOT) ?? (cfg ?? readConfigSoft().cfg)?.json?.contextRepo?.split('/')[0] ?? null;
+    const home = originOwner(ROOT) ?? configOwner(cfg ?? readConfigSoft(ROOT).cfg);
     const storeOwner = repo.split('/')[0];
     const cross = !!home && home.toLowerCase() !== storeOwner.toLowerCase();
     if (cross && !opts['cross-org']) {

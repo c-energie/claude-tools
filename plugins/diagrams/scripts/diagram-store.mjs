@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import { bashBin, bashPath, NO_BASH } from './bash-bin.mjs';
+import { resolveWorkspace } from './workspace.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -60,31 +60,41 @@ export const serialise = (entry) => {
 
 // ---------------------------------------------------------------- the project's config
 
-export function readConfig() {
+/** The project's config file: CONTEXT_CONFIG, else the nearest `.claude/workspace.json` at or
+ *  above `cwd` (ADR 0002), else the context repo's context.json — one resolveWorkspace() call,
+ *  the walk every other layer uses, so a member repo nested in a workspace names the workspace's
+ *  store rather than whatever context repo the legacy route lands on (observed 2026-10-25: a
+ *  smeter-validation member resolved to the personal second-brain). */
+export function readConfig(cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd()) {
   const path = process.env.CONTEXT_CONFIG ?? (() => {
-    // bashBin() rather than `bash`: on Windows the PATH entry is WSL's launcher, which has its
-    // own filesystem and $HOME — it cannot see this script and could never see the clone the
-    // resolver prints back. Failing by name beats resolving against the wrong ~.
-    const bin = bashBin();
-    if (!bin) throw new Error(`${NO_BASH} (or set CONTEXT_CONFIG to skip the resolver)`);
-    const root = execFileSync(bin, [bashPath(join(here, 'context-repo.sh')), '--no-pull'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    return join(posixToNative(root), 'context.json');
+    const r = resolveWorkspace({ cwd, args: ['--no-pull'] });
+    // Relayed because it silently changes which file names the store: a typo in workspace.json
+    // would otherwise send a member repo back to whatever context repo the legacy route finds.
+    for (const m of r.messages) if (/malformed/.test(m) && !m.startsWith('route=')) console.error(`note: ${m}`);
+    if (r.route === 'workspace') return r.file;
+    if (!r.root) {
+      throw new Error(r.messages.filter((m) => m.startsWith('route=none')).pop() ?? 'no workspace and no context repo resolved');
+    }
+    return join(posixToNative(r.root), 'context.json');
   })();
   // A BOM is what PowerShell's Set-Content leaves behind; JSON.parse rejects it.
   return { path, json: JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, '')) };
 }
 
-/** The context repo is OPTIONAL: a project with no context repo names its store some other way.
- *  So an unresolvable context repo is a null here, with the reason kept for the error message —
+/** A workspace or context repo is OPTIONAL: a project with neither names its store some other way.
+ *  So an unresolvable one is a null here, with the reason kept for the error message —
  *  except when CONTEXT_CONFIG is set, where a missing file is the caller's mistake and says so. */
-export function readConfigSoft() {
-  if (process.env.CONTEXT_CONFIG) return { cfg: readConfig(), why: null };
-  try { return { cfg: readConfig(), why: null }; } catch (e) {
+export function readConfigSoft(cwd) {
+  if (process.env.CONTEXT_CONFIG) return { cfg: readConfig(cwd), why: null };
+  try { return { cfg: readConfig(cwd), why: null }; } catch (e) {
     return { cfg: null, why: String(e.message ?? e).split('\n')[0] };
   }
 }
+
+/** A workspace.json (ADR 0002) names its own repo in `repo`; a context.json in `contextRepo`.
+ *  Told apart by the file, never the folder: the same rule the resolver uses. */
+export const isWorkspace = (cfg) => /[\\/]\.claude[\\/]workspace\.json$/.test(cfg?.path ?? '');
+export const configOwner = (cfg) => (isWorkspace(cfg) ? cfg.json.repo : cfg?.json?.contextRepo)?.split('/')[0] ?? null;
 
 export const REPO_FILE = '.diagrams.json';
 
@@ -142,11 +152,12 @@ export function locateStore({ env = process.env, cwd = process.cwd(), context = 
   const { cfg, why } = context();
   const d = cfg?.json?.state?.diagrams ?? null;
   if (d?.repo) {
+    const ws = isWorkspace(cfg);
     return {
-      source: 'context.json', configPath: cfg.path, block: d,
-      project: cfg.json.project ?? cfg.json.contextRepo ?? null,
+      source: ws ? 'workspace.json' : 'context.json', configPath: cfg.path, block: d,
+      project: (ws ? cfg.json.name ?? cfg.json.repo : cfg.json.project ?? cfg.json.contextRepo) ?? null,
       repoRoot: rf.root,
-      contextOwner: cfg.json.contextRepo?.split('/')[0] ?? null,
+      contextOwner: configOwner(cfg),
     };
   }
   const suggest = owner(cwd);
@@ -154,8 +165,8 @@ export function locateStore({ env = process.env, cwd = process.cwd(), context = 
     'No diagram store is named for this project. Name one in any of:\n'
     + '  1. DIAGRAMS_STORE=[owner]/[repo]               (this shell only)\n'
     + `  2. ${REPO_FILE} at the repo root:  { "repo": "[owner]/[repo]" }\n`
-    + `  3. context.json:  "state": { "diagrams": { "repo": "[owner]/[repo]" } }`
-    + (cfg ? `   (${cfg.path} has none)` : `   (no context repo: ${why})`)
+    + `  3. .claude/workspace.json (or a context repo's context.json):  "state": { "diagrams": { "repo": "[owner]/[repo]" } }`
+    + (cfg ? `   (${cfg.path} has none)` : `   (no workspace or context repo: ${why})`)
     + '\n'
     + (suggest ? `This repo's owner is ${suggest}, so ${suggest}/diagrams is the likely store — confirm it, it is not assumed.\n` : '')
     + 'There is no default on purpose: a default would let this project write into another '
@@ -188,7 +199,7 @@ export function resolveStore({ mustExist = true, env = process.env, cwd = proces
   // context repo's owner. Unknown is reported, not refused — there is nothing to compare.
   const storeOwner = repo.split('/')[0];
   const home = owner(cwd) ?? loc.contextOwner
-    ?? (loc.source === 'context.json' ? null : context().cfg?.json?.contextRepo?.split('/')[0] ?? null);
+    ?? (loc.source === 'context.json' || loc.source === 'workspace.json' ? null : configOwner(context().cfg));
   if (home && home.toLowerCase() !== storeOwner.toLowerCase() && d.crossOrg !== true) {
     throw new Error(
       `${loc.configPath} names the store ${repo}, but this work belongs to ${home}.\n`
