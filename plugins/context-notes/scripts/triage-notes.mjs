@@ -721,9 +721,9 @@ export function planIssue(row, { projects = {}, unreachable = [], bodyFile = nul
   if (!row.target) return { ok: false, reason: 'no repository could be named — no issue is opened on a guess', shortlist: true };
 
   // Shared destinations are NEVER written directly from a personal session. They shortlist, or
-  // park in handoff/ with kind: issue once that contract lands.
+  // park in the handoff outbox (.context/handoff/ in a workspace) with kind: issue.
   if (row.visibility === 'shared') {
-    return { ok: false, reason: `${row.target} is in an organisation flagged shared — another person sees it first, so this shortlists or goes to handoff/ rather than being written`, shortlist: true };
+    return { ok: false, reason: `${row.target} is in an organisation flagged shared — another person sees it first, so this shortlists or goes to the handoff outbox (.context/handoff/ in a workspace) rather than being written`, shortlist: true };
   }
 
   if (unreachable.includes(row.target)) {
@@ -985,7 +985,7 @@ export function planThread(thread, { taxonomy, resolvedRepo, singletonExempt = f
   if (target && resolvedRepo && target !== resolvedRepo) {
     return {
       park: true, target, title: thread.title,
-      reason: `this thread is bound for ${target}, not the resolved repo ${resolvedRepo}. A thread file is a commit into that repository, and it goes through that project's own session — which is where taxonomy.yml validation lives. Parked in handoff/ instead.`,
+      reason: `this thread is bound for ${target}, not the resolved repo ${resolvedRepo}. A thread file is a commit into that repository, and it goes through that project's own session — which is where taxonomy.yml validation lives. Parked in the handoff outbox (.context/handoff/ in a workspace) instead.`,
       rowIds: rows.map((r) => r.id),
     };
   }
@@ -1063,7 +1063,7 @@ export function planThreads(batch, { taxonomy, resolvedRepo } = {}) {
 
 // ---------------------------------------------------------------- the handoff queue
 //
-// `handoff/` means OUTPUT BOUND FOR A CONTEXT REPO SOMEBODY ELSE OWNS. That is the whole of it,
+// The handoff queue means OUTPUT BOUND FOR A CONTEXT REPO SOMEBODY ELSE OWNS. That is the whole of it,
 // in one sentence, and it is narrower than what the folder started as: you cannot hand off to
 // yourself, so once a session can write its own personal targets directly, parking one would gate
 // a person on their own approval.
@@ -1074,6 +1074,22 @@ export function planThreads(batch, { taxonomy, resolvedRepo } = {}) {
 // targets drain automatically, shared ones are listed and left, and EVERYTHING drained appears in
 // the approval table under a carried-over section — which is rendered even when it is empty,
 // because "the queue is empty" should be something seen rather than assumed.
+
+/**
+ * Where the queue lives, by kind of root, as a `/`-separated path relative to it — the same form
+ * every message prints, so what the script says and where the model moves things agree.
+ *
+ * A WORKSPACE keeps it at `.context/handoff/`, beside `.context/pending/`: ADR 0002 retired
+ * `handoff/` as a top-level folder (amended for #83) but kept this outbox, because the rule it
+ * protects — nothing is ever written into a shared org from the personal layer — still needs
+ * somewhere to park shared-target output. A LEGACY CONTEXT REPO keeps `handoff/` until #60
+ * deletes the fallback. Reading `handoff/` in a workspace instead would report "no queue" over a
+ * real backlog, which is exactly the silent backlog this queue exists to surface.
+ */
+export function handoffRel(kind) {
+  const dir = kind === 'workspace' ? '.context/handoff' : 'handoff';
+  return { dir, done: `${dir}/done` };
+}
 
 // Additive. `issue` is new — triage's majority destination previously had no way to be queued at
 // all. The four earlier kinds are unchanged, so items already sitting in a queue keep parsing.
@@ -1163,16 +1179,21 @@ export function classifyHandoff(item, { organisations = [], selfRepo = null, unr
   return { ...item, action: 'drain', visibility: org.visibility, reason: `${item.project} is personal, so this drains automatically rather than gating you on your own approval` };
 }
 
-/** Read and classify a whole queue directory. */
+/**
+ * Read and classify a whole queue directory. `opts.rel` is the queue's path as printed — from
+ * handoffRel() — and travels with the result, so the rendering names the folder that was actually
+ * read rather than one assumed for it.
+ */
 export function readHandoffQueue(dir, opts = {}) {
+  const rel = opts.rel ?? handoffRel('context-repo').dir;
   let files = [];
   try {
     files = readdirSync(dir).filter((f) => f.endsWith('.md') && !['README.md', 'INDEX.md'].includes(f)).sort();
-  } catch { return { applicable: false, total: 0, drain: [], list: [] }; }
+  } catch { return { applicable: false, rel, total: 0, drain: [], list: [] }; }
 
   const items = files.map((f) => classifyHandoff(parseHandoffItem(readFileSync(join(dir, f), 'utf8'), f), opts));
   return {
-    applicable: true,
+    applicable: true, rel,
     total: items.length,
     drain: items.filter((i) => i.action === 'drain'),
     list: items.filter((i) => i.action === 'list'),
@@ -1187,12 +1208,13 @@ export function readHandoffQueue(dir, opts = {}) {
  */
 export function renderCarriedOver(queue, { drained = null } = {}) {
   const lines = [];
+  const rel = queue.rel ?? handoffRel('context-repo').dir;
   if (!queue.applicable) {
-    lines.push('  carried over (0) — this repo has no handoff/ queue.');
+    lines.push(`  carried over (0) — this repo has no ${rel}/ queue.`);
     return lines.join('\n');
   }
   const done = drained ?? queue.drain;
-  lines.push(`  carried over (${done.length}) — drained from handoff/ at the start of this run:`);
+  lines.push(`  carried over (${done.length}) — drained from ${rel}/ at the start of this run:`);
   if (!done.length) lines.push('    (nothing) — the queue held no item bound for a repo this session owns.');
   for (const i of done) {
     lines.push(`    ${i.kind.padEnd(13)} ${i.title}`);
@@ -1204,7 +1226,7 @@ export function renderCarriedOver(queue, { drained = null } = {}) {
     for (const i of queue.list) lines.push(`    ${i.title}\n      ${i.reason}`);
   }
   lines.push('');
-  lines.push(`  handoff/ backlog: ${queue.total} item(s). An item moves to handoff/done/ ONLY after its`);
+  lines.push(`  ${rel}/ backlog: ${queue.total} item(s). An item moves to ${rel}/done/ ONLY after its`);
   lines.push('  write succeeds — a failure leaves it exactly where it was, is named in the summary,');
   lines.push('  and the run continues. A half-drained queue is recovered by re-running.');
   return lines.join('\n');
@@ -1597,7 +1619,11 @@ function main(argv) {
     // read it from the file it loaded, so "is this target me" asks about the right repository.
     const selfRepo = cfg.repo;
     const unreachableArg = flagValue(argv, 'unreachable');
-    const queue = readHandoffQueue(join(root, 'handoff'), {
+    // .context/handoff/ in a workspace, handoff/ in a legacy context repo — by the kind of file
+    // loadConfig actually read, the same way it took selfRepo, so the two cannot disagree.
+    const rel = handoffRel(cfg.kind);
+    const queue = readHandoffQueue(join(root, ...rel.dir.split('/')), {
+      rel: rel.dir,
       organisations: cfg.notes.organisations,
       selfRepo,
       unreachable: unreachableArg ? unreachableArg.split(',').map((s) => s.trim()).filter(Boolean) : [],
@@ -1608,12 +1634,12 @@ function main(argv) {
     // Reported at the START of every run, INCLUDING ZERO, so an empty queue is a thing that was
     // seen rather than assumed.
     console.log(`triage-notes — handoff backlog: ${queue.total} item(s)`);
-    if (!queue.applicable) { console.log('  (this repo has no handoff/ directory)'); return; }
+    if (!queue.applicable) { console.log(`  (this ${cfg.kind === 'workspace' ? 'workspace' : 'repo'} has no ${rel.dir}/ directory)`); return; }
     console.log('');
     console.log(renderCarriedOver(queue));
     if (queue.drain.length) {
       console.log('\n  Drain these BEFORE selection, so carried-over work and newly proposed work are');
-      console.log('  approved together in one table. Then `git mv` each into handoff/done/ — only');
+      console.log(`  approved together in one table. Then \`git mv\` each into ${rel.done}/ — only`);
       console.log('  after its write succeeded.');
     }
     return;

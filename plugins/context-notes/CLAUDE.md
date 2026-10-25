@@ -38,7 +38,7 @@ node scripts/triage-notes.mjs propose "$ROOT" --batch b.json --classify   # tabl
 node scripts/triage-notes.mjs github  "$ROOT" --batch evaluated.json      # plan gh issue create, runs nothing
 node scripts/triage-notes.mjs notion  "$ROOT" --batch evaluated.json      # format context-notion skill args
 node scripts/triage-notes.mjs threads "$ROOT" --batch evaluated.json      # assemble save-thread material
-node scripts/triage-notes.mjs handoff "$ROOT"                             # the queue: drain-now vs list-only
+node scripts/triage-notes.mjs handoff "$ROOT"                             # the queue (.context/handoff/): drain-now vs list-only
 node --test scripts/triage-notes.test.mjs                          # from the plugin directory
 node ../context-kit-core/scripts/check-plugin.mjs .                # before any commit
 ```
@@ -158,7 +158,17 @@ block-scale edit that leaves every other key byte-identical (ADR 0002).
 - **A thread bound for another repository is PARKED, never written.** A thread file is a commit
   into that repository, and it goes through that project's own session — which is where
   `taxonomy.yml` validation lives. That boundary is what keeps the validation meaningful.
-- **`handoff/` means output bound for a context repo SOMEBODY ELSE OWNS**, and nothing else. You
+- **The handoff queue lives at `.context/handoff/` in a workspace** (done items in
+  `.context/handoff/done/`), beside `.context/pending/`, and at `handoff/` only in a legacy context
+  repo until #60. ADR 0002 retired `handoff/` as a top-level folder and kept this outbox (amended
+  for #83), because shared-target output still needs somewhere to wait. `handoffRel()` picks the
+  path from the kind of root `loadConfig` read, and every printed line names it; a workspace's
+  top-level `handoff/` is not read. **No `context-doctor`/`context-status` backlog check** was
+  added for it: triage reports the backlog at the start of every run, including zero, and lists
+  every shared item every run, so the backlog is already seen where it is acted on — and a check
+  in core would give `context-kit-core` knowledge of this plugin's queue, the layering this
+  plugin exists to avoid.
+- **The handoff queue means output bound for a context repo SOMEBODY ELSE OWNS**, and nothing else. You
   cannot hand off to yourself, so an item whose target this session can write is drained rather
   than parked. Personal targets drain automatically; SHARED ones are listed and left, which is
   where the gate belongs. Visibility is read from the same `organisations` flag the shortlist
@@ -167,7 +177,7 @@ block-scale edit that leaves every other key byte-identical (ADR 0002).
   writes something it did not show is the failure this prevents, and an omitted section makes
   "nothing was carried over" indistinguishable from "not printed". The backlog count is reported
   at the start of every run, including zero, so an empty queue is something seen not assumed.
-- **An item moves to `handoff/done/` only after its write SUCCEEDS.** A failure leaves it exactly
+- **An item moves to the queue's `done/` only after its write SUCCEEDS.** A failure leaves it exactly
   where it was and the run continues; a half-drained queue is recovered by re-running.
 - **Handoff contract changes are ADDITIVE.** `kind` gained `issue`; `repo:` is required for that
   kind and optional otherwise, so items written in the older four-kind format still parse.

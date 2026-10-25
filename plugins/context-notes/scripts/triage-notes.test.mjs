@@ -22,7 +22,7 @@ import {
   issueBody, planIssue, planIssues, applyReachability, destinationRepos, TITLE_MAX,
   planNotionRow, planNotionRows, provenance, NOTION_DESTINATIONS,
   parseTaxonomy, checkTags, planThread, planThreads, THREAD_STATUSES,
-  parseHandoffItem, classifyHandoff, readHandoffQueue, renderCarriedOver, HANDOFF_KINDS,
+  parseHandoffItem, classifyHandoff, readHandoffQueue, renderCarriedOver, HANDOFF_KINDS, handoffRel,
 } from './triage-notes.mjs';
 
 // ---------------------------------------------------------------- fixtures
@@ -1509,4 +1509,71 @@ test('re-running over a half-drained queue produces no duplicate work', () => {
   assert.deepEqual(second.drain.map((i) => i.title), ['two'],
     'only the item whose write did not succeed comes round again');
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------- where the queue lives (#83)
+//
+// ADR 0002 retired handoff/ as a top-level folder but kept this outbox at .context/handoff/ in a
+// workspace. A workspace read at handoff/ would say "no queue" over a real backlog, which is the
+// silent backlog the queue exists to surface — so the CLI is run against both kinds of root.
+
+const putItem = (root, rel, name, fm) => {
+  const dir = join(root, ...rel.split('/'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, name), item(fm));
+};
+
+const runHandoff = (root, ...extra) => {
+  const env = { ...process.env };
+  delete env.CLAUDE_PROJECT_DIR;
+  return spawnSync(process.execPath, [SCRIPT, 'handoff', root, ...extra], { env, encoding: 'utf8' });
+};
+
+test('handoffRel: .context/handoff in a workspace, handoff in a legacy context repo', () => {
+  assert.deepEqual(handoffRel('workspace'), { dir: '.context/handoff', done: '.context/handoff/done' });
+  assert.deepEqual(handoffRel('context-repo'), { dir: 'handoff', done: 'handoff/done' });
+});
+
+test('in a workspace the queue is read from .context/handoff/, and a top-level handoff/ is ignored', () => {
+  const ws = workspaceWith({ notes: NOTES });
+  putItem(ws, '.context/handoff', '2026-10-25-mine.md', { title: 'mine', project: 'c-energie/dev-hub', kind: 'action' });
+  putItem(ws, '.context/handoff', '2026-10-25-theirs.md', { title: 'theirs', project: 'acme-co/context', kind: 'issue', repo: 'acme-co/website' });
+  // A retired top-level folder is not read: one queue, at one path, per kind of root.
+  putItem(ws, 'handoff', '2026-10-01-stale.md', { title: 'stale', project: 'c-energie/dev-hub', kind: 'action' });
+
+  const r = runHandoff(ws, '--json');
+  assert.equal(r.status, 0, r.stderr);
+  const q = JSON.parse(r.stdout);
+  assert.equal(q.rel, '.context/handoff');
+  assert.equal(q.total, 2);
+  assert.deepEqual(q.drain.map((i) => i.title), ['mine']);
+  assert.deepEqual(q.list.map((i) => i.title), ['theirs'], 'a shared target is listed and left');
+});
+
+test('in a workspace every printed path names .context/handoff/', () => {
+  const ws = workspaceWith({ notes: NOTES });
+  putItem(ws, '.context/handoff', '2026-10-25-mine.md', { title: 'mine', project: 'c-energie/dev-hub', kind: 'action' });
+  const r = runHandoff(ws);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /drained from \.context\/handoff\/ at the start/);
+  assert.match(r.stdout, /\.context\/handoff\/ backlog: 1 item\(s\)/);
+  assert.match(r.stdout, /git mv` each into \.context\/handoff\/done\//);
+  assert.doesNotMatch(r.stdout, /(^|[\s(])handoff\//m, 'no message may send the model to the retired folder');
+});
+
+test('a workspace with no .context/handoff/ reports a zero backlog naming that path', () => {
+  const r = runHandoff(workspaceWith({ notes: NOTES }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /handoff backlog: 0 item\(s\)/);
+  assert.match(r.stdout, /no \.context\/handoff\/ directory/);
+});
+
+test('a legacy context repo still reads handoff/ until the fallback goes (#60)', () => {
+  const dir = repoWith({ notes: NOTES });
+  putItem(dir, 'handoff', '2026-10-25-mine.md', { title: 'mine', project: 'c-energie/dev-hub', kind: 'action' });
+  const r = runHandoff(dir, '--json');
+  assert.equal(r.status, 0, r.stderr);
+  const q = JSON.parse(r.stdout);
+  assert.equal(q.rel, 'handoff');
+  assert.deepEqual(q.drain.map((i) => i.title), ['mine']);
 });

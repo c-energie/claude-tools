@@ -1,7 +1,7 @@
 {
   "name": "context-notes",
   "description": "Triage the notes captured in a project's Notion Mind Palace: read what is new since the last run, decide where each note belongs — a GitHub issue, a Notion row, a thread, a handoff item or the shortlist — and write it there after approval. Which palace and which organisations come from the project's state.notes — in its .claude/workspace.json, or a legacy context repo's context.json —, with no default, so one install serves every project without ever crossing an org boundary.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "author": { "name": "c-energie" },
   "license": "MIT"
 }

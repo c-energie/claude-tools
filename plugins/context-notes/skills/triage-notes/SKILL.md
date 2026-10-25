@@ -250,9 +250,9 @@ run, the failure is named in the run summary with the repository and the `gh` er
 ### What never gets written here
 
 A row whose repository could not be named, and a row whose destination is in an organisation
-flagged `shared`. Both shortlist — the shared one goes to `handoff/` with `kind: issue` and a
-`repo:` field once that contract lands. A personal session does not write into work somebody else
-owns.
+flagged `shared`. Both shortlist — the shared one is parked in the handoff outbox (§12:
+`.context/handoff/` in a workspace) with `kind: issue` and a `repo:` field. A personal session
+does not write into work somebody else owns.
 
 ## 10. Write the Notion rows — through the existing skills
 
@@ -340,8 +340,8 @@ is that, with a rolling summary maintained for free.
 **A thread bound for another repository is parked, never written.** "Another" means not the
 root's own — `workspace.json`'s `repo` in a workspace, `context.json`'s `contextRepo` otherwise.
 A thread file is a commit into that repository, and it goes through that project's own session
-— which is where `taxonomy.yml` validation lives. It becomes a `handoff/` item; report it with the target named, so
-the user knows something is waiting.
+— which is where `taxonomy.yml` validation lives. It becomes a handoff item (§12); report it with
+the target named, so the user knows something is waiting.
 
 The note's own words go into the **body**, with a provenance line. Nothing triage produces ever
 becomes a front-matter value — an angle bracket there is read as a tag and the field is dropped
@@ -359,7 +359,15 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/triage-notes.mjs" handoff "$ROOT"
 **Run this at the start, before selection**, so carried-over work and newly proposed work are
 approved together in one table.
 
-`handoff/` means **output bound for a context repo somebody else owns**. That is the whole of it.
+**Where the queue lives.** In a workspace, **`.context/handoff/`**, beside `.context/pending/`,
+with done items in `.context/handoff/done/`. In a legacy context repo, `handoff/` and
+`handoff/done/`, until that fallback is deleted. ADR 0002 retired `handoff/` as a top-level folder
+and kept this outbox, because nothing is ever written into a shared org from the personal layer
+and shared-target output needs somewhere to wait. The script picks the path from the root it
+loaded and names it in every line it prints — use the path it prints, never a remembered one. In
+a workspace, a top-level `handoff/` is **not** read.
+
+The queue means **output bound for a context repo somebody else owns**. That is the whole of it.
 You cannot hand off to yourself, so an item whose target this session can write is drained rather
 than parked — parking one would gate the user on their own approval.
 
@@ -382,11 +390,12 @@ did not show is the failure this prevents, and an omitted section makes "nothing
 indistinguishable from "not printed". Shared items are listed **every** run, so a stalled one stays
 visible rather than being forgotten.
 
-**Move an item to `handoff/done/` only after its write succeeds.** A failed write leaves the item
+**Move an item into the queue's `done/` only after its write succeeds.** A failed write leaves the item
 exactly where it was, is named in the run summary, and **the run continues** — one broken item does
 not block a batch, and a half-drained queue is recovered by re-running.
 
-Triage's own shared-target output is parked in `handoff/` in this same format — one queue, not two.
+Triage's own shared-target output is parked in the same queue (`.context/handoff/` in a
+workspace), in this same format — one queue, not two.
 `kind` is `action | decision | open-question | thread-seed | issue`, and **`repo:` is required for
 `kind: issue`** (an issue's destination is recorded, never inferred from the prose) and optional
 otherwise, which is what keeps older items parsing unchanged.
