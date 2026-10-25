@@ -30,7 +30,7 @@ node scripts/thread-target.mjs           # where save-thread writes: docs/thread
 node --test scripts/thread-target.test.mjs scripts/memory-triage.test.mjs   # workspace thread/memory targets; offline
 bash scripts/context-repo.sh --no-pull   # resolve the (env-selected) context checkout
 bash scripts/context-repo.sh --threads   # where this project's working notes go: repo|context|auto
-bash hooks/load-context.sh --refresh     # exactly what refresh-context runs, against $PWD
+bash hooks/load-context.sh --refresh     # the legacy loader by hand, against $PWD — refresh-context no longer runs it
 bash scripts/plugin-repo.sh --writable   # resolve THIS repo's checkout (root), push-ready
 bash scripts/plugin-repo.sh --plugin context-kit-core   # ...or one plugin's own directory
 node scripts/list-plugins.mjs "$ROOT" --brief   # the plugin roster, read from the checkout — never hand-written
@@ -253,6 +253,18 @@ node scripts/memory-triage.mjs scan "$ROOT"        # native memory awaiting prom
   rather than a walk of its own, so a thread can never be routed to a different home from the
   context the session loaded. Both skills ask before pushing; outside a workspace both behave as
   before.
+- **`refresh-context` re-reads; it never runs the session-start loader** (#84). It resolves with
+  `workspace-root.sh`, records HEAD, pulls (`--ff-only --autostash` in a workspace; through the
+  resolver's own pull on the legacy route, which carries the token handling a managed clone
+  needs), re-reads the memory file and thread index, and reports the diff from the recorded HEAD.
+  In a workspace the loader would have printed nothing — memory arrives through `CLAUDE.md`'s
+  `@docs/memory.md` — and outside one it only duplicated those reads, so keeping it as the
+  refresh would have tied the skill to a hook whose legacy half goes with the fallback.
+  `curate-context` resolves the same way and curates ADR 0002's layout in a workspace
+  (`docs/memory.md`, `docs/threads/`, `docs/Archive/history.md`, `docs/Archive/threads/`,
+  index by `thread-index.mjs --dir docs/threads`); it reads `GLOSSARY.md` and **never writes
+  it**, since a workspace's glossary may be generated (net-flex's is, from Notion, daily). On the
+  legacy route both keep their old paths.
 - **`context-doctor` and `context-status` take either kind of root, told apart by
   `workspace.mjs`'s `rootKind()`** (#52): a directory holding `context.json` and no
   `workspace.json` is a legacy context repo, checked exactly as before and tested FIRST so an

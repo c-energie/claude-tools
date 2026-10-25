@@ -125,7 +125,8 @@ Four things about it are load-bearing (settled 2026-09-26):
   nothing overrides a global off. The soft reading — "off by default, opt in per project" — was
   rejected, because it makes off mean "nothing loads unless something asked", which is not what a
   kill switch says.
-- **`refresh-context` is exempt** (`load-context.sh --refresh`), and is the route to context on a
+- **`refresh-context` is exempt** — it re-reads the files itself rather than running the hook, and
+  the hook's own `--refresh` is exempt too — and is the route to context on a
   machine with autoload off. An explicit hand-invocation is the user asking out loud. Note this
   differs from the project-level opt-out, which answers `--refresh` with *"nothing to refresh"* —
   correctly, because there `none` means **there is no repo**, whereas off here means **not
